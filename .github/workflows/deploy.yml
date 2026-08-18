@@ -78,17 +78,24 @@ jobs:
           path: infra/migrations
 
       - name: Apply migrations (dev)
-        # CF_TOKEN_DEV is scoped so it has no permission on any *-prod
-        # resource. That scoping, not the naming convention, is the boundary.
+        # CF_TOKEN_DEV is scoped to D1/Workers-KV/Workers-Scripts/Cache-Purge
+        # on this Cloudflare account ONLY -- not to a specific database.
+        # Cloudflare token policies have no per-resource scope below account
+        # level (verified 2026-08-19, docs/exceptions.md E-011), so this token
+        # CAN reach iammufc-prod and other resources in this account. What
+        # actually keeps this job pointed at dev is the exact resource name
+        # below (iammufc-dev) plus self-review-protocol Tier 2 on this file.
         uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
         with:
           apiToken: ${{ secrets.CF_TOKEN_DEV }}
+          accountId: ${{ secrets.CF_ACCOUNT }}
           command: d1 execute iammufc-dev --config infra/wrangler.jsonc --env dev --remote --file infra/migrations/0001_schema.sql
 
       - name: Deploy Worker (dev)
         uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
         with:
           apiToken: ${{ secrets.CF_TOKEN_DEV }}
+          accountId: ${{ secrets.CF_ACCOUNT }}
           command: deploy --config infra/wrangler.jsonc --env dev
 
   deploy-prod:

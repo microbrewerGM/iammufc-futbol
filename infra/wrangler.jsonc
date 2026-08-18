@@ -2,8 +2,12 @@
 // Workflows, Durable Objects or Containers, so the PoC runs on the free plan.
 // Containers are what force Workers Paid; they arrive at M4.
 //
-// Placeholder ids must be replaced with real ones from `wrangler d1 create`
-// and `wrangler kv namespace create` before this deploys.
+// Real resource ids, created 2026-08-19 (docs/runbooks/m0-github-setup.md §7).
+// CF_TOKEN_DEV/CF_TOKEN_PROD cannot be scoped below the Cloudflare account
+// level (docs/exceptions.md E-011) -- these exact names are what keeps dev
+// and prod (and this account's unrelated axes-of-fate-* resources) apart.
+// Getting a database_id wrong here is the actual failure mode; review
+// accordingly (self-review-protocol.md Tier 2).
 //
 // VERIFY the current schema against developers.cloudflare.com before use.
 {
@@ -25,14 +29,12 @@
         {
           "binding": "DB",
           "database_name": "iammufc-dev",
-          // Placeholder until `wrangler d1 create iammufc-dev` is run against a
-          // real account. Local development (--local) never contacts it.
-          "database_id": "00000000-0000-4000-8000-000000000000",
+          "database_id": "78c069cc-e735-4970-94c2-4affbabc0d2e",
           // Keeps local and preview writes off any shared database.
-          "preview_database_id": "00000000-0000-4000-8000-000000000000"
+          "preview_database_id": "78c069cc-e735-4970-94c2-4affbabc0d2e"
         }
       ],
-      "kv_namespaces": [{ "binding": "CFG", "id": "<dev-kv-id>" }],
+      "kv_namespaces": [{ "binding": "CFG", "id": "e2ea049a4f414b4cb4d0a600cbb8d802" }],
       "ai": { "binding": "AI" }
     },
 
@@ -41,10 +43,10 @@
         {
           "binding": "DB",
           "database_name": "iammufc-prod",
-          "database_id": "<prod-uuid>"
+          "database_id": "aa45bfab-d787-4f75-a568-894fd36f2e6e"
         }
       ],
-      "kv_namespaces": [{ "binding": "CFG", "id": "<prod-kv-id>" }],
+      "kv_namespaces": [{ "binding": "CFG", "id": "a214f80ccd8a4e4db4c8b64380b6d4c4" }],
       "ai": { "binding": "AI" }
 
       // M2 — football-data.org key. ToS 6.1 forbids keys in OSS repos, so it
