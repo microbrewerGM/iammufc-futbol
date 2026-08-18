@@ -1,4 +1,3 @@
-# Replace @owner with your real handle before this has any effect.
 # CODEOWNERS is the only enforcement tier that survives a compromised agent,
 # because it lives in GitHub rather than the working tree.
 #
@@ -9,25 +8,25 @@
 # judgment, but it is not nothing either. Tier-2 paths below get the extra
 # scrutiny defined in the self-review protocol, not a second account.
 
-* @owner
+* @microbrewerGM
 
 # THE critical protection: agent constraints and CI cannot self-modify
-/.claude/                            @owner
-/.github/                            @owner
+/.claude/                            @microbrewerGM
+/.github/                            @microbrewerGM
 
 # Rights: the manifest and the workflow that checks it are owned separately
 # on purpose. data-rights must not be able to weaken its own gate.
-/catalog/rights/                     @owner
-/.github/workflows/rights-gate.yml   @owner
+/catalog/rights/                     @microbrewerGM
+/.github/workflows/rights-gate.yml   @microbrewerGM
 
 # Infra: laptop review, self-review protocol Tier 2
-/infra/                              @owner
+/infra/                              @microbrewerGM
 
 # Security surface: self-review protocol Tier 2
-/worker/src/security/                @owner
+/worker/src/security/                @microbrewerGM
 
 # Domain paths
-/pipeline/                           @owner
-/worker/                             @owner
-/catalog/                            @owner
-/tests/baselines/                    @owner
+/pipeline/                           @microbrewerGM
+/worker/                             @microbrewerGM
+/catalog/                            @microbrewerGM
+/tests/baselines/                    @microbrewerGM
