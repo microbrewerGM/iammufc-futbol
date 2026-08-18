@@ -92,9 +92,16 @@ jobs:
         # that got in another way (a squash-merge, a force-push before the
         # ruleset existed, a rebase). .gitleaks.toml documents the one
         # allowlisted pattern (a committed sha256 test fixture) and why.
+        #
+        # GITHUB_TOKEN is required here, not optional -- found by running this
+        # on a real PR for the first time (earlier commits went straight to
+        # main via push, which doesn't need it). gitleaks-action v3 refuses to
+        # scan pull_request events without it: "GITHUB_TOKEN is now required
+        # to scan pull requests."
         uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
           GITLEAKS_CONFIG: .gitleaks.toml
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   dependency-review:
     name: dependency-review
