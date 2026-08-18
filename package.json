@@ -1,0 +1,31 @@
+{
+  "name": "iammufc",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "wrangler dev --config infra/wrangler.jsonc --env dev",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "d1:seed": "wrangler d1 execute iammufc-dev --config infra/wrangler.jsonc --env dev --local --file infra/migrations/0001_schema.sql && wrangler d1 execute iammufc-dev --config infra/wrangler.jsonc --env dev --local --file infra/migrations/0002_seed.sql",
+    "catalog:build": "uv run python -m pipeline.contracts.build_catalog",
+    "ingest": "uv run python -m pipeline.sources.run"
+  },
+  "dependencies": {
+    "hono": "4.12.34"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.21.3",
+    "@cloudflare/workers-types": "5.20260817.1",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10",
+    "wrangler": "4.123.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true,
+    "workerd@1.20260811.1": true
+  }
+}

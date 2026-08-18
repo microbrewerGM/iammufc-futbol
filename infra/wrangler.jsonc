@@ -1,0 +1,77 @@
+// M1 (PoC) configuration. D1 + KV only — deliberately no R2, Queues,
+// Workflows, Durable Objects or Containers, so the PoC runs on the free plan.
+// Containers are what force Workers Paid; they arrive at M4.
+//
+// Placeholder ids must be replaced with real ones from `wrangler d1 create`
+// and `wrangler kv namespace create` before this deploys.
+//
+// VERIFY the current schema against developers.cloudflare.com before use.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "iammufc",
+  "main": "../worker/src/index.ts",
+  "compatibility_date": "2026-08-01",
+
+  "assets": {
+    "directory": "../worker/public",
+    "not_found_handling": "404-page"
+  },
+
+  "observability": { "enabled": true },
+
+  "env": {
+    "dev": {
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "iammufc-dev",
+          // Placeholder until `wrangler d1 create iammufc-dev` is run against a
+          // real account. Local development (--local) never contacts it.
+          "database_id": "00000000-0000-4000-8000-000000000000",
+          // Keeps local and preview writes off any shared database.
+          "preview_database_id": "00000000-0000-4000-8000-000000000000"
+        }
+      ],
+      "kv_namespaces": [{ "binding": "CFG", "id": "<dev-kv-id>" }],
+      "ai": { "binding": "AI" }
+    },
+
+    "production": {
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "iammufc-prod",
+          "database_id": "<prod-uuid>"
+        }
+      ],
+      "kv_namespaces": [{ "binding": "CFG", "id": "<prod-kv-id>" }],
+      "ai": { "binding": "AI" }
+
+      // M2 — football-data.org key. ToS 6.1 forbids keys in OSS repos, so it
+      // lives in Secrets Store and is bound at runtime, never in the tree.
+      // "secrets_store_secrets": [
+      //   { "binding": "FOOTBALL_DATA_KEY", "store_id": "<store>",
+      //     "secret_name": "football-data-key" }
+      // ]
+    }
+  }
+
+  // M2 — nightly batch:
+  // "triggers": { "crons": ["0 5 * * *"] },
+  //
+  // M2 — R2 lakehouse (bronze/silver/gold + rendered artifacts):
+  // "r2_buckets": [
+  //   { "binding": "BRONZE", "bucket_name": "iammufc-bronze-<env>" },
+  //   { "binding": "GOLD",   "bucket_name": "iammufc-gold-<env>" }
+  // ],
+  //
+  // M3 — async materialization:
+  // "queues": { "producers": [...], "consumers": [...] },
+  // "durable_objects": { "bindings": [{ "name": "ARTIFACT", ... }] },
+  //
+  // M4 — Python pipeline. THIS is the line that requires Workers Paid.
+  // "containers": [
+  //   { "class_name": "PipelineContainer", "image": "../pipeline/Dockerfile",
+  //     "instance_type": "standard-1" }   // 0.5 vCPU / 4 GiB / 8 GB
+  // ]
+}

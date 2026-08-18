@@ -1,0 +1,27 @@
+# Hard rule: data never enters a public repository
+data/
+*.parquet
+*.csv
+*.db
+*.sqlite
+*.sqlite3
+
+# Generated D1 seed — regenerate with the ingest script, never commit
+infra/migrations/*_seed.sql
+
+# Secrets
+.env
+.env.*
+.dev.vars
+*.pem
+
+# Build / tooling
+node_modules/
+dist/
+.wrangler/
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+.DS_Store

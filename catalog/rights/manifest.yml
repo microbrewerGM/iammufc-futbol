@@ -1,0 +1,90 @@
+# Rights manifest — the gate.
+#
+# Sole owner: the data-rights persona. It may NOT edit
+# .github/workflows/rights-gate.yml; it does not get to weaken its own gate.
+#
+# Setting redistributable: true on a previously-false source requires human
+# review. Any verified_date older than 12 months is an error (pin site P9).
+#
+# Public site = redistribution. "Non-commercial" grants nothing on its own.
+
+version: 1
+
+rights:
+  - source_id: football_data_couk
+    name: Football-Data.co.uk (via datahub / openfootball mirrors)
+    licence_id: ODC-PDDL-1.0
+    redistributable: true
+    attribution_asset: null
+    attribution_text: null
+    tos_snapshot: catalog/rights/sources/football-data-couk.md
+    verified_date: 2026-08-18
+    notes: >
+      Mirrors publish under Open Data Commons PDDL v1.0, which places the data
+      in the public domain. Match results and betting odds back to 1993-94.
+      No xG, no player box scores.
+
+  - source_id: openfootball
+    name: openfootball
+    licence_id: public-domain
+    redistributable: true
+    attribution_asset: null
+    attribution_text: null
+    tos_snapshot: catalog/rights/sources/openfootball.md
+    verified_date: 2026-08-18
+    notes: Public-domain fixtures and results. Zero licensing constraint.
+
+  - source_id: fpl
+    name: Fantasy Premier League public API
+    licence_id: unofficial-tolerated
+    redistributable: true
+    attribution_asset: fpl_credit
+    attribution_text: >
+      Player data derived from the Fantasy Premier League public API.
+      Not affiliated with or endorsed by the Premier League.
+    tos_snapshot: catalog/rights/sources/fpl.md
+    verified_date: 2026-08-18
+    notes: >
+      Unofficial and undocumented, but stable and universally used. The best
+      free Man-United-specific player box-score source. Current season via the
+      live API; 2016-17 onward via the vaastav/Fantasy-Premier-League archive.
+      RISK: endpoints can change without notice. This is a tolerated-use
+      position, not a granted licence -- reassess if the Premier League objects.
+
+  # ---------------------------------------------------------------------------
+  # Declared but NOT ingested. Present so the NO_RIGHTS path is exercised by a
+  # real coverage cell and a real test, rather than existing only as a code
+  # branch nobody has run.
+  # ---------------------------------------------------------------------------
+  - source_id: understat
+    name: Understat
+    licence_id: none
+    redistributable: false
+    attribution_asset: null
+    attribution_text: null
+    tos_snapshot: catalog/rights/sources/understat.md
+    verified_date: 2026-08-18
+    notes: >
+      Free xG and shot data with x/y coordinates covering Manchester United
+      from 2014-15. No API; JSON embedded in pages. NO REDISTRIBUTION LICENCE.
+      We may compute against it privately; we may not publish it. Any coverage
+      cell citing this source must resolve to NO_RIGHTS.
+      NOTE: xG itself is NOT blocked -- FPL publishes an Opta-derived
+      expected_goals field from 2022-23 onward, and we serve that. Understat
+      would only be needed for seasons before 2022-23.
+
+  - source_id: fbref
+    name: FBref / Sports Reference
+    licence_id: none
+    redistributable: false
+    attribution_asset: null
+    attribution_text: null
+    tos_snapshot: catalog/rights/sources/fbref.md
+    verified_date: 2026-08-18
+    notes: >
+      The richest free Manchester United resource (Opta-sourced, 2017-18
+      onward), and explicitly off-limits: the Data Use page states you should
+      not create websites or tools based on data scraped from Sports Reference
+      sites. Custom data requests carry a $5,000 minimum. NO REDISTRIBUTION.
+      Carries metrics no green-tier source has -- progressive passes, carries,
+      pressures -- which is exactly why it is the honest NO_RIGHTS case.

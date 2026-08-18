@@ -1,0 +1,26 @@
+# gitleaks config. Extends the built-in default ruleset (do not disable rules
+# wholesale) and allowlists exactly one thing, with a reason.
+#
+# Run locally:  gitleaks detect --no-git -s . -c .gitleaks.toml --redact
+# Run in CI:    .github/workflows/ci.yml -> supply-chain job
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Deterministic test fixture, not a secret"
+
+# tests/vectors/artifact-keys.json is a COMMITTED, PUBLIC fixture of sha256
+# artifact keys (see pipeline/contracts/gen_vectors.py). It exists specifically
+# so both the Python and TypeScript test suites can assert against the same
+# known hashes. High-entropy hex strings trip the generic-api-key heuristic,
+# but these are outputs of a public, reproducible hash function over public
+# data -- the literal opposite of a secret. Anyone can regenerate this file
+# and get the identical values; that is the point of it.
+#
+# Both `paths` and `regexTarget`/`regexes` are given: gitleaks ANDs them, so
+# this narrows to "the 64-hex-char 'key' field, inside this one file" rather
+# than allowlisting the whole file -- an actual secret pasted anywhere else in
+# that file would still be caught.
+paths = ['''tests/vectors/artifact-keys\.json''']
+regexes = ['''"key":\s*"[0-9a-f]{64}"''']

@@ -1,0 +1,73 @@
+# Declared metrics. The LLM may only propose a metric_id that exists here;
+# anything else is rejected by validation, not by the model.
+#
+# Spanish labels are part of the declaration, not a translation step. Football
+# position and metric vocabulary differs materially between languages and must
+# be a controlled mapping from codes, never ad-hoc string translation.
+
+version: 1
+
+metrics:
+  - metric_id: goals
+    label_en: Goals
+    label_es: Goles
+    description: Goals scored in the competition.
+    granularity: box_score
+    unit: count
+    decimals: 0
+
+  - metric_id: assists
+    label_en: Assists
+    label_es: Asistencias
+    description: Assists recorded in the competition.
+    granularity: box_score
+    unit: count
+    decimals: 0
+
+  - metric_id: minutes
+    label_en: Minutes played
+    label_es: Minutos jugados
+    description: Total minutes on the pitch.
+    granularity: box_score
+    unit: minutes
+    decimals: 0
+
+  - metric_id: points
+    label_en: Fantasy points
+    label_es: Puntos fantasy
+    description: >
+      Fantasy Premier League points. A derived scoring construct, not a football
+      performance measure -- labelled as such wherever it is displayed.
+    granularity: box_score
+    unit: points
+    decimals: 0
+
+  - metric_id: xg
+    label_en: Expected goals
+    label_es: Goles esperados
+    description: >
+      Expected goals, as published in the FPL `expected_goals` field
+      (Opta-derived). Present from 2022-23 onward. Understat also carries xG
+      back to 2014-15, but grants no redistribution licence -- so earlier
+      seasons are a rights problem, not a data problem.
+    granularity: box_score
+    unit: xg
+    decimals: 2
+
+  # Declared so the catalog can answer honestly about it. Its only coverage
+  # cell cites a non-redistributable source, so it resolves to NO_RIGHTS
+  # rather than NO_DATA -- a materially different, and more accurate, refusal.
+  #
+  # This metric is genuinely unavailable from any green-tier source: FPL does
+  # not publish it, and the free public-domain results feeds are match-level
+  # only. There is no honest way to serve it.
+  - metric_id: progressive_passes
+    label_en: Progressive passes
+    label_es: Pases progresivos
+    description: >
+      Passes that move the ball significantly toward the opponent's goal.
+      Opta-derived and available from FBref, which explicitly forbids building
+      tools on its scraped data. No green-tier source carries it.
+    granularity: box_score
+    unit: count
+    decimals: 0

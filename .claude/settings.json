@@ -1,0 +1,46 @@
+{
+  "//": "Verified against current Claude Code docs (open item O-3, closed 2026-08-18). IMPORTANT: the deny rules below are defence in depth, NOT the control. Bash deny matching is prefix-based and fails OPEN on `npx wrangler deploy`, extra whitespace, `--env=prod`, variable expansion, and commands inside a script body. The PreToolUse hook in .claude/hooks/guard-paths.sh inspects the full command text and fails CLOSED -- that is the enforcement. CODEOWNERS is the only genuinely hard tier, because it lives in GitHub rather than this working tree.",
+  "permissions": {
+    "deny": [
+      "Edit(.claude/**)",
+      "Write(.claude/**)",
+      "Edit(.github/**)",
+      "Write(.github/**)",
+      "Read(.env*)",
+      "Read(.dev.vars)",
+      "Bash(wrangler deploy:*)",
+      "Bash(npx wrangler deploy:*)",
+      "Bash(wrangler versions upload:*)",
+      "Bash(npx wrangler versions upload:*)",
+      "Bash(wrangler d1 migrations:*)",
+      "Bash(npx wrangler d1 migrations:*)",
+      "Bash(wrangler secret:*)",
+      "Bash(npx wrangler secret:*)",
+      "Bash(git push --force:*)"
+    ],
+    "ask": [
+      "Edit(infra/**)",
+      "Write(infra/**)",
+      "Edit(worker/src/security/**)",
+      "Write(worker/src/security/**)",
+      "Edit(catalog/rights/**)",
+      "Write(catalog/rights/**)",
+      "Bash(git push:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|NotebookEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-paths.sh",
+            "timeout": 15,
+            "statusMessage": "Checking guarded paths and commands..."
+          }
+        ]
+      }
+    ]
+  }
+}

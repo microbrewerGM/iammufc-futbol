@@ -1,0 +1,90 @@
+# Periodic pin review (docs/pin-registry.md P1, P2, P4, P9).
+#
+# Computes proposals with pin_check.py, then opens ONE PR PER PROPOSAL via
+# propose_pin_bump.py -- ADR-0004: "a phone-reviewable diff is the whole
+# point," which a combined bump PR defeats. Each PR is reviewed like any other
+# dependency change; nothing here auto-merges.
+#
+# This workflow does NOT replace Dependabot security alerts, which override
+# ADR-0003/0004 and should be acted on immediately, not queued for the next
+# scheduled run.
+
+name: Pin Check
+
+on:
+  schedule:
+    # Monthly. The registry's stated cadence is quarterly for most sites, but
+    # a monthly no-op run is cheap and catches P9 (rights ToS freshness)
+    # drifting toward its 12-month hard limit sooner than a quarterly cron
+    # would -- worth the extra runs for the highest-consequence pin on the list.
+    - cron: "0 6 1 * *"
+  workflow_dispatch: {} # manual trigger for testing or an out-of-cycle check
+
+permissions:
+  contents: write # to push a branch
+  pull-requests: write # to open the PR
+
+jobs:
+  check:
+    name: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+
+      - name: Compute proposals
+        id: compute
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          uv sync --locked
+          uv run python .github/scripts/pin_check.py --json > proposals.json
+          echo "count=$(python3 -c 'import json;print(len(json.load(open("proposals.json"))))')" >> "$GITHUB_OUTPUT"
+
+      - name: Fail on lapsed rights ToS (P9)
+        # A rights-freshness ERROR must block, not just get proposed -- it
+        # governs what may legally be published. Exit code from pin_check.py
+        # is already 1 in this case; re-run visibly so the failure reason
+        # shows in the job log rather than only in proposals.json.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: uv run python .github/scripts/pin_check.py
+
+      - name: Open one PR per proposal
+        if: steps.compute.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "pin-check bot"
+          git config user.email "actions@users.noreply.github.com"
+          python3 -c "
+          import json
+          for p in json.load(open('proposals.json')):
+              print(json.dumps(p))
+          " | while read -r proposal; do
+            git checkout main
+            uv run python .github/scripts/propose_pin_bump.py --apply "$proposal" || \
+              echo "::warning::proposal failed, see log: $proposal"
+          done
+
+      - name: Update pin-registry.md review date
+        if: steps.compute.outputs.count != '0'
+        run: |
+          git checkout main
+          today=$(date -u +%Y-%m-%d)
+          sed -i "s/^Last reviewed: \*\*[0-9-]*\*\*/Last reviewed: **$today**/" docs/pin-registry.md
+          if ! git diff --quiet docs/pin-registry.md; then
+            git checkout -b "pin-check/registry-date-$today"
+            git add docs/pin-registry.md
+            git commit -m "docs: bump pin-registry.md review date to $today"
+            git push -u origin "pin-check/registry-date-$today"
+            gh pr create --title "docs: pin-registry review date -> $today" \
+              --body "Automated. Confirms the scheduled pin-check ran on this date, per docs/pin-registry.md's own review-cycle rule." \
+              --repo "${{ github.repository }}"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}

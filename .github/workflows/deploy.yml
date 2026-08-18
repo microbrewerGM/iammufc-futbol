@@ -1,0 +1,124 @@
+# Deployment.
+#
+# Two properties this file exists to guarantee:
+#
+#   1. Deploy jobs run ONLY on push to main -- post-merge, after review. A
+#      pull_request event from a fork runs with an empty secrets context, so a
+#      hostile PR can run the test suite but can never read a Cloudflare token.
+#      Never add `pull_request_target` with a fork checkout: that is the one
+#      trigger combining untrusted code with secret access.
+#
+#   2. Production promotion pauses on a GitHub Environment required reviewer.
+#      This is the ONLY place that gate can live. Moving deploy to Workers
+#      Builds or a Cloudflare webhook forfeits it entirely -- there is no
+#      Actions job left to pause.
+#
+# Cloudflare does not support OIDC from GitHub Actions (wrangler-action#402,
+# workers-sdk#11434 both still open). Long-lived per-environment tokens are the
+# only option; scoping and rotation are compensating controls, not a fix.
+# Tracked as exception E-007.
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false # never interrupt an in-flight deploy
+
+jobs:
+  build-data:
+    name: build-data
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+
+      - name: Ingest and generate the D1 seed
+        # The seed is generated here and never committed. Hard rule: no data
+        # files in a public repository.
+        run: |
+          uv sync --locked
+          uv run python -m pipeline.contracts.build_catalog
+          uv run python -m pipeline.sources.run
+
+      - name: Upload seed for the deploy jobs
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: d1-seed
+          path: infra/migrations/0002_seed.sql
+          retention-days: 1
+
+  deploy-dev:
+    name: deploy-dev
+    needs: build-data
+    runs-on: ubuntu-latest
+    environment: dev # no required reviewer; dev is disposable
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: d1-seed
+          path: infra/migrations
+
+      - name: Apply migrations (dev)
+        # CF_TOKEN_DEV is scoped so it has no permission on any *-prod
+        # resource. That scoping, not the naming convention, is the boundary.
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CF_TOKEN_DEV }}
+          command: d1 execute iammufc-dev --config infra/wrangler.jsonc --env dev --remote --file infra/migrations/0001_schema.sql
+
+      - name: Deploy Worker (dev)
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CF_TOKEN_DEV }}
+          command: deploy --config infra/wrangler.jsonc --env dev
+
+  deploy-prod:
+    name: deploy-prod
+    needs: deploy-dev
+    runs-on: ubuntu-latest
+    # Required reviewer + Prevent self-review are configured on this
+    # Environment in repository settings, not here. The job simply cannot
+    # start until a human approves, and the production token is only readable
+    # once it has.
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: d1-seed
+          path: infra/migrations
+
+      - name: Deploy Worker (production)
+        # For Container Workers this MUST be `deploy`, not `versions upload` --
+        # only deploy updates container images.
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CF_TOKEN_PROD }}
+          command: deploy --config infra/wrangler.jsonc --env production

@@ -1,0 +1,33 @@
+# Replace @owner with your real handle before this has any effect.
+# CODEOWNERS is the only enforcement tier that survives a compromised agent,
+# because it lives in GitHub rather than the working tree.
+#
+# Single owner, personal repo, no second reviewer identity (decided
+# 2026-08-19 -- see docs/exceptions.md E-005 and
+# docs/runbooks/self-review-protocol.md). "Require review from Code Owners"
+# still forces a deliberate approval click even solo; it is not a stranger's
+# judgment, but it is not nothing either. Tier-2 paths below get the extra
+# scrutiny defined in the self-review protocol, not a second account.
+
+* @owner
+
+# THE critical protection: agent constraints and CI cannot self-modify
+/.claude/                            @owner
+/.github/                            @owner
+
+# Rights: the manifest and the workflow that checks it are owned separately
+# on purpose. data-rights must not be able to weaken its own gate.
+/catalog/rights/                     @owner
+/.github/workflows/rights-gate.yml   @owner
+
+# Infra: laptop review, self-review protocol Tier 2
+/infra/                              @owner
+
+# Security surface: self-review protocol Tier 2
+/worker/src/security/                @owner
+
+# Domain paths
+/pipeline/                           @owner
+/worker/                             @owner
+/catalog/                            @owner
+/tests/baselines/                    @owner

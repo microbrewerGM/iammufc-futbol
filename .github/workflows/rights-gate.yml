@@ -1,0 +1,83 @@
+# The rights gate. THIS is the control -- everything else about data licensing
+# in this repo is documentation until this job is a required status check.
+#
+# Mark `rights` as required in the repository ruleset. An agent-authored PR
+# cannot merge without it passing, and the data-rights persona is deliberately
+# NOT an owner of this file: it does not get to weaken its own gate.
+
+name: Rights Gate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  rights:
+    name: rights
+    runs-on: ubuntu-latest
+    steps:
+      # Every third-party action pinned to a full commit SHA (ADR-0004).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the data-file check diffs against the base ref
+
+      - name: Block data files entering a public repository
+        # Context values go through env:, never interpolated into run: directly.
+        # base.sha is a commit SHA rather than free text, but the safe pattern
+        # costs nothing and removes the need to reason about it at all.
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          base="${BASE_SHA:-HEAD~1}"
+          # Non-redistributable data must never enter the tree. A generated D1
+          # seed is a data file wearing a costume, so it is caught here too.
+          if git diff --name-only "$base"...HEAD \
+             | grep -E '\.(parquet|csv|db|sqlite|sqlite3)$|^data/|_seed\.sql$'; then
+            echo "::error::Data files must not be committed to a public repo."
+            exit 1
+          fi
+          echo "no data files in diff"
+
+      - name: Block secrets entering the tree
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          base="${BASE_SHA:-HEAD~1}"
+          # football-data.org ToS 6.1 forbids API keys in open-source repos.
+          if git diff --name-only "$base"...HEAD | grep -E '^\.env|\.env\.|\.dev\.vars$|\.pem$'; then
+            echo "::error::Secrets belong in Secrets Store / Environment secrets."
+            exit 1
+          fi
+          echo "no secret files in diff"
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+
+      - name: Catalog invariants
+        # Every coverage cell resolves to a real source and metric; no cell
+        # claims redistributable over a source that forbids it; every source
+        # has a ToS snapshot that exists and is under 12 months old.
+        run: uv run python -m pipeline.contracts.build_catalog
+
+      - name: Compiled catalog matches the YAML it derives from
+        # Pin site P16. A hand-edited catalog.json could quietly widen coverage
+        # past what the rights manifest permits, so the build must be a no-op.
+        run: |
+          set -euo pipefail
+          if ! git diff --exit-code --stat worker/src/generated/catalog.json; then
+            echo "::error::worker/src/generated/catalog.json is stale. Run: uv run python -m pipeline.contracts.build_catalog"
+            exit 1
+          fi
+          echo "compiled catalog is current"
+
+      - name: Feasibility negative cases
+        # Asserts refusals happen for the RIGHT reason -- NO_RIGHTS is not
+        # NO_DATA, and nothing outside the coverage matrix ever reports feasible.
+        run: uv run pytest tests/test_feasibility.py -q

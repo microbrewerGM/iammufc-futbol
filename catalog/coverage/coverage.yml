@@ -1,0 +1,106 @@
+# Coverage matrix — the single source of truth for feasibility.
+#
+# Feasibility is a LOOKUP here. Absence of a cell means NOT_COMPUTABLE_DATA_MISSING.
+# It never means "probably fine". An optimistic false positive produces a
+# confident wrong answer, which is the worst outcome this system can produce.
+#
+# Deliberately absent, and load-bearing by their absence:
+#   - Any event_with_coords cell. Free republishable Man United event data
+#     covers 2017-18 ONLY (Wyscout/Pappalardo), and it is not ingested until M4.
+#     So every shot_map / pass_map / heatmap request resolves to NO_DATA today.
+#   - xg before 2022-23. FPL began publishing expected_goals that season; the
+#     six earlier seasons genuinely have no xG we may serve. Understat has it
+#     back to 2014-15 but grants no redistribution licence, so those seasons are
+#     a RIGHTS problem, not a data problem -- and the matrix must not pretend
+#     otherwise by simply omitting them silently.
+
+version: 1
+
+coverage:
+
+  # --- goals: FPL box scores, all ten seasons -----------------------------------------
+  - { metric: goals, entity_type: player, granularity: box_score, season: "2016-17", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: goals, entity_type: player, granularity: box_score, season: "2017-18", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: goals, entity_type: player, granularity: box_score, season: "2018-19", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: goals, entity_type: player, granularity: box_score, season: "2019-20", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: goals, entity_type: player, granularity: box_score, season: "2020-21", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: goals, entity_type: player, granularity: box_score, season: "2021-22", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: goals, entity_type: player, granularity: box_score, season: "2022-23", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: goals, entity_type: player, granularity: box_score, season: "2023-24", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: goals, entity_type: player, granularity: box_score, season: "2024-25", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: goals, entity_type: player, granularity: box_score, season: "2025-26", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+
+  # --- assists: FPL box scores, all ten seasons ---------------------------------------
+  - { metric: assists, entity_type: player, granularity: box_score, season: "2016-17", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: assists, entity_type: player, granularity: box_score, season: "2017-18", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: assists, entity_type: player, granularity: box_score, season: "2018-19", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: assists, entity_type: player, granularity: box_score, season: "2019-20", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: assists, entity_type: player, granularity: box_score, season: "2020-21", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: assists, entity_type: player, granularity: box_score, season: "2021-22", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: assists, entity_type: player, granularity: box_score, season: "2022-23", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: assists, entity_type: player, granularity: box_score, season: "2023-24", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: assists, entity_type: player, granularity: box_score, season: "2024-25", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: assists, entity_type: player, granularity: box_score, season: "2025-26", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+
+  # --- minutes: FPL box scores, all ten seasons ---------------------------------------
+  - { metric: minutes, entity_type: player, granularity: box_score, season: "2016-17", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: minutes, entity_type: player, granularity: box_score, season: "2017-18", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: minutes, entity_type: player, granularity: box_score, season: "2018-19", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: minutes, entity_type: player, granularity: box_score, season: "2019-20", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: minutes, entity_type: player, granularity: box_score, season: "2020-21", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: minutes, entity_type: player, granularity: box_score, season: "2021-22", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: minutes, entity_type: player, granularity: box_score, season: "2022-23", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: minutes, entity_type: player, granularity: box_score, season: "2023-24", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: minutes, entity_type: player, granularity: box_score, season: "2024-25", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: minutes, entity_type: player, granularity: box_score, season: "2025-26", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+
+  # --- points: FPL box scores, all ten seasons ----------------------------------------
+  - { metric: points, entity_type: player, granularity: box_score, season: "2016-17", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: points, entity_type: player, granularity: box_score, season: "2017-18", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: points, entity_type: player, granularity: box_score, season: "2018-19", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: points, entity_type: player, granularity: box_score, season: "2019-20", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: points, entity_type: player, granularity: box_score, season: "2020-21", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: points, entity_type: player, granularity: box_score, season: "2021-22", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: points, entity_type: player, granularity: box_score, season: "2022-23", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: points, entity_type: player, granularity: box_score, season: "2023-24", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: points, entity_type: player, granularity: box_score, season: "2024-25", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: points, entity_type: player, granularity: box_score, season: "2025-26", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+
+  # --- xg: FPL publishes expected_goals from 2022-23 onward only ------
+  - { metric: xg, entity_type: player, granularity: box_score, season: "2022-23", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: xg, entity_type: player, granularity: box_score, season: "2023-24", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: xg, entity_type: player, granularity: box_score, season: "2024-25", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  - { metric: xg, entity_type: player, granularity: box_score, season: "2025-26", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+
+  # --- season-level record, from PDDL match results -------------------
+  - { metric: goals, entity_type: season, granularity: box_score, season: "2016-17", competition: PL, source_id: football_data_couk, redistributable: true, cost_class: cheap }
+  - { metric: goals, entity_type: season, granularity: box_score, season: "2017-18", competition: PL, source_id: football_data_couk, redistributable: true, cost_class: cheap }
+  - { metric: goals, entity_type: season, granularity: box_score, season: "2018-19", competition: PL, source_id: football_data_couk, redistributable: true, cost_class: cheap }
+  - { metric: goals, entity_type: season, granularity: box_score, season: "2019-20", competition: PL, source_id: football_data_couk, redistributable: true, cost_class: cheap }
+  - { metric: goals, entity_type: season, granularity: box_score, season: "2020-21", competition: PL, source_id: football_data_couk, redistributable: true, cost_class: cheap }
+  - { metric: goals, entity_type: season, granularity: box_score, season: "2021-22", competition: PL, source_id: football_data_couk, redistributable: true, cost_class: cheap }
+  - { metric: goals, entity_type: season, granularity: box_score, season: "2022-23", competition: PL, source_id: football_data_couk, redistributable: true, cost_class: cheap }
+  - { metric: goals, entity_type: season, granularity: box_score, season: "2023-24", competition: PL, source_id: football_data_couk, redistributable: true, cost_class: cheap }
+  - { metric: goals, entity_type: season, granularity: box_score, season: "2024-25", competition: PL, source_id: football_data_couk, redistributable: true, cost_class: cheap }
+  - { metric: goals, entity_type: season, granularity: box_score, season: "2025-26", competition: PL, source_id: football_data_couk, redistributable: true, cost_class: cheap }
+
+  # --- The NO_RIGHTS case --------------------------------------------------
+  # We know exactly where to get this, it would be trivial to serve, and we
+  # may not. No green-tier source carries progressive passes: FPL does not
+  # publish it, and the public-domain results feeds are match-level only.
+  # Present so the refusal path is exercised by a real cell and a real test.
+  - metric: progressive_passes
+    entity_type: player
+    granularity: box_score
+    season: "2024-25"
+    competition: PL
+    source_id: fbref
+    redistributable: false
+    cost_class: cheap
+    notes: >
+      FBref's Data Use page states you should not create websites or tools
+      based on data scraped from Sports Reference sites. This cell exists so
+      the system refuses for the RIGHT reason -- NO_RIGHTS, not NO_DATA. The
+      distinction matters to a user: one is a gap we could close by integrating
+      a source, the other is a gap we may never close without paying for a
+      licence.

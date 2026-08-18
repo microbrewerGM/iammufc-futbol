@@ -1,0 +1,218 @@
+/* Served as a static asset so CSP can stay at style-src 'self' with no
+   inline exception. Static-asset requests are free and unmetered on Workers. */
+
+:root {
+  --bg: #fbfbfa;
+  --fg: #1a1a1a;
+  --muted: #5f6368;
+  --line: #e0e0dd;
+  --card: #ffffff;
+  --card-hover: #f6f6f4;
+  --accent: #b00d23;        /* brand red -- MUFC, not danger. See design-principles.md §5 */
+  --accent-soft: #f6dde1;
+  --accent-hover: #8f0a1c;
+  --focus-ring: #1a5fd6;    /* distinct from brand red on purpose: focus is not decoration */
+  --danger: #a3231f;        /* semantic error/danger, deliberately not --accent */
+  --warn-bg: #fff8e6;
+  --warn-line: #e8c65c;
+  --stop-bg: #fdecee;
+  --stop-line: #e8a0aa;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 4px 10px rgb(0 0 0 / 0.05);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16171a;
+    --fg: #ececec;
+    --muted: #a2a6ad;
+    --line: #2e3035;
+    --card: #1d1f23;
+    --card-hover: #24262b;
+    --accent: #e8485f;
+    --accent-soft: #3a1d24;
+    --accent-hover: #f06a7e;
+    --focus-ring: #6ea1ff;
+    --danger: #e8626a;
+    --warn-bg: #2c2716;
+    --warn-line: #6b5a22;
+    --stop-bg: #2e1a1e;
+    --stop-line: #6e3038;
+    --shadow: none; /* no light source in dark mode; depth comes from --card vs --bg instead */
+  }
+}
+
+* { box-sizing: border-box; }
+
+/* Every action gets a response (design-principles.md §9). One ring style,
+   applied consistently, is cheaper to reason about than one per element and
+   is what actually makes keyboard navigation visible. :focus-visible so a
+   mouse click doesn't paint a ring nobody asked for. */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+body {
+  margin: 0;
+  padding: 2rem 1.25rem 4rem;
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+main { max-width: 780px; margin: 0 auto; }
+
+/* Language toggle. Quiet by design (design-principles.md §2: provenance-level
+   chrome must not outshout the content) but a clear signifier (§1): the
+   active locale is bold + underlined, not colour alone, so it reads without
+   colour vision. Right-aligned above the content, same max-width as main. */
+.lang-toggle {
+  max-width: 780px;
+  margin: 0 auto;
+  padding: .75rem 1.25rem 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: .35rem;
+  font-size: .82rem;
+}
+.lang-toggle a {
+  padding: .15rem .45rem;
+  border-radius: 5px;
+  color: var(--muted);
+  text-decoration: none;
+}
+.lang-toggle a:hover { color: var(--accent); background: var(--accent-soft); }
+.lang-toggle a[aria-current="page"] {
+  color: var(--fg);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+h1 { font-size: 1.45rem; margin: 0 0 .25rem; letter-spacing: -.01em; }
+h2 { font-size: 1.05rem; margin: 2rem 0 .6rem; }
+h3 { font-size: .85rem; margin: 1.4rem 0 .5rem; text-transform: uppercase;
+     letter-spacing: .06em; color: var(--muted); }
+
+a { color: var(--accent); text-decoration-thickness: 1px; }
+a:hover { color: var(--accent-hover); }
+p { margin: .5rem 0; }
+
+.tagline { color: var(--muted); margin: 0 0 1.5rem; font-size: .92rem; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 1rem 1.15rem;
+  margin: 1rem 0;
+  box-shadow: var(--shadow); /* subtle -- if you notice it first, it's wrong (§7) */
+}
+
+form { display: flex; gap: .5rem; flex-wrap: wrap; }
+
+input[type="text"], select {
+  flex: 1 1 16rem;
+  min-width: 0;
+  padding: .6rem .7rem;
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  transition: border-color .12s ease;
+}
+input[type="text"]:hover, select:hover { border-color: var(--muted); }
+input[type="text"]:focus-visible, select:focus-visible { border-color: var(--focus-ring); }
+
+button {
+  padding: .6rem 1.1rem;
+  font: inherit;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border: 0;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background-color .12s ease, transform .05s ease;
+}
+button:hover { background: var(--accent-hover); }
+button:active { transform: translateY(1px); }
+button:disabled {
+  background: var(--line);
+  color: var(--muted);
+  cursor: not-allowed;
+  transform: none;
+}
+
+button.secondary {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+button.secondary:hover { background: var(--accent-soft); color: var(--accent-hover); }
+button.secondary:disabled { background: transparent; border-color: var(--line); color: var(--muted); }
+
+.examples { list-style: none; padding: 0; margin: .75rem 0 0;
+            font-size: .88rem; color: var(--muted); }
+.examples li { margin: .2rem 0; }
+
+/* Provenance, not the answer -- deliberately quiet (design-principles.md §2).
+   A pink/accent background here would out-shout the chart it describes, which
+   is the exact hierarchy inversion the design guidance warns against. */
+.intent {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .78rem;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: .6rem .8rem;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.note { background: var(--warn-bg); border: 1px solid var(--warn-line);
+        border-radius: 7px; padding: .7rem .85rem; font-size: .88rem; }
+/* A refusal is semantic danger, not brand -- --danger is intentionally a
+   different hue from --accent so the two never get confused (§5). */
+.stop {
+  background: var(--stop-bg);
+  border: 1px solid var(--stop-line);
+  border-left: 3px solid var(--danger);
+  border-radius: 7px;
+  padding: .9rem 1rem;
+}
+.stop .state { font-family: ui-monospace, monospace; font-size: .78rem;
+               text-transform: uppercase; letter-spacing: .05em; color: var(--danger); }
+
+.chart { display: block; margin: .5rem 0 1rem; overflow: visible; }
+.chart .bar { fill: var(--accent); }
+.chart .lbl { fill: var(--fg); font-size: 13px; font-family: inherit; }
+.chart .val { fill: var(--muted); font-size: 12px; font-family: ui-monospace, monospace; }
+
+table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+th, td { text-align: left; padding: .4rem .6rem; border-bottom: 1px solid var(--line); }
+tbody tr:hover { background: var(--card-hover); }
+th { color: var(--muted); font-weight: 600; font-size: .8rem;
+     text-transform: uppercase; letter-spacing: .04em; }
+td.num, th.num { text-align: right; font-family: ui-monospace, monospace; }
+
+.matrix td, .matrix th { font-size: .82rem; padding: .3rem .5rem; }
+.yes { color: var(--accent); font-weight: 700; }
+.no  { color: var(--muted); }
+
+/* The row for the season currently being viewed on a player's career table. */
+tr.current { background: var(--accent-soft); }
+tr.current td:first-child { font-weight: 700; }
+
+footer {
+  max-width: 780px; margin: 3rem auto 0; padding-top: 1.25rem;
+  border-top: 1px solid var(--line);
+  font-size: .8rem; color: var(--muted);
+}
+footer .disclaimer { font-weight: 600; color: var(--fg); }

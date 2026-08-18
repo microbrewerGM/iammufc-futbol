@@ -1,0 +1,35 @@
+[project]
+name = "iammufc-pipeline"
+version = "0.1.0"
+description = "Batch pipeline and capability catalog for iammufc.futbol"
+requires-python = ">=3.12"
+
+# Exact pins per ADR-0003 (N-1 minor) and ADR-0004 (pin everything pinnable).
+# pandas and pyyaml are rule-2 exceptions: latest is X.0.y, so N-1 minor would
+# cross a major boundary. Patch-stepped instead.
+dependencies = [
+    "pandas==3.0.4",
+    "pydantic==2.12.5",
+    "pandera[pandas]==0.31.1",
+    "requests==2.33.1",
+    "pyyaml==6.0.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest==9.0.3",
+    "ruff==0.15.22",
+]
+
+[tool.uv]
+package = false
+# Fail rather than silently resolve to something the lockfile does not carry.
+required-version = ">=0.5"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"

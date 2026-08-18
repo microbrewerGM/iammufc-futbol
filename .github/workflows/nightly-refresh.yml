@@ -1,0 +1,87 @@
+# Nightly data refresh -- dev environment only.
+#
+# WHY GITHUB ACTIONS, NOT A CLOUDFLARE WORKFLOW: docs/roadmap.md's cost
+# principle is explicit -- "Python ingestion runs locally or in GitHub Actions
+# ... until [Containers are] genuinely required" at M4. A Cloudflare
+# `WorkflowEntrypoint` orchestrating ingest -> normalize -> metrics -> load
+# would need R2, Queues, and a Workflows binding, none of which exist in
+# infra/wrangler.jsonc yet -- writing that class now would be untestable
+# speculative code referencing infrastructure that doesn't exist. This
+# workflow does the real, testable version of the same job with the tool the
+# architecture already commits to at this stage.
+#
+# WHY DEV ONLY: nightly automation must never create approval fatigue.
+# Production promotion is a deliberate, human, PR-driven decision (see
+# deploy.yml's `production` Environment gate) -- it must not fire every night
+# for what is usually a no-op data refresh. This workflow refreshes `dev` and
+# stops; promoting to production is unaffected and still requires a person.
+
+name: Nightly Refresh
+
+on:
+  schedule:
+    - cron: "0 5 * * *" # 05:00 UTC, matching starting_ideas/02's proposed cadence
+  workflow_dispatch: {} # manual trigger for testing or an out-of-cycle refresh
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-refresh
+  cancel-in-progress: false # never interrupt a run that is already writing
+
+jobs:
+  refresh-dev:
+    name: refresh-dev
+    runs-on: ubuntu-latest
+    environment: dev # no required reviewer; this is exactly what dev is for
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: |
+          uv sync --locked
+          npm ci
+
+      - name: Rebuild and validate the catalog
+        # Fails the run rather than publish a catalog that disagrees with its
+        # own rights manifest -- same invariant rights-gate.yml enforces on
+        # every PR, run again here because upstream data can drift independent
+        # of any code change.
+        run: uv run python -m pipeline.contracts.build_catalog
+
+      - name: Ingest
+        # Pandera gates (pipeline/sources/schemas.py) plus the cross-frame
+        # referential checks in run.py's validate() run BEFORE the seed is
+        # written. A bad upstream pull fails here, not silently in production.
+        run: uv run python -m pipeline.sources.run
+
+      - name: Apply schema + seed to dev D1
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CF_TOKEN_DEV }}
+          command: d1 execute iammufc-dev --config infra/wrangler.jsonc --env dev --remote --file infra/migrations/0001_schema.sql
+
+      - name: Load seed
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CF_TOKEN_DEV }}
+          command: d1 execute iammufc-dev --config infra/wrangler.jsonc --env dev --remote --file infra/migrations/0002_seed.sql
+
+      - name: Deploy dev Worker
+        # Re-deploying even when the Worker code hasn't changed is the
+        # cheapest way to purge any edge-cached responses against the new
+        # snapshot -- see docs/architecture-overview.md's request path, where
+        # a snapshot bump must invalidate what depends on it.
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CF_TOKEN_DEV }}
+          command: deploy --config infra/wrangler.jsonc --env dev
