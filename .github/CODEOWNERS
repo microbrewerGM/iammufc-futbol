@@ -1,12 +1,14 @@
-# CODEOWNERS is the only enforcement tier that survives a compromised agent,
-# because it lives in GitHub rather than the working tree.
-#
-# Single owner, personal repo, no second reviewer identity (decided
-# 2026-08-19 -- see docs/exceptions.md E-005 and
-# docs/runbooks/self-review-protocol.md). "Require review from Code Owners"
-# still forces a deliberate approval click even solo; it is not a stranger's
-# judgment, but it is not nothing either. Tier-2 paths below get the extra
-# scrutiny defined in the self-review protocol, not a second account.
+# This file still labels path ownership in the GitHub UI, but it is NOT a
+# merge gate -- corrected 2026-08-19 (E-012), found while merging this repo's
+# first PR. GitHub refuses to let a PR author approve their own PR ("Review
+# Can not approve your own pull request"), and this ruleset's bypass_actors is
+# empty (E-010: personal account, no org), so even --admin can't override it
+# either. A required-review rule nobody can ever satisfy is a lockout, not
+# security -- "Require review from Code Owners" was removed from the main
+# ruleset. Single owner, personal repo, no second reviewer identity (E-005).
+# Real enforcement is required status checks (still fully real, see
+# .github/workflows/) plus docs/runbooks/self-review-protocol.md's Tier-2
+# scrutiny on the paths below -- a personal commitment, not a GitHub feature.
 
 * @microbrewerGM
 
