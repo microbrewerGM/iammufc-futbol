@@ -133,10 +133,27 @@ jobs:
           name: d1-seed
           path: infra/migrations
 
+      - name: Apply migrations (production)
+        # Mirrors deploy-dev. Missing entirely before this fix -- prod would
+        # have deployed the worker against a D1 database with no schema.
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CF_TOKEN_PROD }}
+          accountId: ${{ secrets.CF_ACCOUNT }}
+          command: d1 execute iammufc-prod --config infra/wrangler.jsonc --env production --remote --file infra/migrations/0001_schema.sql
+
+      - name: Load seed (production)
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CF_TOKEN_PROD }}
+          accountId: ${{ secrets.CF_ACCOUNT }}
+          command: d1 execute iammufc-prod --config infra/wrangler.jsonc --env production --remote --file infra/migrations/0002_seed.sql
+
       - name: Deploy Worker (production)
         # For Container Workers this MUST be `deploy`, not `versions upload` --
         # only deploy updates container images.
         uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
         with:
           apiToken: ${{ secrets.CF_TOKEN_PROD }}
+          accountId: ${{ secrets.CF_ACCOUNT }}
           command: deploy --config infra/wrangler.jsonc --env production
