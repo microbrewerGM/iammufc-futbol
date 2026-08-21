@@ -8,12 +8,13 @@
  * this file keeps strings short and lets layout carry the hierarchy instead
  * of word count.
  *
- * HONEST GAP: attribution text (from catalog/rights/manifest.yml) and the
- * feasibility layer's computed `reason` strings are still English-only. Full
- * bilingual coverage of those needs the catalog schema to carry attribution
- * text per language and the feasibility resolver to accept a locale -- a
- * bigger change than path-based routing. Tracked for M2 breadth, not silently
- * declared done here.
+ * Attribution text (catalog/rights/manifest.yml `attribution_text_es`) and the
+ * feasibility layer's computed `reason` strings are localized on HTML routes
+ * (worker/src/core/feasibility.ts REASON table). The two JSON API routes
+ * (/api/chat, /api/query) deliberately stay English-only -- they return data,
+ * not prose, per this file's own routing comment in index.ts -- so their
+ * `checkFeasibility` calls omit the locale argument rather than threading one
+ * through for no reader.
  */
 
 import type { Catalog } from "./feasibility";

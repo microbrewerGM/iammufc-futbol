@@ -274,7 +274,7 @@ async function renderChat(
 ): Promise<Response> {
   const snapshot = await currentSnapshot(c.env);
   const key = await artifactKey(proposal.intent, snapshot ?? "no-snapshot");
-  const feasibility = catalog.checkFeasibility(proposal.intent);
+  const feasibility = catalog.checkFeasibility(proposal.intent, locale.code);
 
   await logDemand(c.env, key, proposal.intent, feasibility.state).catch(() => {});
 

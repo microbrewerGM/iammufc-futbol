@@ -166,6 +166,7 @@ def compile_for_worker(catalog: Catalog) -> dict:
                 **cell.model_dump(mode="json"),
                 "attribution_asset": rights[cell.source_id].attribution_asset,
                 "attribution_text": rights[cell.source_id].attribution_text,
+                "attribution_text_es": rights[cell.source_id].attribution_text_es,
                 "source_name": rights[cell.source_id].name,
                 "licence_id": rights[cell.source_id].licence_id,
             }

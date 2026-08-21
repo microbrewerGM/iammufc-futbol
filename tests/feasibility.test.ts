@@ -38,7 +38,7 @@ describe("feasible queries", () => {
   });
 
   it("returns available for an already-materialised artifact", () => {
-    expect(catalog.checkFeasibility(intent(), true).state).toBe("available");
+    expect(catalog.checkFeasibility(intent(), "en", true).state).toBe("available");
   });
 });
 
@@ -128,6 +128,64 @@ describe("builder support", () => {
     ]);
     // progressive_passes has a cell, but a non-redistributable one.
     expect(catalog.seasonsFor("progressive_passes", "player", "box_score")).toEqual([]);
+  });
+});
+
+describe("locale support", () => {
+  it("returns the same state regardless of locale -- only the prose changes", () => {
+    const en = catalog.checkFeasibility(intent({ metric: "progressive_passes" }), "en");
+    const es = catalog.checkFeasibility(intent({ metric: "progressive_passes" }), "es");
+    expect(es.state).toBe(en.state);
+    expect(es.reason).not.toBe(en.reason);
+  });
+
+  it("uses the Spanish metric label and Spanish sentence for a NO_RIGHTS refusal", () => {
+    const r = catalog.checkFeasibility(intent({ metric: "progressive_passes" }), "es");
+    expect(r.state).toBe("not_computable_no_rights");
+    // Spanish-only vocabulary that could not appear in the English sentence --
+    // a weaker assertion (e.g. "still contains the source name") would pass
+    // even if the template were never actually translated.
+    expect(r.reason).toContain("licencia de redistribución");
+    expect(r.reason).toContain("FBref");
+  });
+
+  it("uses the Spanish sentence for a NO_DATA refusal", () => {
+    const r = catalog.checkFeasibility(intent({ season: "2013-14" }), "es");
+    expect(r.state).toBe("not_computable_data_missing");
+    expect(r.reason).toContain("Ninguna fuente integrada");
+    expect(r.reason).toContain("2013-14");
+  });
+
+  it("uses the Spanish attribution translation when one exists", () => {
+    const r = catalog.checkFeasibility(intent(), "es");
+    expect(r.attribution_text).toContain("Datos de jugadores");
+    expect(r.attribution_text).not.toContain("Player data derived");
+  });
+
+  it("falls back to the English attribution text when no Spanish translation exists, rather than going blank", () => {
+    const synthetic = new Catalog({
+      version: 1,
+      metrics: catalog.metrics,
+      coverage: [
+        {
+          metric: "goals",
+          entity_type: "player",
+          granularity: "box_score",
+          season: "2024-25",
+          competition: "PL",
+          source_id: "no_es_source",
+          redistributable: true,
+          cost_class: "cheap",
+          attribution_asset: null,
+          attribution_text: "English-only attribution.",
+          attribution_text_es: null,
+          source_name: "No-ES Source",
+          licence_id: "test",
+        },
+      ],
+    });
+    const r = synthetic.checkFeasibility(intent(), "es");
+    expect(r.attribution_text).toBe("English-only attribution.");
   });
 });
 

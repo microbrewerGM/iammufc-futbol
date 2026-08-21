@@ -17,6 +17,7 @@ rights:
     redistributable: true
     attribution_asset: null
     attribution_text: null
+    attribution_text_es: null
     tos_snapshot: catalog/rights/sources/football-data-couk.md
     verified_date: 2026-08-18
     notes: >
@@ -30,6 +31,7 @@ rights:
     redistributable: true
     attribution_asset: null
     attribution_text: null
+    attribution_text_es: null
     tos_snapshot: catalog/rights/sources/openfootball.md
     verified_date: 2026-08-18
     notes: Public-domain fixtures and results. Zero licensing constraint.
@@ -42,6 +44,9 @@ rights:
     attribution_text: >
       Player data derived from the Fantasy Premier League public API.
       Not affiliated with or endorsed by the Premier League.
+    attribution_text_es: >
+      Datos de jugadores derivados de la API pública de Fantasy Premier
+      League. No afiliado ni respaldado por la Premier League.
     tos_snapshot: catalog/rights/sources/fpl.md
     verified_date: 2026-08-18
     notes: >
@@ -62,6 +67,7 @@ rights:
     redistributable: false
     attribution_asset: null
     attribution_text: null
+    attribution_text_es: null
     tos_snapshot: catalog/rights/sources/understat.md
     verified_date: 2026-08-18
     notes: >
@@ -79,6 +85,7 @@ rights:
     redistributable: false
     attribution_asset: null
     attribution_text: null
+    attribution_text_es: null
     tos_snapshot: catalog/rights/sources/fbref.md
     verified_date: 2026-08-18
     notes: >
