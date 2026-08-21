@@ -29,7 +29,7 @@ import {
   seasonSquadRows,
   type Env,
 } from "./core/db";
-import { Catalog, type CompiledCatalog } from "./core/feasibility";
+import { Catalog, columnFeasibility, hasSubstance, type CompiledCatalog } from "./core/feasibility";
 import { artifactKey, withDefaults, type QueryIntent, type VizType } from "./core/intent";
 import { LOCALES, type Locale, type LocaleCode } from "./core/locale";
 import { parseRuleBased, proposeWithAI, type Proposal } from "./core/parser";
@@ -144,15 +144,18 @@ function registerLocaleRoutes(code: LocaleCode) {
   const locale = LOCALES[code];
   const p = `/${code}`;
 
-  app.get(p, () =>
-    html(
+  app.get(p, () => {
+    // Always indexable -- the coverage matrix hub, never a thin permutation.
+    const res = html(
       page(homeBody(catalog, locale), {
         title: code === "es" ? "Estadísticas del Manchester United" : "Manchester United statistics",
         locale,
         unprefixedPath: "/",
       }),
-    ),
-  );
+    );
+    res.headers.set("X-Robots-Tag", "index");
+    return res;
+  });
 
   app.post(`${p}/ask`, async (c) => {
     const form = await c.req.formData();
@@ -193,7 +196,7 @@ function registerLocaleRoutes(code: LocaleCode) {
     const season = seasonParam ?? career[career.length - 1]?.season ?? "2024-25";
 
     const body = playerPageBody(displayName, season, career, catalog, locale);
-    return html(
+    const res = html(
       page(body, {
         title: `${displayName}`,
         locale,
@@ -201,6 +204,14 @@ function registerLocaleRoutes(code: LocaleCode) {
         snapshotId: await currentSnapshot(c.env),
       }),
     );
+    // SEO substance gate (docs/roadmap.md M3): a "not found" page (career
+    // empty) never qualifies. hasSubstance mirrors the exact "yes" test the
+    // page's own metric columns use, so the indexed set can never claim more
+    // than what a visitor actually sees rendered.
+    if (career.length > 0 && hasSubstance(columnFeasibility(catalog, "player", season, "PL", code))) {
+      res.headers.set("X-Robots-Tag", "index");
+    }
+    return res;
   });
 
   app.get(`${p}/season/:season`, async (c) => {
@@ -210,7 +221,7 @@ function registerLocaleRoutes(code: LocaleCode) {
       seasonRecordRow(c.env, season),
     ]);
     const body = seasonPageBody(season, squad, record, catalog, locale);
-    return html(
+    const res = html(
       page(body, {
         title: `${season}`,
         locale,
@@ -218,11 +229,64 @@ function registerLocaleRoutes(code: LocaleCode) {
         snapshotId: await currentSnapshot(c.env),
       }),
     );
+    // Coverage is keyed on (metric, season), not per player (pages.ts's own
+    // comment on metricValueCells), so every player in a substantive season
+    // shares the same feasibility -- no per-player loop needed here.
+    if (squad.length > 0 && hasSubstance(columnFeasibility(catalog, "player", season, "PL", code))) {
+      res.headers.set("X-Robots-Tag", "index");
+    }
+    return res;
   });
 }
 
 registerLocaleRoutes("en");
 registerLocaleRoutes("es");
+
+app.get("/robots.txt", () => {
+  const body = `User-agent: *\nDisallow: /q\nDisallow: /ask\nSitemap: /sitemap.xml\n`;
+  return new Response(body, { headers: { "content-type": "text/plain; charset=utf-8" } });
+});
+
+/**
+ * Same substance gate as the page routes, applied before a URL is even
+ * offered -- the M3 exit criterion "no thin permutation page reaches the
+ * sitemap" fails if this list is built any other way (e.g. from raw coverage
+ * cells, which is what actually caused the noindex/sitemap mismatch this
+ * design deliberately avoids: coverage > 0 is not the same test as
+ * hasSubstance, and a page that fails the page's own indexability check must
+ * never appear here either).
+ */
+app.get("/sitemap.xml", async (c) => {
+  const seasons = [...new Set(catalog.coverage.map((cell) => cell.season))].sort();
+  const urls: string[] = ["/en", "/es"];
+
+  for (const season of seasons) {
+    const feas = columnFeasibility(catalog, "player", season);
+    if (!hasSubstance(feas)) continue;
+
+    const squad = await seasonSquadRows(c.env, season);
+    if (squad.length === 0) continue;
+
+    urls.push(`/en/season/${season}`, `/es/season/${season}`);
+    for (const p of squad) {
+      const path = `/player/${encodeURIComponent(p.label)}/${season}`;
+      urls.push(`/en${path}`, `/es${path}`);
+    }
+  }
+
+  // lastmod is optional per the sitemap protocol -- currentSnapshot() returns
+  // a content hash, not a date, and misusing it as one would be worse than
+  // omitting the field.
+  //
+  // Absolute URLs are required by the sitemap protocol, but the real domain
+  // (O-5, docs/roadmap.md blockers) isn't registered yet -- derive the origin
+  // from the actual request instead of hard-coding one, so this is correct on
+  // dev/prod *.workers.dev today and needs no change once a real domain lands.
+  const origin = new URL(c.req.url).origin;
+  const entries = urls.map((u) => `<url><loc>${origin}${u}</loc></url>`).join("");
+  const xml = `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${entries}</urlset>`;
+  return new Response(xml, { headers: { "content-type": "application/xml; charset=utf-8" } });
+});
 
 // Bare paths redirect to /en/ rather than serving duplicate content at a
 // second URL. 301 (not 302): this is a permanent structural decision, not a

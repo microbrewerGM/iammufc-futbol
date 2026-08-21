@@ -31,7 +31,14 @@ export const SECURITY_HEADERS: Record<string, string> = {
 
 export function withSecurityHeaders(response: Response): Response {
   const headers = new Headers(response.headers);
-  for (const [k, v] of Object.entries(SECURITY_HEADERS)) headers.set(k, v);
+  for (const [k, v] of Object.entries(SECURITY_HEADERS)) {
+    // X-Robots-Tag is the SEO substance gate (see feasibility.ts hasSubstance):
+    // a route that has already decided this page is indexable sets its own
+    // value before this middleware runs. Only fall back to the site-wide
+    // noindex default when the route left it unset.
+    if (k === "X-Robots-Tag" && headers.has(k)) continue;
+    headers.set(k, v);
+  }
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
