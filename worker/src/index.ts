@@ -51,6 +51,19 @@ const AI_MODEL = "@cf/meta/llama-3.1-8b-instruct";
 const catalog = new Catalog(compiledCatalog as unknown as CompiledCatalog);
 const app = new Hono<{ Bindings: Env }>();
 
+/**
+ * Cache-Control for content that is immutable between deploys. D1 only
+ * changes via a migration during a fresh `wrangler deploy`, and the Worker
+ * version is part of the Cache API's cache key (infra/wrangler.jsonc's
+ * `cache` config comment) -- nightly-refresh.yml's unconditional redeploy
+ * after a new snapshot already invalidates every cached response, so no
+ * ctx.cache.purge() logic is needed here. 1h balances real D1-read/compute
+ * savings against how fresh a manually re-triggered deploy needs to feel.
+ * stale-if-error keeps a transient Worker failure from taking a cached page
+ * down with it.
+ */
+const CACHE_CONTROL = "public, max-age=3600, stale-while-revalidate=300, stale-if-error=86400";
+
 app.use("*", async (c, next) => {
   await next();
   c.res = withSecurityHeaders(c.res);
@@ -122,8 +135,8 @@ app.post("/api/query", async (c) => {
   });
 });
 
-app.get("/api/catalog", (c) =>
-  c.json({
+app.get("/api/catalog", (c) => {
+  const res = c.json({
     metrics: catalog.metrics,
     coverage: catalog.coverage.map((cell) => ({
       metric: cell.metric,
@@ -132,18 +145,25 @@ app.get("/api/catalog", (c) =>
       redistributable: cell.redistributable,
       source: cell.source_name,
     })),
-  }),
-);
+  });
+  res.headers.set("Cache-Control", CACHE_CONTROL);
+  return res;
+});
 
 app.get("/api/health", async (c) => {
   const snapshot = await currentSnapshot(c.env).catch(() => null);
-  return c.json({
+  const res = c.json({
     ok: snapshot !== null,
     snapshot_id: snapshot,
     metrics: catalog.metrics.length,
     coverage_cells: catalog.coverage.length,
     ai_bound: Boolean(c.env.AI),
   });
+  // Deliberately never cached -- this is a liveness probe. A cached "ok:true"
+  // would keep reporting the site healthy for up to an hour after it wasn't,
+  // defeating the one thing this route exists for.
+  res.headers.set("Cache-Control", "no-store");
+  return res;
 });
 
 // ---------------------------------------------------------------------------
@@ -164,6 +184,7 @@ function registerLocaleRoutes(code: LocaleCode) {
       }),
     );
     res.headers.set("X-Robots-Tag", "index");
+    res.headers.set("Cache-Control", CACHE_CONTROL);
     return res;
   });
 
@@ -221,6 +242,10 @@ function registerLocaleRoutes(code: LocaleCode) {
     if (career.length > 0 && hasSubstance(columnFeasibility(catalog, "player", season, "PL", code))) {
       res.headers.set("X-Robots-Tag", "index");
     }
+    // No enforceBudget() call on this route -- career/squad lookups are plain
+    // reads, not the compute path the breaker guards -- so it is always safe
+    // to cache, unlike /q below.
+    res.headers.set("Cache-Control", CACHE_CONTROL);
     return res;
   });
 
@@ -245,6 +270,9 @@ function registerLocaleRoutes(code: LocaleCode) {
     if (squad.length > 0 && hasSubstance(columnFeasibility(catalog, "player", season, "PL", code))) {
       res.headers.set("X-Robots-Tag", "index");
     }
+    // No enforceBudget() call on this route either -- same reasoning as
+    // /player above.
+    res.headers.set("Cache-Control", CACHE_CONTROL);
     return res;
   });
 }
@@ -254,7 +282,9 @@ registerLocaleRoutes("es");
 
 app.get("/robots.txt", () => {
   const body = `User-agent: *\nDisallow: /q\nDisallow: /ask\nSitemap: /sitemap.xml\n`;
-  return new Response(body, { headers: { "content-type": "text/plain; charset=utf-8" } });
+  return new Response(body, {
+    headers: { "content-type": "text/plain; charset=utf-8", "Cache-Control": CACHE_CONTROL },
+  });
 });
 
 /**
@@ -295,7 +325,9 @@ app.get("/sitemap.xml", async (c) => {
   const origin = new URL(c.req.url).origin;
   const entries = urls.map((u) => `<url><loc>${origin}${u}</loc></url>`).join("");
   const xml = `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${entries}</urlset>`;
-  return new Response(xml, { headers: { "content-type": "application/xml; charset=utf-8" } });
+  return new Response(xml, {
+    headers: { "content-type": "application/xml; charset=utf-8", "Cache-Control": CACHE_CONTROL },
+  });
 });
 
 // Bare paths redirect to /en/ rather than serving duplicate content at a
@@ -374,7 +406,7 @@ ${intentPanel(proposal, locale)}
 ${resultBlock}
 <p><a href="/${locale.code}">${locale.strings.backToMatrix}</a></p>`;
 
-  return html(
+  const res = html(
     page(body, {
       title: `${proposal.intent.metric} ${proposal.intent.season}`,
       locale,
@@ -383,6 +415,12 @@ ${resultBlock}
       snapshotId: snapshot,
     }),
   );
+  // budget_exceeded must never be cached: it is a same-day, time-varying
+  // state that resets at midnight UTC, unlike every other branch here (which
+  // stays correct until the next deploy). Caching it would trap users behind
+  // a stale refusal for up to an hour after the real budget already reset.
+  if (!overBudget) res.headers.set("Cache-Control", CACHE_CONTROL);
+  return res;
 }
 
 export default app;

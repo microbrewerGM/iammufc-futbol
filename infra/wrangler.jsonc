@@ -23,6 +23,15 @@
 
   "observability": { "enabled": true },
 
+  // Edge caching for GET responses (Cache-Control headers set per-route in
+  // worker/src/index.ts). Requires wrangler >= 4.69.0 (pinned: 4.123.0).
+  // Invalidation is redeploy-based, not purge-based: the Worker version is
+  // part of the cache key, so nightly-refresh.yml's unconditional
+  // `wrangler deploy` after a new snapshot already invalidates every cached
+  // response -- see that workflow's own comment. No ctx.cache.purge() logic
+  // needed here as a result.
+  "cache": { "enabled": true },
+
   "env": {
     "dev": {
       "d1_databases": [
@@ -67,7 +76,13 @@
   //   { "binding": "GOLD",   "bucket_name": "iammufc-gold-<env>" }
   // ],
   //
-  // M3 — async materialization:
+  // M3 — async materialization. SQLite-backed Durable Objects are available
+  // on the free plan (verified 2026-08-21: 100k requests/day, 13k GB-s/day,
+  // no storage charge on free tier) -- not paid-plan-gated like Containers
+  // below. Deliberately not built yet regardless: there is no real
+  // expensive-artifact pipeline for a job queue or single-flight dedup to
+  // coordinate access to until M2's ingest lands. Building it now would sit
+  // unused.
   // "queues": { "producers": [...], "consumers": [...] },
   // "durable_objects": { "bindings": [{ "name": "ARTIFACT", ... }] },
   //
