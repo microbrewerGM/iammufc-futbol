@@ -83,3 +83,13 @@ CREATE TABLE IF NOT EXISTS demand_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_demand_state ON demand_log(state, created_at);
+
+-- Budget breaker for the compute path (/api/query, /ask, /q). One row per UTC
+-- day -- the day boundary IS the reset, no separate cleanup job needed. D1 is
+-- the authoritative counter (atomic upsert, strongly consistent); the KV read
+-- in front of it is a cheap pre-filter, not the source of truth, because KV
+-- writes are eventually consistent and have no atomic increment.
+CREATE TABLE IF NOT EXISTS budget_counter (
+  day    TEXT PRIMARY KEY,   -- UTC date, YYYY-MM-DD
+  count  INTEGER NOT NULL DEFAULT 0
+);

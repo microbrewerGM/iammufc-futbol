@@ -71,6 +71,7 @@ export interface Locale {
     notFoundHeading: string;
     notFoundBody: string;
     startAgain: string;
+    budgetExceeded: string;
   };
 }
 
@@ -117,6 +118,8 @@ const EN: Locale = {
     notFoundHeading: "Not found",
     notFoundBody: "Nothing lives at this address.",
     startAgain: "Start again",
+    budgetExceeded:
+      "This site has hit its compute budget for today. Nothing was computed -- try again after midnight UTC.",
   },
 };
 
@@ -163,6 +166,8 @@ const ES: Locale = {
     notFoundHeading: "No encontrado",
     notFoundBody: "No hay nada en esta dirección.",
     startAgain: "Empezar de nuevo",
+    budgetExceeded:
+      "Este sitio ha alcanzado su presupuesto de cómputo por hoy. No se calculó nada -- intenta de nuevo después de medianoche UTC.",
   },
 };
 
