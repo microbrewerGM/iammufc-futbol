@@ -29,8 +29,21 @@ on them.
 
 ## Guardrails
 
-- Never touch /infra, /.github, /.claude, or worker/src/security without saying
-  explicitly that a laptop review is required.
+- **Decided 2026-08-21: no manual-approval gate for dev.** PRs, merges to
+  `main`, and dev deploys — including changes under `/infra`, `/.github`,
+  `/.claude`, or `worker/src/security` — do not need to be flagged for a
+  laptop review or wait for approval. CI green -> self-approve -> merge,
+  same as any other change. Full detail: `docs/runbooks/self-review-protocol.md`.
+- **The one exception:** anything that changes whether or how the
+  `deploy-prod` job's required-reviewer gate fires — the
+  `environment: production` line, the ruleset's required-checks/bypass
+  settings, `CF_TOKEN_PROD` handling, or the `production` Environment's
+  protection rules in GitHub Settings. That still gets a full line-by-line
+  read and an explicit "why this is safe" sentence before merge — see
+  self-review-protocol.md's Tier 3.
+- **Production promotion is the user's call, always.** Never propose it,
+  offer it, or bring it up because checks are green — it is deliberately
+  rare and infrequent, and only the user initiates it.
 - Never run wrangler deploy, wrangler versions upload, wrangler d1 execute
   --remote, wrangler secret, or git push --force.
 - Keep PRs small and single-purpose — the primary review surface is a phone.
