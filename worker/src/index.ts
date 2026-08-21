@@ -21,6 +21,7 @@ import { Hono } from "hono";
 import compiledCatalog from "./generated/catalog.json";
 import {
   currentSnapshot,
+  enforceBudget,
   logDemand,
   playerCareerRows,
   resolvePlayerName,
@@ -34,7 +35,7 @@ import { artifactKey, withDefaults, type QueryIntent, type VizType } from "./cor
 import { LOCALES, type Locale, type LocaleCode } from "./core/locale";
 import { parseRuleBased, proposeWithAI, type Proposal } from "./core/parser";
 import { withSecurityHeaders } from "./security/headers";
-import { html, page } from "./views/layout";
+import { esc, html, page } from "./views/layout";
 import {
   chatForm,
   homeBody,
@@ -99,6 +100,15 @@ app.post("/api/query", async (c) => {
     feasibility.state === "not_computable_no_rights"
   ) {
     return c.json({ artifact_key: key, intent, feasibility, rows: [] }, 200);
+  }
+
+  // Budget breaker (docs/roadmap.md M3): checked only here, right before the
+  // actual compute, not earlier -- a refusal above never touches the budget.
+  if (!(await enforceBudget(c.env))) {
+    return c.json(
+      { error: "budget_exceeded", message: "Daily compute budget spent. Try again after midnight UTC." },
+      429,
+    );
   }
 
   const result = await runQuery(c.env, intent);
@@ -345,12 +355,23 @@ async function renderChat(
   const feasible =
     feasibility.state !== "not_computable_data_missing" &&
     feasibility.state !== "not_computable_no_rights";
-  const rows = feasible ? (await runQuery(c.env, proposal.intent)).rows : [];
+
+  // Budget breaker (docs/roadmap.md M3): checked only when a query would
+  // actually run, same scope as the JSON API's check above.
+  const overBudget = feasible && !(await enforceBudget(c.env));
+  const rows = feasible && !overBudget ? (await runQuery(c.env, proposal.intent)).rows : [];
+
+  const resultBlock = overBudget
+    ? `<div class="stop">
+<p class="state">budget_exceeded</p>
+<p><strong>${esc(locale.strings.budgetExceeded)}</strong></p>
+</div>`
+    : resultPanel(proposal.intent, feasibility, rows, catalog, key, locale);
 
   const body = `<h1>iammufc</h1>
 <div class="card">${chatForm(locale, question ?? "")}</div>
 ${intentPanel(proposal, locale)}
-${resultPanel(proposal.intent, feasibility, rows, catalog, key, locale)}
+${resultBlock}
 <p><a href="/${locale.code}">${locale.strings.backToMatrix}</a></p>`;
 
   return html(

@@ -36,6 +36,60 @@ export interface QueryResult {
   unit: string;
 }
 
+const BUDGET_FAST_LIMIT = 800; // KV pre-filter -- leaves headroom under KV's 1,000 writes/day free-tier ceiling for the rest of the app
+const BUDGET_HARD_LIMIT = 1000; // D1 authoritative cap -- D1's own free tier (100k writes/day) is nowhere close to this
+
+function utcDay(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * Budget breaker for the compute path (/api/query, /ask, /q). Guards the
+ * ~$5/month hosting budget against a traffic spike, not against a
+ * sophisticated attacker -- it is a circuit breaker, not a security control.
+ *
+ * KV is a same-day pre-filter: eventually consistent and has no atomic
+ * increment, so two concurrent requests can both read "under budget" and
+ * both write, undercounting. That race is exactly why KV is never the source
+ * of truth here. D1's upsert is atomic and strongly consistent, so it is the
+ * real gate; KV only exists to skip the D1 round-trip once the day is
+ * obviously over budget.
+ *
+ * Fails open on any storage error. A broken breaker must never become a
+ * site-wide outage over a KV/D1 hiccup -- the free-tier ceilings above
+ * already leave wide margin before a real cost overrun.
+ */
+export async function enforceBudget(env: Env): Promise<boolean> {
+  const day = utcDay();
+
+  try {
+    const kvKey = `budget:${day}`;
+    const raw = await env.CFG.get(kvKey);
+    const kvCount = raw ? Number(raw) : 0;
+    if (Number.isFinite(kvCount) && kvCount >= BUDGET_FAST_LIMIT) return false;
+    // Best-effort increment. KV's eventual consistency means this can race --
+    // deliberately not the enforcement point, see the D1 check below.
+    await env.CFG.put(kvKey, String(kvCount + 1), { expirationTtl: 172800 }); // 2 days, covers UTC-boundary clock skew
+  } catch {
+    // KV unavailable: fall through to D1, which is the real gate anyway.
+  }
+
+  try {
+    await env.DB.prepare(
+      `INSERT INTO budget_counter (day, count) VALUES (?, 1)
+         ON CONFLICT(day) DO UPDATE SET count = count + 1`,
+    )
+      .bind(day)
+      .run();
+    const row = await env.DB.prepare("SELECT count FROM budget_counter WHERE day = ?")
+      .bind(day)
+      .first<{ count: number }>();
+    return (row?.count ?? 0) <= BUDGET_HARD_LIMIT;
+  } catch {
+    return true; // D1 unavailable: a storage outage should not also take down every query on the site.
+  }
+}
+
 export async function currentSnapshot(env: Env): Promise<string | null> {
   const row = await env.DB.prepare(
     "SELECT snapshot_id FROM snapshots ORDER BY created_at DESC LIMIT 1",
