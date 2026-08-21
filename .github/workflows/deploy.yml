@@ -28,14 +28,21 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: deploy-${{ github.ref }}
-  cancel-in-progress: false # never interrupt an in-flight deploy
-
 jobs:
   build-data:
     name: build-data
     runs-on: ubuntu-latest
+    # Job-level, not workflow-level: deploy-prod (below) gets its own group so
+    # an unapproved prod approval on an old run can never block a new run's
+    # dev pipeline from starting. Decided 2026-08-21 -- prod promotion is the
+    # user's rare, deliberate call, and dev must never wait on it. Before this
+    # split, a single top-level `concurrency: deploy-${{ github.ref }}` queued
+    # an ENTIRE new run (including build-data) behind the previous run's
+    # still-pending deploy-prod job, which is exactly backwards once dev
+    # merges are frequent and prod approval isn't.
+    concurrency:
+      group: deploy-dev-${{ github.ref }}
+      cancel-in-progress: false # never interrupt an in-flight dev deploy
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
@@ -62,6 +69,9 @@ jobs:
     needs: build-data
     runs-on: ubuntu-latest
     environment: dev # no required reviewer; dev is disposable
+    concurrency:
+      group: deploy-dev-${{ github.ref }}
+      cancel-in-progress: false
     permissions:
       contents: read
     steps:
@@ -118,6 +128,12 @@ jobs:
     # start until a human approves, and the production token is only readable
     # once it has.
     environment: production
+    # Own group, separate from deploy-dev-${{ github.ref }} above -- an old
+    # run's unapproved (or never-approved) prod gate must never block a new
+    # run's dev pipeline. See the build-data job's comment for why.
+    concurrency:
+      group: deploy-prod-${{ github.ref }}
+      cancel-in-progress: false
     permissions:
       contents: read
     steps:
