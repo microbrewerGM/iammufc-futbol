@@ -88,6 +88,13 @@ class RightsEntry(BaseModel):
         default=None,
         description="Verbatim required wording, where the licence mandates exact text.",
     )
+    attribution_text_es: str | None = Field(
+        default=None,
+        description="Spanish translation of attribution_text. Only set this when "
+        "attribution_text is our own wording, not a licence-mandated verbatim "
+        "string -- translating mandated text would change what a licence "
+        "requires us to display. Falls back to attribution_text when null.",
+    )
     tos_snapshot: str | None = Field(
         default=None,
         description="Path to a human-captured ToS snapshot. The rights agent reasons "
