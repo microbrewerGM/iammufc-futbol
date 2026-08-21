@@ -124,6 +124,25 @@ export function columnFeasibility(
   return out;
 }
 
+/**
+ * The SEO substance gate (docs/roadmap.md M3, security/headers.ts
+ * X-Robots-Tag default). A page becomes indexable only when at least
+ * `threshold` metrics actually render a value for it -- the same "yes" test
+ * `metricValueCells` already uses (available or computable_now_queued; a
+ * dash, whether no_data/no_rights/expensive-deferred, does not count).
+ * Google's scaled-content-abuse policy targets exactly the thin permutation
+ * this architecture can otherwise generate at will, so this is a hard floor,
+ * not a suggestion -- see the M3 "why SEO is a milestone gate" note.
+ */
+export function hasSubstance(feas: Map<string, FeasibilityResult>, threshold = 2): boolean {
+  let populated = 0;
+  for (const f of feas.values()) {
+    if (f.state === "available" || f.state === "computable_now_queued") populated++;
+    if (populated >= threshold) return true;
+  }
+  return false;
+}
+
 /** Reason-sentence templates, one function per branch of checkFeasibility, so
  *  the English and Spanish wording sit side by side and can't drift apart
  *  silently. Locale-neutral JSON API routes (/api/chat, /api/query) never

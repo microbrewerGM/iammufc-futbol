@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { Catalog, type CompiledCatalog } from "../worker/src/core/feasibility";
+import { Catalog, columnFeasibility, hasSubstance, type CompiledCatalog } from "../worker/src/core/feasibility";
 import { withDefaults, type QueryIntent, type VizType } from "../worker/src/core/intent";
 import compiled from "../worker/src/generated/catalog.json" with { type: "json" };
 
@@ -186,6 +186,75 @@ describe("locale support", () => {
     });
     const r = synthetic.checkFeasibility(intent(), "es");
     expect(r.attribution_text).toBe("English-only attribution.");
+  });
+});
+
+describe("SEO substance gate (hasSubstance)", () => {
+  it("a real, well-covered season clears the default threshold", () => {
+    // 2024-25 has goals/assists/minutes/points/xg all computable_now_queued --
+    // well above the default floor of 2.
+    const feas = columnFeasibility(catalog, "player", "2024-25");
+    expect(hasSubstance(feas)).toBe(true);
+  });
+
+  it("NO_RIGHTS cells never count toward substance, however many exist", () => {
+    // progressive_passes is FBref-sourced and permanently NO_RIGHTS. A page
+    // with only refusal states must never be judged substantive, no matter
+    // how many refusal cells it has -- that would defeat the entire gate.
+    const synthetic = new Catalog({
+      version: 1,
+      metrics: catalog.metrics,
+      coverage: catalog.metrics.map((m) => ({
+        metric: m.metric_id,
+        entity_type: "player",
+        granularity: "box_score",
+        season: "2024-25",
+        competition: "PL",
+        source_id: "fbref",
+        redistributable: false,
+        cost_class: "cheap",
+        attribution_asset: null,
+        attribution_text: null,
+        attribution_text_es: null,
+        source_name: "FBref / Sports Reference",
+        licence_id: "none",
+      })),
+    });
+    const feas = columnFeasibility(synthetic, "player", "2024-25");
+    expect(hasSubstance(feas)).toBe(false);
+  });
+
+  it("is a hard boundary at the threshold, not a fuzzy one", () => {
+    const covered = (n: number) =>
+      new Catalog({
+        version: 1,
+        metrics: catalog.metrics,
+        coverage: catalog.metrics.slice(0, n).map((m) => ({
+          metric: m.metric_id,
+          entity_type: "player",
+          granularity: "box_score",
+          season: "2024-25",
+          competition: "PL",
+          source_id: "fpl",
+          redistributable: true,
+          cost_class: "cheap",
+          attribution_asset: null,
+          attribution_text: null,
+          attribution_text_es: null,
+          source_name: "Fantasy Premier League public API",
+          licence_id: "unofficial-tolerated",
+        })),
+      });
+    expect(hasSubstance(columnFeasibility(covered(1), "player", "2024-25"))).toBe(false);
+    expect(hasSubstance(columnFeasibility(covered(2), "player", "2024-25"))).toBe(true);
+  });
+
+  it("respects a custom threshold", () => {
+    const feas = columnFeasibility(catalog, "player", "2024-25");
+    // 2024-25 covers 5 metrics (not progressive_passes) -- 5 clears a raised
+    // bar of 5, but not 6.
+    expect(hasSubstance(feas, 5)).toBe(true);
+    expect(hasSubstance(feas, 6)).toBe(false);
   });
 });
 
