@@ -36,6 +36,36 @@ rights:
     verified_date: 2026-08-18
     notes: Public-domain fixtures and results. Zero licensing constraint.
 
+  - source_id: football_data_org
+    name: football-data.org API (v4)
+    licence_id: football-data-org-subscriber-tos
+    redistributable: true
+    attribution_asset: null
+    attribution_text: "Football data provided by the Football-Data.org API"
+    attribution_text_es: null
+    tos_snapshot: catalog/rights/sources/football-data-org.md
+    verified_date: 2026-08-22
+    notes: >
+      NOT the same source as football_data_couk above -- this is the
+      football-data.org v4 REST API (fixtures, results, tables, squads, top
+      scorers), a different site under different terms. Attribution is
+      mandatory and MUST be rendered verbatim as given in attribution_text
+      (clause 7.1) -- do not paraphrase or translate it.
+      CONDITIONAL GRANT, unlike every other redistributable: true entry
+      here: clause 9.1 forbids referencing this data after the subscription
+      is cancelled. Treat as redistributable only while an active
+      subscription exists -- if it lapses, this source's data must stop
+      being served, not just stop being re-ingested. The schema has no field
+      for that conditionality; this note is the only record of it until
+      ingest is actually wired.
+      Rate-limited at 10 req/min (Tier One/free) --
+      pipeline/sources/ratelimit.py's TokenBucket already matches this.
+      tos_snapshot for this entry was agent-captured (WebFetch), not human
+      -- breaks this directory's normal convention, done on explicit user
+      instruction 2026-08-22. Lower confidence than other entries until a
+      human re-reads the source pages; see the snapshot file's own header
+      for the full reasoning and mitigation taken.
+
   - source_id: fpl
     name: Fantasy Premier League public API
     licence_id: unofficial-tolerated
