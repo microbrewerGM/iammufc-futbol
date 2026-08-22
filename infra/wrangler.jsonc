@@ -59,10 +59,17 @@
   // M2 — nightly batch:
   // "triggers": { "crons": ["0 5 * * *"] },
   //
-  // M2 — R2 lakehouse (bronze/silver/gold + rendered artifacts):
+  // M2 — R2 lakehouse (bronze/silver/gold + rendered artifacts). Buckets
+  // created 2026-08-22 (iammufc-bronze-dev, iammufc-gold-dev via `wrangler r2
+  // bucket create`) -- binding deliberately still commented out, same reason
+  // as queues/durable_objects below: no Worker code reads or writes R2 yet.
+  // `normalize`/`metrics` write to these buckets from the Python pipeline
+  // (GitHub Actions, `wrangler r2 object put` or the S3-compatible API), not
+  // through this binding -- add it here only once Worker code (e.g. serving
+  // a lazily-generated artifact) actually needs it.
   // "r2_buckets": [
-  //   { "binding": "BRONZE", "bucket_name": "iammufc-bronze-<env>" },
-  //   { "binding": "GOLD",   "bucket_name": "iammufc-gold-<env>" }
+  //   { "binding": "BRONZE", "bucket_name": "iammufc-bronze-dev" },
+  //   { "binding": "GOLD",   "bucket_name": "iammufc-gold-dev" }
   // ],
   //
   // M3 — async materialization. SQLite-backed Durable Objects are available
