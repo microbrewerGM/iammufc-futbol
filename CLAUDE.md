@@ -19,7 +19,11 @@ on them.
    GitHub Environment secrets. football-data.org ToS forbids keys in OSS repos.
 3. Never republish red-tier sources: FBref/Sports Reference, Understat,
    WhoScored, Sofascore, FotMob, Transfermarkt, Capology, Spotrac.
-4. Dev and prod resources are separate. Never point dev code at *-prod.
+4. **Retired 2026-08-22: there is no `production` environment.** This project
+   is dev-only by decision — see the Guardrails section below and
+   `docs/exceptions.md` E-014. Historical note, not a live rule: while prod
+   existed, dev and prod resources were kept separate and dev code never
+   pointed at `*-prod`.
 5. Pin all GitHub Actions to full 40-character commit SHAs. Never a tag.
 6. Salary figures from third parties are estimates; label them as such.
 7. Dependency versions follow N-1 minor with exact pins, no ranges (ADR-0003).
@@ -34,16 +38,13 @@ on them.
   `/.claude`, or `worker/src/security` — do not need to be flagged for a
   laptop review or wait for approval. CI green -> self-approve -> merge,
   same as any other change. Full detail: `docs/runbooks/self-review-protocol.md`.
-- **The one exception:** anything that changes whether or how the
-  `deploy-prod` job's required-reviewer gate fires — the
-  `environment: production` line, the ruleset's required-checks/bypass
-  settings, `CF_TOKEN_PROD` handling, or the `production` Environment's
-  protection rules in GitHub Settings. That still gets a full line-by-line
-  read and an explicit "why this is safe" sentence before merge — see
-  self-review-protocol.md's Tier 3.
-- **Production promotion is the user's call, always.** Never propose it,
-  offer it, or bring it up because checks are green — it is deliberately
-  rare and infrequent, and only the user initiates it.
+- **Retired 2026-08-22: there is no `production` environment or promotion
+  gate left.** This project is dev-only by explicit decision (`docs/exceptions.md`
+  E-014) — the GitHub `production` Environment, `deploy-prod` job,
+  `CF_TOKEN_PROD`, and the `iammufc-prod` D1/KV pair are all being removed.
+  Tier 3 in self-review-protocol.md is retired along with it; only Tier 1/2
+  remain live. If a `production` environment is ever reintroduced, this
+  exception and Tier 3 are the template to restore, not to reinvent.
 - Never run wrangler deploy, wrangler versions upload, wrangler d1 execute
   --remote, wrangler secret, or git push --force.
 - Keep PRs small and single-purpose — the primary review surface is a phone.

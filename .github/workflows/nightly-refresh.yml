@@ -10,11 +10,11 @@
 # workflow does the real, testable version of the same job with the tool the
 # architecture already commits to at this stage.
 #
-# WHY DEV ONLY: nightly automation must never create approval fatigue.
-# Production promotion is a deliberate, human, PR-driven decision (see
-# deploy.yml's `production` Environment gate) -- it must not fire every night
-# for what is usually a no-op data refresh. This workflow refreshes `dev` and
-# stops; promoting to production is unaffected and still requires a person.
+# WHY DEV ONLY: this project has no production environment (decided
+# 2026-08-22) -- dev is the only environment left, so "dev only" is now just
+# "the only environment", not a promotion-gate decision. Kept as an explicit
+# scope note rather than deleted: a future environment should still not
+# inherit nightly automation without a deliberate decision to add it.
 
 name: Nightly Refresh
 

@@ -3,10 +3,11 @@
 // Containers are what force Workers Paid; they arrive at M4.
 //
 // Real resource ids, created 2026-08-19 (docs/runbooks/m0-github-setup.md §7).
-// CF_TOKEN_DEV/CF_TOKEN_PROD cannot be scoped below the Cloudflare account
-// level (docs/exceptions.md E-011) -- these exact names are what keeps dev
-// and prod (and this account's unrelated axes-of-fate-* resources) apart.
-// Getting a database_id wrong here is the actual failure mode; review
+// Dev only, by decision 2026-08-22: this project has no `production`
+// environment. The `iammufc-prod` D1/KV pair that briefly existed is being
+// decommissioned (docs/exceptions.md E-011, now closed as moot -- there is
+// no CF_TOKEN_PROD left to scope). Getting `database_id` wrong here is still
+// the actual failure mode on the one environment that remains; review
 // accordingly (self-review-protocol.md Tier 2).
 //
 // VERIFY the current schema against developers.cloudflare.com before use.
@@ -44,18 +45,6 @@
         }
       ],
       "kv_namespaces": [{ "binding": "CFG", "id": "e2ea049a4f414b4cb4d0a600cbb8d802" }],
-      "ai": { "binding": "AI" }
-    },
-
-    "production": {
-      "d1_databases": [
-        {
-          "binding": "DB",
-          "database_name": "iammufc-prod",
-          "database_id": "aa45bfab-d787-4f75-a568-894fd36f2e6e"
-        }
-      ],
-      "kv_namespaces": [{ "binding": "CFG", "id": "a214f80ccd8a4e4db4c8b64380b6d4c4" }],
       "ai": { "binding": "AI" }
 
       // M2 — football-data.org key. ToS 6.1 forbids keys in OSS repos, so it

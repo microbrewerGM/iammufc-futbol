@@ -1,20 +1,16 @@
-# Deployment.
+# Deployment. Dev only -- decided 2026-08-22: this project has no production
+# environment, so there is no promotion gate left to guarantee here.
 #
-# Two properties this file exists to guarantee:
+# The property this file still exists to guarantee:
 #
-#   1. Deploy jobs run ONLY on push to main -- post-merge, after review. A
-#      pull_request event from a fork runs with an empty secrets context, so a
-#      hostile PR can run the test suite but can never read a Cloudflare token.
-#      Never add `pull_request_target` with a fork checkout: that is the one
-#      trigger combining untrusted code with secret access.
-#
-#   2. Production promotion pauses on a GitHub Environment required reviewer.
-#      This is the ONLY place that gate can live. Moving deploy to Workers
-#      Builds or a Cloudflare webhook forfeits it entirely -- there is no
-#      Actions job left to pause.
+#   Deploy jobs run ONLY on push to main -- post-merge, after review. A
+#   pull_request event from a fork runs with an empty secrets context, so a
+#   hostile PR can run the test suite but can never read a Cloudflare token.
+#   Never add `pull_request_target` with a fork checkout: that is the one
+#   trigger combining untrusted code with secret access.
 #
 # Cloudflare does not support OIDC from GitHub Actions (wrangler-action#402,
-# workers-sdk#11434 both still open). Long-lived per-environment tokens are the
+# workers-sdk#11434 both still open). A long-lived per-environment token is the
 # only option; scoping and rotation are compensating controls, not a fix.
 # Tracked as exception E-007.
 
@@ -32,14 +28,6 @@ jobs:
   build-data:
     name: build-data
     runs-on: ubuntu-latest
-    # Job-level, not workflow-level: deploy-prod (below) gets its own group so
-    # an unapproved prod approval on an old run can never block a new run's
-    # dev pipeline from starting. Decided 2026-08-21 -- prod promotion is the
-    # user's rare, deliberate call, and dev must never wait on it. Before this
-    # split, a single top-level `concurrency: deploy-${{ github.ref }}` queued
-    # an ENTIRE new run (including build-data) behind the previous run's
-    # still-pending deploy-prod job, which is exactly backwards once dev
-    # merges are frequent and prod approval isn't.
     concurrency:
       group: deploy-dev-${{ github.ref }}
       cancel-in-progress: false # never interrupt an in-flight dev deploy
@@ -92,9 +80,10 @@ jobs:
         # on this Cloudflare account ONLY -- not to a specific database.
         # Cloudflare token policies have no per-resource scope below account
         # level (verified 2026-08-19, docs/exceptions.md E-011), so this token
-        # CAN reach iammufc-prod and other resources in this account. What
-        # actually keeps this job pointed at dev is the exact resource name
-        # below (iammufc-dev) plus self-review-protocol Tier 2 on this file.
+        # reaches everything else in the account too, `iammufc-dev`'s
+        # decommissioned prod sibling included. What actually keeps this job
+        # pointed at dev is the exact resource name below (iammufc-dev) plus
+        # self-review-protocol Tier 2 on this file.
         uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
         with:
           apiToken: ${{ secrets.CF_TOKEN_DEV }}
@@ -118,58 +107,3 @@ jobs:
           apiToken: ${{ secrets.CF_TOKEN_DEV }}
           accountId: ${{ secrets.CF_ACCOUNT }}
           command: deploy --config infra/wrangler.jsonc --env dev
-
-  deploy-prod:
-    name: deploy-prod
-    needs: deploy-dev
-    runs-on: ubuntu-latest
-    # Required reviewer + Prevent self-review are configured on this
-    # Environment in repository settings, not here. The job simply cannot
-    # start until a human approves, and the production token is only readable
-    # once it has.
-    environment: production
-    # Own group, separate from deploy-dev-${{ github.ref }} above -- an old
-    # run's unapproved (or never-approved) prod gate must never block a new
-    # run's dev pipeline. See the build-data job's comment for why.
-    concurrency:
-      group: deploy-prod-${{ github.ref }}
-      cancel-in-progress: false
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-
-      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
-        with:
-          name: d1-seed
-          path: infra/migrations
-
-      - name: Apply migrations (production)
-        # Mirrors deploy-dev. Missing entirely before this fix -- prod would
-        # have deployed the worker against a D1 database with no schema.
-        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
-        with:
-          apiToken: ${{ secrets.CF_TOKEN_PROD }}
-          accountId: ${{ secrets.CF_ACCOUNT }}
-          command: d1 execute iammufc-prod --config infra/wrangler.jsonc --env production --remote --file infra/migrations/0001_schema.sql
-
-      - name: Load seed (production)
-        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
-        with:
-          apiToken: ${{ secrets.CF_TOKEN_PROD }}
-          accountId: ${{ secrets.CF_ACCOUNT }}
-          command: d1 execute iammufc-prod --config infra/wrangler.jsonc --env production --remote --file infra/migrations/0002_seed.sql
-
-      - name: Deploy Worker (production)
-        # For Container Workers this MUST be `deploy`, not `versions upload` --
-        # only deploy updates container images.
-        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
-        with:
-          apiToken: ${{ secrets.CF_TOKEN_PROD }}
-          accountId: ${{ secrets.CF_ACCOUNT }}
-          command: deploy --config infra/wrangler.jsonc --env production
