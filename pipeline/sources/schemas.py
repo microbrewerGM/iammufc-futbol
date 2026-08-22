@@ -50,8 +50,14 @@ players_schema = DataFrameSchema(
 
 season_stats_schema = DataFrameSchema(
     {
-        "season": Column(str, Check.str_matches(r"^\d{4}-\d{2}$"), unique=True),
-        "competition": Column(str, Check.eq("PL")),
+        "season": Column(str, Check.str_matches(r"^\d{4}-\d{2}$")),
+        # PL: football_data_couk (PDDL, permanent). CL: football_data_org,
+        # ONLY for seasons United qualified -- ADR-0005, ingest-fdorg pulls
+        # Champions League alone, never Premier League, which the PL row
+        # here already covers on better rights.
+        "competition": Column(str, Check.isin(["PL", "CL"])),
+        # 38 is a full PL season; still a generous bound for CL, which never
+        # reaches that many matches even in the deepest possible run.
         "played": Column(int, Check.in_range(0, 38)),
         "won": Column(int, Check.ge(0)),
         "drawn": Column(int, Check.ge(0)),
@@ -61,6 +67,9 @@ season_stats_schema = DataFrameSchema(
     },
     strict=False,
     coerce=True,
+    # (season, competition) is the real key, not season alone -- one row per
+    # season for PL, an additional row only for seasons with a CL entry.
+    unique=["season", "competition"],
     # played must equal won+drawn+lost -- a dataframe-wide check, expressible
     # here because it's within ONE frame (unlike the cross-frame checks that
     # stay in run.py).
