@@ -188,3 +188,58 @@ class TestFetchAll:
         ):
             with pytest.raises(FdorgIngestError, match="not Manchester United"):
                 fetch_all(["2019-20"], "fake-key")
+
+
+class TestEndpointChoice:
+    """Regression guard for the 2026-08-23 live failure.
+
+    Every test above passed while the module called `/teams/{id}/matches`,
+    which returns 403 on the free tier -- mocks answered whatever URL they
+    were given, so nothing pinned the endpoint. These assert the URL itself.
+    """
+
+    def test_uses_the_competition_endpoint_not_team_matches(self):
+        seen: list[str] = []
+
+        def fake_get(url, headers, params, timeout):
+            seen.append(url)
+            return mock_response(200, {"matches": []})
+
+        with patch("pipeline.sources.ingest_fdorg.requests.get", side_effect=fake_get):
+            fetch_cl_season("2018-19", "fake-key", instant_bucket())
+
+        assert seen == ["https://api.football-data.org/v4/competitions/CL/matches"]
+        assert not any("/teams/" in u and u.endswith("/matches") for u in seen), (
+            "team-matches subresource is not available on the free tier (HTTP 403)"
+        )
+
+    def test_filters_out_matches_not_involving_united(self):
+        other_a, other_b = 111, 222
+        matches = {
+            "matches": [
+                finished_match(other_a, other_b, 5, 0),  # someone else's tie
+                finished_match(TEAM_ID_MUFC, other_a, 2, 1),  # ours
+                finished_match(other_b, other_a, 0, 0),  # someone else's again
+            ]
+        }
+        with patch("pipeline.sources.ingest_fdorg.requests.get", return_value=mock_response(200, matches)):
+            row, _ = fetch_cl_season("2018-19", "fake-key", instant_bucket())
+
+        assert row is not None
+        r = row.iloc[0]
+        assert r["played"] == 1, "only United's match should count"
+        assert r["won"] == 1
+        assert r["goals"] == 2
+        assert r["goals_against"] == 1
+
+    def test_season_is_passed_as_the_start_year(self):
+        captured: dict = {}
+
+        def fake_get(url, headers, params, timeout):
+            captured.update(params)
+            return mock_response(200, {"matches": []})
+
+        with patch("pipeline.sources.ingest_fdorg.requests.get", side_effect=fake_get):
+            fetch_cl_season("2018-19", "fake-key", instant_bucket())
+
+        assert captured["season"] == 2018

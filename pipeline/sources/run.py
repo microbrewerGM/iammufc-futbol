@@ -385,7 +385,25 @@ def main() -> int:
         try:
             cl_frame, cl_hashes = fetch_cl_all(SEASONS, fdorg_key)
         except FdorgIngestError as exc:
-            raise IngestError(f"football-data.org Champions League ingest failed: {exc}") from exc
+            # Deliberately NOT fatal, changed 2026-08-23 after the first live
+            # run broke the dev deploy: a 403 from an OPTIONAL bonus source
+            # took down the entire PL/FPL pipeline, which is backwards. This
+            # source adds Champions League on top; it is never what the site
+            # is for. Degrading costs a missing European line on some season
+            # pages -- honest, since the page renders nothing rather than
+            # guessing -- while failing hard costs every season, every player,
+            # and the deploy.
+            #
+            # This is a load-bearing WARNING, not a silent skip: it is the only
+            # signal that a key has been revoked or a plan downgraded, so it
+            # must stay greppable and loud in the Actions log.
+            print(
+                f"  WARNING: Champions League ingest skipped -- {exc}\n"
+                f"  Premier League and player data are unaffected. Fix the key "
+                f"or subscription to restore CL coverage.",
+                file=sys.stderr,
+            )
+            cl_frame, cl_hashes = pd.DataFrame(), {}
         if not cl_frame.empty:
             season_frames.append(cl_frame)
             source_hashes.update(cl_hashes)
