@@ -13,7 +13,7 @@ import { describe, expect, it } from "vitest";
 
 import { Catalog, type CompiledCatalog } from "../worker/src/core/feasibility";
 import { LOCALES } from "../worker/src/core/locale";
-import { seasonPageBody } from "../worker/src/views/pages";
+import { coverageMatrix, seasonPageBody } from "../worker/src/views/pages";
 import compiled from "../worker/src/generated/catalog.json" with { type: "json" };
 
 const catalog = new Catalog(compiled as unknown as CompiledCatalog);
@@ -80,5 +80,33 @@ describe("season page — Champions League record", () => {
     // licence requires us to display. Falls back to English by design.
     const html = seasonPageBody("2018-19", squad as never, plRecord, catalog, LOCALES.es, clRecord);
     expect(html).toContain(FDORG_CREDIT);
+  });
+});
+
+
+describe("coverage matrix — competition scoping", () => {
+  /**
+   * Adding Champions League cells made the homepage matrix credit
+   * football-data.org for the Goals row, which is FPL player data. The bare
+   * `metric/season` key had no competition dimension, so the last matching
+   * cell in the YAML won. These pin the source shown per metric so a new
+   * competition can never silently reattribute an existing row again.
+   */
+  const html = coverageMatrix(catalog, LOCALES.en);
+
+  it("credits FPL for player box-score metrics, not football-data.org", () => {
+    expect(html).toContain("Fantasy Premier League public API");
+    expect(html).not.toContain("football-data.org API");
+  });
+
+  it("shows a column for each season and no Champions League leakage", () => {
+    expect(html).toContain("2016-17");
+    expect(html).toContain("2025-26");
+    expect(html).not.toContain("Champions League");
+  });
+
+  it("still marks the no-rights metric as such", () => {
+    // progressive_passes is FBref-sourced and deliberately non-redistributable
+    expect(html).toContain("✕");
   });
 });

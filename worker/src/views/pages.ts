@@ -60,8 +60,30 @@ ${notes}`;
 export function coverageMatrix(catalog: Catalog, locale: Locale): string {
   const t = locale.strings;
   const metrics = catalog.metrics;
-  const seasons = [...new Set(catalog.coverage.map((c) => c.season))].sort().reverse();
-  const index = new Map(catalog.coverage.map((c) => [`${c.metric}/${c.season}`, c] as const));
+  // Scoped to Premier League, and to player-level cells where both exist.
+  //
+  // The matrix is a metric x season grid with no competition dimension, so a
+  // bare `metric/season` key silently collides once a metric is covered for
+  // more than one competition or entity type -- last cell in the YAML wins,
+  // and the tooltip then credits the wrong source. That went unnoticed while
+  // the only collision was harmless; adding Champions League cells made it
+  // credit football-data.org for what is actually FPL player data.
+  //
+  // Champions League coverage is surfaced on the season pages instead, where
+  // it has a place to live. Giving this table a real competition dimension is
+  // a deliberate design change, not something to fall out of a bug fix.
+  const plCells = catalog.coverage.filter((c) => c.competition === "PL");
+  const seasons = [...new Set(plCells.map((c) => c.season))].sort().reverse();
+  const index = new Map<string, (typeof plCells)[number]>();
+  for (const c of plCells) {
+    const key = `${c.metric}/${c.season}`;
+    const held = index.get(key);
+    // Deterministic precedence, rather than document order: these columns feed
+    // the player tables, so a player-level cell is the one being described.
+    if (!held || (held.entity_type !== "player" && c.entity_type === "player")) {
+      index.set(key, c);
+    }
+  }
 
   const head = seasons.map((s) => `<th class="num">${esc(s)}</th>`).join("");
   const rows = metrics
