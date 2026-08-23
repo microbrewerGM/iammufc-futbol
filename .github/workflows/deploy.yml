@@ -28,6 +28,11 @@ jobs:
   build-data:
     name: build-data
     runs-on: ubuntu-latest
+    # Needed for FOOTBALL_DATA_KEY (Champions League ingest, ADR-0005) --
+    # environment secrets are scoped strictly by declared environment name,
+    # same mechanism deploy-dev already relies on for CF_TOKEN_DEV. `dev` has
+    # no protection rules, so this adds no approval gate, only secret scope.
+    environment: dev
     concurrency:
       group: deploy-dev-${{ github.ref }}
       cancel-in-progress: false # never interrupt an in-flight dev deploy
@@ -39,7 +44,10 @@ jobs:
 
       - name: Ingest and generate the D1 seed
         # The seed is generated here and never committed. Hard rule: no data
-        # files in a public repository.
+        # files in a public repository. FOOTBALL_DATA_KEY absent degrades to
+        # "skip Champions League", not a failure -- see run.py's own comment.
+        env:
+          FOOTBALL_DATA_KEY: ${{ secrets.FOOTBALL_DATA_KEY }}
         run: |
           uv sync --locked
           uv run python -m pipeline.contracts.build_catalog

@@ -62,6 +62,11 @@ jobs:
         # Pandera gates (pipeline/sources/schemas.py) plus the cross-frame
         # referential checks in run.py's validate() run BEFORE the seed is
         # written. A bad upstream pull fails here, not silently in production.
+        # FOOTBALL_DATA_KEY absent degrades to "skip Champions League", not a
+        # failure -- see run.py's own comment. This job already declares
+        # `environment: dev` above, so the secret is in scope.
+        env:
+          FOOTBALL_DATA_KEY: ${{ secrets.FOOTBALL_DATA_KEY }}
         run: uv run python -m pipeline.sources.run
 
       - name: Apply schema + seed to dev D1

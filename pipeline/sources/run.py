@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +25,8 @@ import pandas as pd
 import pandera.errors
 import requests
 
+from pipeline.sources.ingest_fdorg import FdorgIngestError
+from pipeline.sources.ingest_fdorg import fetch_all as fetch_cl_all
 from pipeline.sources.schemas import validate_players, validate_season_stats
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -244,14 +247,20 @@ def validate(players: pd.DataFrame, seasons: pd.DataFrame) -> None:
     # here catches the "technically valid, actually useless" empty-run case.
     if players.empty:
         errors.append("no player rows")
-    if len(seasons) != len(SEASONS):
-        errors.append(f"expected {len(SEASONS)} season rows, got {len(seasons)}")
+    # Exactly one PL row per season is guaranteed (football_data_couk, every
+    # season). CL rows are additive and only present for seasons United
+    # qualified, so the total row count is >= this, not ==.
+    pl_count = len(seasons[seasons["competition"] == "PL"])
+    if pl_count != len(SEASONS):
+        errors.append(f"expected {len(SEASONS)} PL season rows, got {pl_count}")
 
     # Pass 2: cross-frame referential checks.
     if not errors:  # only meaningful once structure is confirmed sound
         for season in SEASONS:
             p_goals = int(players[players["season"] == season]["goals"].sum())
-            season_row = seasons[seasons["season"] == season]
+            # FPL points/goals are Premier-League-specific -- compare against
+            # the PL row only, never CL, even when both exist for a season.
+            season_row = seasons[(seasons["season"] == season) & (seasons["competition"] == "PL")]
             if season_row.empty:
                 continue  # already reported by the row-count check above
             s_goals = int(season_row["goals"].iloc[0])
@@ -331,11 +340,14 @@ def emit_seed(
     lines.append("")
 
     for _, r in seasons.iterrows():
+        # r['competition'] is PL for every season (football_data_couk) and
+        # additionally CL for seasons United qualified (football_data_org,
+        # ADR-0005) -- no longer hardcoded now that both exist in the frame.
         lines.append(
             "INSERT INTO season_stats (season, competition, played, won, drawn, lost, "
             "goals, goals_against, snapshot_id) VALUES ("
-            f"{sql_str(r['season'])}, 'PL', {int(r['played'])}, {int(r['won'])}, "
-            f"{int(r['drawn'])}, {int(r['lost'])}, {int(r['goals'])}, "
+            f"{sql_str(r['season'])}, {sql_str(r['competition'])}, {int(r['played'])}, "
+            f"{int(r['won'])}, {int(r['drawn'])}, {int(r['lost'])}, {int(r['goals'])}, "
             f"{int(r['goals_against'])}, {sql_str(snapshot_id)});"
         )
     lines.append("")
@@ -358,6 +370,30 @@ def main() -> int:
         source_hashes[f"football_data_couk:{season}"] = rhash
         print(
             f"    {len(players)} players, {int(results.iloc[0]['played'])} matches",
+            file=sys.stderr,
+        )
+
+    # Champions League, ADR-0005: additive on top of the PL rows above, only
+    # for seasons United qualified. FOOTBALL_DATA_KEY absent is expected in
+    # local/contributor runs -- degrade to "skipped", not a hard failure, so
+    # the core PL/FPL ingest never depends on an optional bonus source's
+    # credential. A key that IS present but fails for real (bad token, API
+    # down) still raises -- that is signal, not silence.
+    fdorg_key = os.environ.get("FOOTBALL_DATA_KEY")
+    if fdorg_key:
+        print("  fetching Champions League (football-data.org) ...", file=sys.stderr)
+        try:
+            cl_frame, cl_hashes = fetch_cl_all(SEASONS, fdorg_key)
+        except FdorgIngestError as exc:
+            raise IngestError(f"football-data.org Champions League ingest failed: {exc}") from exc
+        if not cl_frame.empty:
+            season_frames.append(cl_frame)
+            source_hashes.update(cl_hashes)
+        print(f"    {len(cl_frame)} Champions League season(s) found", file=sys.stderr)
+    else:
+        print(
+            "  FOOTBALL_DATA_KEY not set -- skipping Champions League ingest "
+            "(Premier League/FPL data is unaffected)",
             file=sys.stderr,
         )
 
