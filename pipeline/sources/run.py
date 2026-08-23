@@ -16,7 +16,6 @@ from __future__ import annotations
 import hashlib
 import io
 import json
-import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,8 +24,8 @@ import pandas as pd
 import pandera.errors
 import requests
 
-from pipeline.sources.ingest_fdorg import FdorgIngestError
-from pipeline.sources.ingest_fdorg import fetch_all as fetch_cl_all
+from pipeline.sources.ingest_openfootball_cl import OpenfootballCLError
+from pipeline.sources.ingest_openfootball_cl import fetch_all as fetch_cl_all
 from pipeline.sources.schemas import validate_players, validate_season_stats
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -374,46 +373,28 @@ def main() -> int:
         )
 
     # Champions League, ADR-0005: additive on top of the PL rows above, only
-    # for seasons United qualified. FOOTBALL_DATA_KEY absent is expected in
-    # local/contributor runs -- degrade to "skipped", not a hard failure, so
-    # the core PL/FPL ingest never depends on an optional bonus source's
-    # credential. A key that IS present but fails for real (bad token, API
-    # down) still raises -- that is signal, not silence.
-    fdorg_key = os.environ.get("FOOTBALL_DATA_KEY")
-    if fdorg_key:
-        print("  fetching Champions League (football-data.org) ...", file=sys.stderr)
-        try:
-            cl_frame, cl_hashes = fetch_cl_all(SEASONS, fdorg_key)
-        except FdorgIngestError as exc:
-            # Deliberately NOT fatal, changed 2026-08-23 after the first live
-            # run broke the dev deploy: a 403 from an OPTIONAL bonus source
-            # took down the entire PL/FPL pipeline, which is backwards. This
-            # source adds Champions League on top; it is never what the site
-            # is for. Degrading costs a missing European line on some season
-            # pages -- honest, since the page renders nothing rather than
-            # guessing -- while failing hard costs every season, every player,
-            # and the deploy.
-            #
-            # This is a load-bearing WARNING, not a silent skip: it is the only
-            # signal that a key has been revoked or a plan downgraded, so it
-            # must stay greppable and loud in the Actions log.
-            print(
-                f"  WARNING: Champions League ingest skipped -- {exc}\n"
-                f"  Premier League and player data are unaffected. Fix the key "
-                f"or subscription to restore CL coverage.",
-                file=sys.stderr,
-            )
-            cl_frame, cl_hashes = pd.DataFrame(), {}
-        if not cl_frame.empty:
-            season_frames.append(cl_frame)
-            source_hashes.update(cl_hashes)
-        print(f"    {len(cl_frame)} Champions League season(s) found", file=sys.stderr)
-    else:
+    # for seasons United qualified. Source is openfootball (CC0, public
+    # domain), NOT football-data.org, whose free tier returns 403 for CL match
+    # data on every endpoint that carries it. Public domain also beats a
+    # subscription-contingent grant on rights, which is what ADR-0005 asks for.
+    # No API key, so nothing to gate this on and no credential to leak.
+    print("  fetching Champions League (openfootball) ...", file=sys.stderr)
+    try:
+        cl_frame, cl_hashes = fetch_cl_all(SEASONS)
+    except OpenfootballCLError as exc:
+        # Not fatal, for the same reason as before: this is an additive bonus
+        # source and the site's core is PL/FPL data. A loud warning is the only
+        # signal that upstream changed shape, so it has to stay greppable.
         print(
-            "  FOOTBALL_DATA_KEY not set -- skipping Champions League ingest "
-            "(Premier League/FPL data is unaffected)",
+            f"  WARNING: Champions League ingest skipped -- {exc}\n"
+            f"  Premier League and player data are unaffected.",
             file=sys.stderr,
         )
+        cl_frame, cl_hashes = pd.DataFrame(), {}
+    if not cl_frame.empty:
+        season_frames.append(cl_frame)
+        source_hashes.update(cl_hashes)
+    print(f"    {len(cl_frame)} Champions League season(s) found", file=sys.stderr)
 
     players = pd.concat(player_frames, ignore_index=True)
     seasons = pd.concat(season_frames, ignore_index=True)
