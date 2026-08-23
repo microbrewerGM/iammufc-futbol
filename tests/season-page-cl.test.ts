@@ -18,8 +18,6 @@ import compiled from "../worker/src/generated/catalog.json" with { type: "json" 
 
 const catalog = new Catalog(compiled as unknown as CompiledCatalog);
 
-const FDORG_CREDIT = "Football data provided by the Football-Data.org API";
-
 const squad = [
   { label: "B.Fernandes", secondary: "MF", goals: 8, assists: 6, minutes: 3017, points: 174, xg: 9.93 },
 ];
@@ -52,15 +50,25 @@ describe("season page — Champions League record", () => {
     expect(html).toContain("13–15 goals");
   });
 
-  it("renders football-data.org's mandated attribution verbatim alongside it", () => {
+  it("renders the line for a public-domain source that mandates no credit", () => {
+    // Regression: an earlier guard required attribution_text to be non-null,
+    // which silently hid the entire Champions League line once the source
+    // became openfootball. Publishing rights gate the line, not credit text.
     const html = seasonPageBody("2018-19", squad as never, plRecord, catalog, LOCALES.en, clRecord);
-    expect(html).toContain(FDORG_CREDIT);
+    expect(html).toContain("Champions League: 10 played");
+    expect(html).not.toContain("Football-Data.org");
   });
 
-  it("omits both the line and the credit when United did not enter that season", () => {
+  it("omits the line entirely when United did not enter that season", () => {
     const html = seasonPageBody("2018-19", squad as never, plRecord, catalog, LOCALES.en, null);
     expect(html).not.toContain("Champions League");
-    expect(html).not.toContain(FDORG_CREDIT);
+  });
+
+  it("still renders any credit a source does mandate, alongside its data", () => {
+    // The invariant the old guard was protecting, kept and pinned properly:
+    // the player table's source (FPL) requires a credit, and it appears.
+    const html = seasonPageBody("2018-19", squad as never, plRecord, catalog, LOCALES.en, clRecord);
+    expect(html).toContain("Fantasy Premier League");
   });
 
   it("still renders the league record when the CL record is absent", () => {
@@ -74,12 +82,10 @@ describe("season page — Champions League record", () => {
     expect(html).toContain("4G 2E 4P");
   });
 
-  it("keeps the licence-mandated credit in English on the Spanish page", () => {
-    // attribution_text_es is deliberately null in the manifest for this source:
-    // translating a licence-mandated verbatim string would change what the
-    // licence requires us to display. Falls back to English by design.
+  it("renders the Spanish line without inventing a credit the licence never asked for", () => {
     const html = seasonPageBody("2018-19", squad as never, plRecord, catalog, LOCALES.es, clRecord);
-    expect(html).toContain(FDORG_CREDIT);
+    expect(html).toContain("Liga de Campeones: 10 jugados");
+    expect(html).not.toContain("Football-Data.org");
   });
 });
 

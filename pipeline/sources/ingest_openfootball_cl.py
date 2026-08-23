@@ -42,10 +42,23 @@ HEADERS = {"User-Agent": "iammufc-poc/0.1 (non-commercial fan project)"}
 
 COMPETITION_CODE = "CL"
 
-#: openfootball spells the club out in full and tags the country. Matched on
-#: the tagged form so "Manchester United" can never collide with another club
-#: whose name contains it.
-TEAM_MUFC = "Manchester United (ENG)"
+#: openfootball spells the club out in full and tags the country, but NOT
+#: consistently across seasons: some files say "Manchester United (ENG)" and
+#: others "Manchester United FC (ENG)". Matching one spelling exactly silently
+#: dropped an entire group stage -- found 2023-24, where six played matches
+#: parsed as zero. Matched on the tagged form so "Manchester United" can never
+#: collide with another club whose name contains it.
+TEAM_ALIASES = frozenset({
+    "Manchester United (ENG)",
+    "Manchester United FC (ENG)",
+})
+
+#: Used only by the drift guard below, never to match a fixture. Deliberately
+#: broader than TEAM_ALIASES: the guard's job is to notice ANY plausible
+#: renaming of the club, including abbreviations no current file uses, so the
+#: parser fails loudly rather than reporting a season United played in as a
+#: season they sat out.
+TEAM_SUBSTRINGS = ("Manchester United", "Manchester Utd", "Man United", "Man Utd")
 
 #: `Home (CC) v Away (CC)  H-A` -- the optional leading kickoff time is not
 #: always present (openfootball omits it on same-time matches).
@@ -89,18 +102,44 @@ def parse_united_matches(text: str) -> list[tuple[int, int]]:
 
     Fixtures with no score yet simply do not match MATCH_RE, so an in-progress
     season yields only the matches actually played -- never a fabricated 0-0.
+
+    Raises if the file clearly names Manchester United under a spelling we do
+    not recognise. That distinction matters: "United were not in this
+    competition" and "United are here under a name the parser misses" both
+    produce zero rows, and only the second is a bug. Without this guard the
+    second one is invisible, which is exactly how the 2023-24 group stage went
+    missing.
     """
     out: list[tuple[int, int]] = []
+    matched_any = False
     for line in text.splitlines():
         m = MATCH_RE.match(line)
         if not m:
             continue
         home, away = m.group("home").strip(), m.group("away").strip()
         hg, ag = int(m.group("hg")), int(m.group("ag"))
-        if home == TEAM_MUFC:
+        if home in TEAM_ALIASES:
             out.append((hg, ag))
-        elif away == TEAM_MUFC:
+            matched_any = True
+        elif away in TEAM_ALIASES:
             out.append((ag, hg))
+            matched_any = True
+
+    if not matched_any:
+        unknown = sorted({
+            name
+            for line in text.splitlines()
+            if (m := MATCH_RE.match(line))
+            for name in (m.group("home").strip(), m.group("away").strip())
+            if name not in TEAM_ALIASES
+            and any(sub in name for sub in TEAM_SUBSTRINGS)
+        })
+        if unknown:
+            raise OpenfootballCLError(
+                f"file names Manchester United as {unknown!r}, which is not in "
+                f"TEAM_ALIASES -- add the spelling rather than shipping a season "
+                f"of silently missing matches"
+            )
     return out
 
 

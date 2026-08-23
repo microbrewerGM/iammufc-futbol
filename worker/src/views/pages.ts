@@ -317,9 +317,18 @@ export function seasonPageBody(
   const clFeas = europeanRecord
     ? columnFeasibility(catalog, "season", season, "CL", locale.code)
     : null;
-  const clAttribution = clFeas?.get("goals")?.attribution_text ?? null;
+  const clCell = clFeas?.get("goals") ?? null;
+  const clAttribution = clCell?.attribution_text ?? null;
+  // Gate on the RIGHT to publish, not on the existence of a credit line.
+  // An earlier version required attribution_text to be non-null, which was
+  // correct while the source mandated a verbatim credit -- and silently hid
+  // the whole line the moment the source became openfootball, whose public
+  // domain dedication requires no attribution at all. The invariant that
+  // actually matters is the other direction: where a credit IS required it
+  // renders with the data, which the `clAttribution &&` below still enforces.
+  const clPublishable = Boolean(clCell) && clCell?.state !== "not_computable_no_rights";
   const europeanLine =
-    europeanRecord && clAttribution
+    europeanRecord && clPublishable
       ? `<p class="tagline">${esc(
           t.europeanRecord(
             europeanRecord.played,

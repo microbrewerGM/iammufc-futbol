@@ -1,10 +1,13 @@
 """The optional Champions League source must never sink the core ingest.
 
-Regression test for 2026-08-23: a 403 from football-data.org (an additive
-bonus source) failed the whole run, which took down the dev deploy along with
-every Premier League and player row. The core pipeline's job is PL/FPL data;
-CL sits on top of it and must degrade to "absent", never to "everything
-fails".
+Regression test for 2026-08-23: a 403 from an additive bonus source failed the
+whole run, which took down the dev deploy along with every Premier League and
+player row. The core pipeline's job is PL/FPL data; CL sits on top of it and
+must degrade to "absent", never to "everything fails".
+
+The CL source has since moved from football-data.org to openfootball, so the
+exception type changed. The property did not: whatever supplies Champions
+League data, its failure is a warning and the run continues.
 """
 
 from __future__ import annotations
@@ -15,7 +18,7 @@ import pandas as pd
 import pytest
 
 from pipeline.sources import run as run_mod
-from pipeline.sources.ingest_fdorg import FdorgIngestError
+from pipeline.sources.ingest_openfootball_cl import OpenfootballCLError
 
 SEASON = "2018-19"
 
@@ -78,7 +81,7 @@ def test_cl_failure_does_not_fail_the_run(core_pipeline_mocked, capsys):
     with patch.object(
         run_mod,
         "fetch_cl_all",
-        side_effect=FdorgIngestError("/competitions/CL/matches returned HTTP 403"),
+        side_effect=OpenfootballCLError("/competitions/CL/matches returned HTTP 403"),
     ):
         assert run_mod.main() == 0
 
@@ -92,7 +95,7 @@ def test_cl_failure_warns_loudly_enough_to_notice(core_pipeline_mocked, capsys):
     """A silent skip would hide a revoked key indefinitely. The warning is the
     only signal, so it has to stay greppable."""
     with patch.object(
-        run_mod, "fetch_cl_all", side_effect=FdorgIngestError("HTTP 403 restricted")
+        run_mod, "fetch_cl_all", side_effect=OpenfootballCLError("HTTP 403 restricted")
     ):
         run_mod.main()
 
