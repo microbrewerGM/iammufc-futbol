@@ -9,9 +9,17 @@ is the one thing this source adds that nothing else in the manifest covers.
 Not qualifying for the Champions League in a given season is expected, not
 an error -- most Man United seasons in this window did not include it. An
 empty `matches` response for a season means "not applicable", not "ingest
-failure". A genuine HTTP failure (bad key, API down) still raises: this
-distinguishes "nothing to report" from "something went wrong", same
-principle as run.py's own IngestError philosophy.
+failure". A genuine HTTP failure (bad key, API down) still raises here; it is
+run.py that decides such a failure should not sink the core PL/FPL ingest.
+
+ENDPOINT CHOICE, learned the hard way 2026-08-23: this reads
+`/competitions/CL/matches`, NOT `/teams/{id}/matches`. The team-matches
+subresource returns HTTP 403 "restricted and apparently not within your
+permissions" on the free tier -- the first live run against a real key failed
+on exactly that, having passed every mocked test. Champions League itself IS
+free-tier (football-data.org/coverage), so the competition-scoped endpoint
+carries the same data; United's matches are filtered out of it client-side.
+Same one request per season either way.
 """
 
 from __future__ import annotations
@@ -86,13 +94,20 @@ def fetch_cl_season(
     (None, None) if they didn't qualify -- not an error."""
     year = int(season[:4])
     data = _get(
-        f"/teams/{TEAM_ID_MUFC}/matches",
+        f"/competitions/{COMPETITION_CODE}/matches",
         api_key,
         bucket,
-        competitions=COMPETITION_CODE,
         season=year,
     )
-    matches = data.get("matches", [])
+    # The competition endpoint returns every club's matches for that season;
+    # United's are filtered out here. Doing it client-side is what the free
+    # tier allows -- see this module's docstring on the 403.
+    matches = [
+        m
+        for m in data.get("matches", [])
+        if m.get("homeTeam", {}).get("id") == TEAM_ID_MUFC
+        or m.get("awayTeam", {}).get("id") == TEAM_ID_MUFC
+    ]
     finished = [m for m in matches if m.get("status") == "FINISHED"]
     if not finished:
         return None, None
