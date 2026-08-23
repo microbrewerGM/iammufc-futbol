@@ -251,11 +251,15 @@ function registerLocaleRoutes(code: LocaleCode) {
 
   app.get(`${p}/season/:season`, async (c) => {
     const season = c.req.param("season");
-    const [squad, record] = await Promise.all([
+    // Champions League record fetched alongside the league one. Returns null
+    // for every season United did not enter it, which is the common case and
+    // not an error -- seasonPageBody simply renders no European line.
+    const [squad, record, europeanRecord] = await Promise.all([
       seasonSquadRows(c.env, season),
       seasonRecordRow(c.env, season),
+      seasonRecordRow(c.env, season, "CL"),
     ]);
-    const body = seasonPageBody(season, squad, record, catalog, locale);
+    const body = seasonPageBody(season, squad, record, catalog, locale, europeanRecord);
     const res = html(
       page(body, {
         title: `${season}`,

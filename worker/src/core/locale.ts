@@ -60,6 +60,11 @@ export interface Locale {
     dashExplainer: string;
     squadHeading: (season: string) => string;
     leagueRecord: (p: number, w: number, d: number, l: number, gf: number, ga: number) => string;
+    /** Champions League season record. Separate string from leagueRecord, not a
+     *  parameterised competition name: "played/won/drawn/lost" reads naturally
+     *  in a league table and awkwardly for a knockout competition, and Spanish
+     *  needs its own phrasing rather than a substituted noun. */
+    europeanRecord: (p: number, w: number, d: number, l: number, gf: number, ga: number) => string;
     seeTopScorers: string;
     noSeasonRecord: (season: string) => string;
     noPlayerMatched: (name: string) => string;
@@ -105,6 +110,8 @@ const EN: Locale = {
     squadHeading: (s) => `Squad — ${s}`,
     leagueRecord: (p, w, d, l, gf, ga) =>
       `League record: ${p} played, ${w}W ${d}D ${l}L, ${gf}–${ga} goals.`,
+    europeanRecord: (p, w, d, l, gf, ga) =>
+      `Champions League: ${p} played, ${w}W ${d}D ${l}L, ${gf}–${ga} goals.`,
     seeTopScorers: "See top scorers",
     noSeasonRecord: (s) => `No season-level results integrated for ${s} yet.`,
     noPlayerMatched: (n) => `No player matched "${n}" in our data.`,
@@ -153,6 +160,8 @@ const ES: Locale = {
     squadHeading: (s) => `Plantilla — ${s}`,
     leagueRecord: (p, w, d, l, gf, ga) =>
       `Récord en liga: ${p} jugados, ${w}G ${d}E ${l}P, ${gf}–${ga} goles.`,
+    europeanRecord: (p, w, d, l, gf, ga) =>
+      `Liga de Campeones: ${p} jugados, ${w}G ${d}E ${l}P, ${gf}–${ga} goles.`,
     seeTopScorers: "Ver máximos goleadores",
     noSeasonRecord: (s) => `Aún no hay resultados de temporada integrados para ${s}.`,
     noPlayerMatched: (n) => `Ningún jugador coincide con "${n}" en nuestros datos.`,

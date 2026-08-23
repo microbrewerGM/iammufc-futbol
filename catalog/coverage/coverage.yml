@@ -84,6 +84,28 @@ coverage:
   - { metric: goals, entity_type: season, granularity: box_score, season: "2024-25", competition: PL, source_id: football_data_couk, redistributable: true, cost_class: cheap }
   - { metric: goals, entity_type: season, granularity: box_score, season: "2025-26", competition: PL, source_id: football_data_couk, redistributable: true, cost_class: cheap }
 
+  # --- goals: Champions League season record, football-data.org (ADR-0005) -------------
+  # CL is the ONE thing football-data.org adds that no better-positioned source
+  # covers -- Premier League deliberately stays on football_data_couk's permanent
+  # PDDL grant rather than this source's subscription-contingent one.
+  #
+  # A cell here declares "this source can provide it, and we may publish it" --
+  # NOT that a row exists. United did not enter the Champions League every
+  # season in this window; for those seasons the ingest simply writes no row and
+  # the season page renders no European line. Same separation the PL cells above
+  # already rely on: the matrix answers rights+capability, the database answers
+  # existence.
+  - { metric: goals, entity_type: season, granularity: box_score, season: "2016-17", competition: CL, source_id: football_data_org, redistributable: true, cost_class: cheap }
+  - { metric: goals, entity_type: season, granularity: box_score, season: "2017-18", competition: CL, source_id: football_data_org, redistributable: true, cost_class: cheap }
+  - { metric: goals, entity_type: season, granularity: box_score, season: "2018-19", competition: CL, source_id: football_data_org, redistributable: true, cost_class: cheap }
+  - { metric: goals, entity_type: season, granularity: box_score, season: "2019-20", competition: CL, source_id: football_data_org, redistributable: true, cost_class: cheap }
+  - { metric: goals, entity_type: season, granularity: box_score, season: "2020-21", competition: CL, source_id: football_data_org, redistributable: true, cost_class: cheap }
+  - { metric: goals, entity_type: season, granularity: box_score, season: "2021-22", competition: CL, source_id: football_data_org, redistributable: true, cost_class: cheap }
+  - { metric: goals, entity_type: season, granularity: box_score, season: "2022-23", competition: CL, source_id: football_data_org, redistributable: true, cost_class: cheap }
+  - { metric: goals, entity_type: season, granularity: box_score, season: "2023-24", competition: CL, source_id: football_data_org, redistributable: true, cost_class: cheap }
+  - { metric: goals, entity_type: season, granularity: box_score, season: "2024-25", competition: CL, source_id: football_data_org, redistributable: true, cost_class: cheap }
+  - { metric: goals, entity_type: season, granularity: box_score, season: "2025-26", competition: CL, source_id: football_data_org, redistributable: true, cost_class: cheap }
+
   # --- The NO_RIGHTS case --------------------------------------------------
   # We know exactly where to get this, it would be trivial to serve, and we
   # may not. No green-tier source carries progressive passes: FPL does not

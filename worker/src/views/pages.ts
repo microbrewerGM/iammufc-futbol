@@ -259,6 +259,7 @@ export function seasonPageBody(
   record: SeasonRecord | null,
   catalog: Catalog,
   locale: Locale,
+  europeanRecord: SeasonRecord | null = null,
 ): string {
   const t = locale.strings;
   if (squad.length === 0) {
@@ -285,15 +286,41 @@ export function seasonPageBody(
 <a href="${base(locale)}/q?metric=goals&season=${esc(season)}&viz=bar&entity_id=all">${esc(t.seeTopScorers)}</a></p>`
     : `<p class="note">${esc(t.noSeasonRecord(season))}</p>`;
 
+  // Champions League line renders ONLY when the ingest actually found a row --
+  // United did not enter Europe's top competition every season in this window,
+  // and an empty "0 played" line would read as a claim we measured something.
+  // Attribution comes from the CL coverage cell's lineage, never hand-coded:
+  // football-data.org's terms (clause 7.1) mandate that exact string whenever
+  // their data is shown, so the line renders with its attribution or not at all.
+  const clFeas = europeanRecord
+    ? columnFeasibility(catalog, "season", season, "CL", locale.code)
+    : null;
+  const clAttribution = clFeas?.get("goals")?.attribution_text ?? null;
+  const europeanLine =
+    europeanRecord && clAttribution
+      ? `<p class="tagline">${esc(
+          t.europeanRecord(
+            europeanRecord.played,
+            europeanRecord.won,
+            europeanRecord.drawn,
+            europeanRecord.lost,
+            europeanRecord.goals,
+            europeanRecord.goals_against,
+          ),
+        )}</p>`
+      : "";
+
   const attribution = feas.get("goals")?.attribution_text;
 
   return `<h1>${esc(t.squadHeading(season))}</h1>
 ${recordLine}
+${europeanLine}
 <table>
 <thead><tr><th>${esc(t.playerCol)}</th>${head}<th>${esc(t.posCol)}</th></tr></thead>
 <tbody>${rows}</tbody>
 </table>
 ${attribution ? `<p class="tagline">${esc(attribution)}</p>` : ""}
+${clAttribution ? `<p class="tagline">${esc(clAttribution)}</p>` : ""}
 <p><a href="${base(locale)}/">${esc(t.backToMatrix)}</a></p>`;
 }
 
