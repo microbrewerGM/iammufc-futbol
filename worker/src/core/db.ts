@@ -313,3 +313,34 @@ export async function logDemand(
     .bind(intentHash, intent.metric, intent.season, intent.viz, state, new Date().toISOString())
     .run();
 }
+
+/**
+ * Every player name we hold, for the Ask gate's subject check ("Rashford
+ * goals" names no club but is unambiguously about us).
+ *
+ * Cached for the life of the isolate rather than given a TTL: D1 content only
+ * changes when a migration runs during a fresh deploy, and a deploy replaces
+ * the isolate. The same reasoning already justifies CACHE_CONTROL in index.ts.
+ *
+ * Failure is non-fatal by design. The gate degrades to requiring a club,
+ * season or competition mention -- stricter, still correct -- rather than
+ * taking the Ask route down because a name-list read failed.
+ */
+let playerNameCache: string[] | null = null;
+
+export async function allPlayerNames(env: Env): Promise<string[]> {
+  if (playerNameCache) return playerNameCache;
+  try {
+    // Both columns: `web_name` is the display form and is often already the
+    // surname, but not always ("B.Fernandes"), and people type the surname.
+    // `second_name` covers that without a second round trip.
+    const { results } = await env.DB.prepare(
+      `SELECT DISTINCT web_name AS n FROM players
+       UNION SELECT DISTINCT second_name AS n FROM players`,
+    ).all<{ n: string }>();
+    playerNameCache = (results ?? []).map((r) => r.n).filter((n) => n && n.length >= 4);
+    return playerNameCache;
+  } catch {
+    return [];
+  }
+}
