@@ -4,6 +4,7 @@ import { columnFeasibility, type Catalog, type FeasibilityResult } from "../core
 import type { QueryIntent } from "../core/intent";
 import { formatNumber, metricLabel, positionLabel, type Locale } from "../core/locale";
 import type { Proposal } from "../core/parser";
+import type { GateRejected } from "../security/askguard";
 import { esc } from "./layout";
 
 const EXAMPLES: Record<Locale["code"], string[]> = {
@@ -367,4 +368,36 @@ ${EXAMPLES[locale.code].map((e) => `<li>${esc(e)}</li>`).join("\n")}
 </ul>
 </div>
 ${coverageMatrix(catalog, locale)}`;
+}
+
+
+/**
+ * The Ask gate's refusal, rendered.
+ *
+ * Reuses the `.stop` treatment the feasibility refusals already use, on
+ * purpose: to a reader, "we will not answer that" and "we cannot answer that"
+ * are the same class of outcome and should look the same. What differs is the
+ * sentence, not the styling.
+ *
+ * The suggestion is a live link, not prose. A refusal that leaves the user
+ * retyping from scratch is a dead end -- the same reason a feasibility refusal
+ * carries nearest_alternative as a button rather than a description.
+ */
+export function rejectionPanel(verdict: GateRejected, locale: Locale): string {
+  const heading = locale.code === "es" ? "No se ejecutó" : "Not run";
+  const tryLabel = locale.code === "es" ? "Prueba en su lugar" : "Try instead";
+
+  // The suggestion copy is authored as "Prefix: the question". Only the part
+  // after the colon is a question we can prefill; splitting on the LAST colon
+  // keeps a colon inside the question itself intact.
+  const idx = verdict.suggestion.lastIndexOf(":");
+  const prefilled = idx >= 0 ? verdict.suggestion.slice(idx + 1).trim() : verdict.suggestion;
+
+  return `<div class="stop">
+<p class="state">${esc(verdict.code)}</p>
+<p><strong>${esc(heading)}.</strong> ${esc(verdict.reason)}</p>
+<form method="post" action="${base(locale)}/ask">
+<p>${esc(tryLabel)}: <button class="secondary" type="submit" name="q" value="${esc(prefilled)}">${esc(prefilled)}</button></p>
+</form>
+</div>`;
 }

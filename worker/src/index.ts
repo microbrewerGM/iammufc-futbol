@@ -20,6 +20,7 @@ import { Hono } from "hono";
 
 import compiledCatalog from "./generated/catalog.json";
 import {
+  allPlayerNames,
   currentSnapshot,
   enforceBudget,
   logDemand,
@@ -35,12 +36,14 @@ import { artifactKey, withDefaults, type QueryIntent, type VizType } from "./cor
 import { LOCALES, type Locale, type LocaleCode } from "./core/locale";
 import { parseRuleBased, proposeWithAI, type Proposal } from "./core/parser";
 import { withSecurityHeaders } from "./security/headers";
+import { gateQuestion, type GateRejected } from "./security/askguard";
 import { esc, html, page } from "./views/layout";
 import {
   chatForm,
   homeBody,
   intentPanel,
   playerPageBody,
+  rejectionPanel,
   resultPanel,
   seasonPageBody,
 } from "./views/pages";
@@ -79,7 +82,12 @@ app.post("/api/chat", async (c) => {
   const question = (body.question ?? "").trim();
   if (!question) return c.json({ error: "question is required" }, 400);
 
-  const proposal = await propose(question, c.env);
+  // The gate runs before anything else touches the text -- including the
+  // model. A rejected question costs zero inference.
+  const verdict = gateQuestion(question, "en", await allPlayerNames(c.env));
+  if (!verdict.allowed) return c.json(rejectionBody(verdict), 422);
+
+  const proposal = await propose(verdict.question, c.env);
   const feasibility = catalog.checkFeasibility(proposal.intent);
 
   return c.json({
@@ -192,7 +200,11 @@ function registerLocaleRoutes(code: LocaleCode) {
     const form = await c.req.formData();
     const question = String(form.get("q") ?? "").trim();
     if (!question) return c.redirect(p, 303);
-    return renderChat(c, locale, await propose(question, c.env), question);
+
+    const verdict = gateQuestion(question, locale.code, await allPlayerNames(c.env));
+    if (!verdict.allowed) return renderRejection(locale, verdict, question);
+
+    return renderChat(c, locale, await propose(verdict.question, c.env), verdict.question);
   });
 
   /** Direct intent entry -- the "show this instead" path from a refusal. */
@@ -356,6 +368,57 @@ app.notFound((c) => {
 });
 
 // ---------------------------------------------------------------------------
+
+/**
+ * Observability for the gate.
+ *
+ * Logs the REJECT CODE ONLY, never the text. Rejected input is by definition
+ * untrusted -- it may carry an injection payload, someone's personal detail,
+ * or abuse -- and none of that belongs in a log line that a person will later
+ * read in a dashboard. The code is what makes the gate tunable; the text is
+ * not needed to tune it.
+ */
+function noteRejection(verdict: GateRejected): void {
+  console.warn(`ask_gate_reject code=${verdict.code}`);
+}
+
+/**
+ * A rejection is not an error, so it is not a 4xx-with-`error`. 422 says the
+ * request was well-formed and understood, and deliberately not acted on --
+ * which is exactly what happened.
+ *
+ * Demand for rejected questions is genuinely valuable signal and is NOT
+ * recorded here: demand_log is keyed on an artifact key over a QueryIntent,
+ * and a rejected question has no intent. Forcing one in would mean inventing
+ * an intent nobody asked for, which corrupts the one table that tells us what
+ * people actually want. A separate rejection log is the right shape and is
+ * deferred rather than bodged in.
+ */
+function rejectionBody(verdict: GateRejected) {
+  noteRejection(verdict);
+  return {
+    rejected: true,
+    code: verdict.code,
+    reason: verdict.reason,
+    suggestion: verdict.suggestion,
+    // Both null so a client can branch on presence without special-casing
+    // the rejected shape -- same envelope, no proposal, no feasibility.
+    proposed_intent: null,
+    feasibility: null,
+  };
+}
+
+/** The HTML twin of rejectionResponse. Never cached: the copy is stable, but
+ *  caching a refusal keyed only on URL would serve it for a different POST
+ *  body, and /ask is a POST route with no cacheable identity anyway. */
+function renderRejection(locale: Locale, verdict: GateRejected, question: string): Response {
+  noteRejection(verdict);
+  const body = `<h1>iammufc</h1>
+<div class="card">${chatForm(locale, question)}</div>
+${rejectionPanel(verdict, locale)}
+<p><a href="/${locale.code}">${esc(locale.strings.backToMatrix)}</a></p>`;
+  return html(page(body, { title: verdict.code, locale, unprefixedPath: "/" }));
+}
 
 async function propose(question: string, env: Env): Promise<Proposal> {
   // Rule-based always runs: it is the floor, and it makes the site fully usable
