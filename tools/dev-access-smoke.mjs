@@ -2,6 +2,12 @@ import { pathToFileURL } from 'node:url';
 
 // Fixed dev target: never forward service credentials to redirects or prod.
 const origin = 'https://iammufc-dev.aaron-cf2.workers.dev';
+const accessHost = 'odd-fog-375d.cloudflareaccess.com';
+const denialCases = [
+  '/en', '/es', '/en/compare', '/es/compare', '/api/catalog', '/api/health',
+  '/style.css', '/robots.txt', '/sitemap.xml', '/', '/q', '/player/access-probe',
+  '/season/access-probe', '/__access_probe_not_found__',
+];
 
 const topKeys = ['ai_bound', 'coverage_cells', 'coverage_through', 'data_state',
   'last_successful_refresh_at', 'metrics', 'ok', 'snapshot_id', 'snapshot_prepared_at', 'sources'];
@@ -87,9 +93,55 @@ export async function smoke(env, request = fetch) {
   return results;
 }
 
+const accessChallenge = (response) => {
+  if (response.status !== 302) return false;
+  try {
+    const target = new URL(response.headers.get('location'));
+    return target.protocol === 'https:' && target.port === '' && target.username === '' &&
+      target.password === '' && target.hostname === accessHost &&
+      target.pathname.startsWith('/cdn-cgi/access/login/');
+  } catch {
+    return false;
+  }
+};
+
+const denied = (response) => accessChallenge(response);
+
+/** Prove that the known dev hostname is closed to anonymous and trivially
+ * forged identity requests. Never follow redirects or consume response bodies,
+ * and expose only a finite verdict rather than Access response details. */
+export async function denialSmoke(request = fetch) {
+  const results = [];
+  for (const path of denialCases) {
+    for (const method of ['GET', 'HEAD']) {
+      const response = await request(origin + path, {
+        method, redirect: 'manual', signal: AbortSignal.timeout(15000), headers: {},
+      });
+      results.push({ mode: 'anonymous', method, path, status: response.status,
+        pass: denied(response) });
+    }
+  }
+  for (const path of ['/en', '/api/health', '/style.css']) {
+    const response = await request(origin + path, {
+      method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(15000),
+      headers: {
+        'CF-Access-Jwt-Assertion': 'synthetic-invalid-assertion',
+        'CF-Access-Authenticated-User-Email': 'nobody@example.invalid',
+      },
+    });
+    results.push({ mode: 'forged-identity', method: 'GET', path, status: response.status,
+      pass: denied(response) });
+  }
+  return results;
+}
+
+export async function runSmoke(env, request = fetch) {
+  return [...await smoke(env, request), ...await denialSmoke(request)];
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    const results = await smoke(process.env);
+    const results = await runSmoke(process.env);
     console.log(JSON.stringify(results));
     if (results.some((result) => !result.pass)) process.exitCode = 1;
   } catch {

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { smoke, validateHealthPayload } from './dev-access-smoke.mjs';
+import { denialSmoke, runSmoke, smoke, validateHealthPayload } from './dev-access-smoke.mjs';
 
 const env = { CF_ACCESS_CLIENT_ID: 'synthetic-id', CF_ACCESS_CLIENT_SECRET: 'synthetic-secret' };
 const snapshot = 'a'.repeat(64);
@@ -119,4 +119,68 @@ test('malformed JSON and misleading JSON content type fail without leaking detai
     assert.deepEqual(results.at(-1), { path: '/api/health', status: 200, pass: false, health_state: 'invalid' });
     assert.ok(!JSON.stringify(results).includes('private-body'));
   }
+});
+
+const accessRedirect = () => new Response('', { status: 302, headers: {
+  location: 'https://odd-fog-375d.cloudflareaccess.com/cdn-cgi/access/login/iammufc-dev?private=value',
+} });
+
+test('anonymous and forged probes are fixed-origin, credential-free and do not follow redirects', async () => {
+  const calls = [];
+  const results = await denialSmoke(async (url, init) => {
+    calls.push({ url, init });
+    assert.equal(new URL(url).origin, 'https://iammufc-dev.aaron-cf2.workers.dev');
+    assert.equal(init.redirect, 'manual');
+    const headers = new Headers(init.headers);
+    assert.equal(headers.has('CF-Access-Client-Id'), false);
+    assert.equal(headers.has('CF-Access-Client-Secret'), false);
+    assert.equal(headers.has('Cookie'), false);
+    assert.equal(headers.has('Authorization'), false);
+    return accessRedirect();
+  });
+  assert.equal(calls.length, 31);
+  assert.equal(calls.filter(({ init }) => init.method === 'HEAD').length, 14);
+  assert.equal(calls.filter(({ init }) => new Headers(init.headers).has('CF-Access-Jwt-Assertion')).length, 3);
+  assert.ok(results.every((result) => result.pass));
+  assert.ok(!JSON.stringify(results).includes('private=value'));
+  assert.ok(!JSON.stringify(results).includes('synthetic-invalid-assertion'));
+});
+
+test('only the exact trusted Access challenge passes negative probes', async () => {
+  for (const response of [
+    new Response('', { status: 200 }),
+    new Response('', { status: 404 }),
+    new Response('', { status: 429 }),
+    new Response('', { status: 503 }),
+    new Response('', { status: 302, headers: { location: 'https://example.invalid/login' } }),
+    new Response('', { status: 302, headers: {
+      location: 'https://wrong-team.cloudflareaccess.com/cdn-cgi/access/login/app',
+    } }),
+    new Response('', { status: 302, headers: {
+      location: 'https://cloudflareaccess.com.example.invalid/cdn-cgi/access/login/app',
+    } }),
+    new Response('', { status: 302, headers: {
+      location: 'http://odd-fog-375d.cloudflareaccess.com/cdn-cgi/access/login/app',
+    } }),
+    new Response('', { status: 302, headers: {
+      location: 'https://odd-fog-375d.cloudflareaccess.com/not-access',
+    } }),
+  ]) {
+    const results = await denialSmoke(async () => response.clone());
+    assert.ok(results.every((result) => !result.pass));
+  }
+});
+
+test('combined smoke requires authenticated success and denial success', async () => {
+  const results = await runSmoke(env, async (url, init) => {
+    const headers = new Headers(init.headers);
+    if (!headers.has('CF-Access-Client-Id')) return accessRedirect();
+    const health = new URL(url).pathname === '/api/health';
+    return new Response(health ? JSON.stringify(validHealth) :
+      'Ask about Manchester United Pregunta sobre el Manchester United font-family Assists — 2023-24 PL',
+    { headers: { 'cache-control': 'private, no-store',
+      ...(health ? { 'content-type': 'application/json' } : {}) } });
+  });
+  assert.equal(results.length, 36);
+  assert.ok(results.every((result) => result.pass));
 });
