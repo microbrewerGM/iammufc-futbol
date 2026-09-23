@@ -67,6 +67,7 @@ def _nearest_alternative(intent: QueryIntent, catalog: Catalog) -> QueryIntent |
         for c in catalog.coverage
         if c.metric == intent.metric
         and c.entity_type == intent.entity_type
+        and c.competition == intent.competition
         and c.redistributable
     ]
     if not same_metric:
@@ -102,12 +103,6 @@ def check_feasibility(
     catalog: Catalog,
     artifact_exists: bool = False,
 ) -> FeasibilityResult:
-    if artifact_exists:
-        return FeasibilityResult(
-            state=FeasibilityState.AVAILABLE,
-            reason="Cached artifact exists.",
-        )
-
     metrics = catalog.metrics_by_id()
     if intent.metric not in metrics:
         # A hallucinated metric is caught here, by the catalog, not by the model.
@@ -150,6 +145,15 @@ def check_feasibility(
             ),
             source_name=rights.name,
             nearest_alternative=_nearest_alternative(intent, catalog),
+        )
+
+    if artifact_exists:
+        return FeasibilityResult(
+            state=FeasibilityState.AVAILABLE,
+            reason="Cached artifact exists.",
+            attribution_asset=rights.attribution_asset,
+            attribution_text=rights.attribution_text,
+            source_name=rights.name,
         )
 
     if cell.cost_class == CostClass.EXPENSIVE:

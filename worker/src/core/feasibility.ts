@@ -242,6 +242,7 @@ export class Catalog {
       (c) =>
         c.metric === intent.metric &&
         c.entity_type === intent.entity_type &&
+        c.competition === intent.competition &&
         c.redistributable,
     );
     if (sameMetric.length === 0) return null;
@@ -272,10 +273,6 @@ export class Catalog {
   }
 
   checkFeasibility(intent: QueryIntent, locale: LocaleCode = "en", artifactExists = false): FeasibilityResult {
-    if (artifactExists) {
-      return { state: "available", reason: REASON.cachedArtifact[locale](), cost_class: "cheap" };
-    }
-
     const metric = this.metric(intent.metric);
     if (!metric) {
       // A hallucinated metric is caught here, by the catalog, not by the model.
@@ -310,6 +307,11 @@ export class Catalog {
         nearest_alternative: this.nearestAlternative(intent),
         cost_class: "cheap",
       };
+    }
+
+    if (artifactExists) {
+      return { state: "available", reason: REASON.cachedArtifact[locale](), cost_class: "cheap",
+        attribution_asset: cell.attribution_asset, attribution_text: attributionFor(cell, locale), source_name: cell.source_name };
     }
 
     if (cell.cost_class === "expensive") {

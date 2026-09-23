@@ -37,6 +37,22 @@ def test_catalog_invariants_hold(catalog):
     assert check_invariants(catalog) == []
 
 
+def test_cached_artifact_does_not_override_current_rights_or_coverage(catalog):
+    assert check_feasibility(
+        intent(metric="progressive_passes"), catalog, artifact_exists=True
+    ).state is FeasibilityState.NO_RIGHTS
+    for overrides in [{"season": "2000-01"}, {"metric": "unknown"}]:
+        assert check_feasibility(
+            intent(**overrides), catalog, artifact_exists=True
+        ).state is FeasibilityState.NO_DATA
+    result = check_feasibility(intent(), catalog, artifact_exists=True)
+    assert "Fantasy Premier League" in result.attribution_text
+
+
+def test_alternative_preserves_competition(catalog):
+    assert check_feasibility(intent(competition="CL"), catalog).nearest_alternative is None
+
+
 def test_feasible_cheap_query(catalog):
     r = check_feasibility(intent(), catalog)
     assert r.state is FeasibilityState.COMPUTABLE_QUEUED
