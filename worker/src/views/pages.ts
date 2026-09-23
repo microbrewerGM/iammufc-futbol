@@ -130,6 +130,27 @@ function dataTable(
 <tbody>${body}</tbody></table>`;
 }
 
+function seasonDataTable(
+  rows: ResultRow[],
+  metricLbl: string,
+  decimals: number,
+  locale: Locale,
+): string {
+  const t = locale.strings;
+  const fmt = (value: number | null) => formatNumber(value, decimals, locale.code);
+  const record = locale.code === "es" ? "Balance" : "Record";
+  const body = rows
+    .map(
+      (row) =>
+        `<tr><th scope="row"><a href="${base(locale)}/season/${encodeURIComponent(row.label)}">${esc(row.label)}</a></th>` +
+        `<td>${esc(row.secondary ?? "")}</td><td class="num">${esc(fmt(row.value))}</td></tr>`,
+    )
+    .join("");
+  return `<h3>${esc(t.dataHeading)}</h3>
+<table><thead><tr><th>${esc(t.seasonCol)}</th><th>${record}</th><th class="num">${esc(metricLbl)}</th></tr></thead>
+<tbody>${body}</tbody></table>`;
+}
+
 export function resultPanel(
   intent: QueryIntent,
   feasibility: FeasibilityResult,
@@ -150,6 +171,9 @@ export function resultPanel(
 <input type="hidden" name="season" value="${esc(feasibility.nearest_alternative.season)}">
 <input type="hidden" name="viz" value="${esc(feasibility.nearest_alternative.viz)}">
 <input type="hidden" name="entity_id" value="${esc(feasibility.nearest_alternative.entity_id)}">
+<input type="hidden" name="entity_type" value="${esc(feasibility.nearest_alternative.entity_type)}">
+<input type="hidden" name="competition" value="${esc(feasibility.nearest_alternative.competition)}">
+<input type="hidden" name="limit" value="${feasibility.nearest_alternative.limit}">
 <button class="secondary" type="submit">${esc(metricLabel(catalog, feasibility.nearest_alternative.metric, locale.code))} — ${esc(feasibility.nearest_alternative.season)}</button>
 </form>`
     : "";
@@ -201,7 +225,7 @@ ${alternative}
 
   return `<h2>${esc(title)}</h2>
 ${chart}
-${dataTable(rows, label, decimals, intent.season, locale)}
+${intent.entity_type === "season" ? seasonDataTable(rows, label, decimals, locale) : dataTable(rows, label, decimals, intent.season, locale)}
 <p class="tagline"><a href="${base(locale)}/season/${esc(intent.season)}">${esc(t.fullSquadFor(intent.season))}</a> ·
 <code>${esc(artifactKey.slice(0, 16))}</code> — ${esc(t.artifactNote)}</p>`;
 }
