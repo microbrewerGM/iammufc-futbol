@@ -114,8 +114,8 @@ app.post("/api/query", async (c) => {
   await logDemand(c.env, key, intent, feasibility.state).catch(() => {});
 
   if (
-    feasibility.state === "not_computable_data_missing" ||
-    feasibility.state === "not_computable_no_rights"
+    feasibility.state === "no_data" ||
+    feasibility.state === "no_rights"
   ) {
     return c.json({ artifact_key: key, intent, feasibility, rows: [] }, 200);
   }
@@ -455,8 +455,8 @@ async function renderChat(
   await logDemand(c.env, key, proposal.intent, feasibility.state).catch(() => {});
 
   const feasible =
-    feasibility.state !== "not_computable_data_missing" &&
-    feasibility.state !== "not_computable_no_rights";
+    feasibility.state !== "no_data" &&
+    feasibility.state !== "no_rights";
 
   // Budget breaker (docs/roadmap.md M3): checked only when a query would
   // actually run, same scope as the JSON API's check above.

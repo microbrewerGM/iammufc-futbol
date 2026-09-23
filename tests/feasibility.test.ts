@@ -44,9 +44,9 @@ describe("feasible queries", () => {
 
 describe("refusals", () => {
   it("never lets a cached artifact override coverage or rights", () => {
-    expect(catalog.checkFeasibility(intent({ metric: "progressive_passes" }), "en", true).state).toBe("not_computable_no_rights");
-    expect(catalog.checkFeasibility(intent({ season: "2000-01" }), "en", true).state).toBe("not_computable_data_missing");
-    expect(catalog.checkFeasibility(intent({ metric: "unknown" }), "en", true).state).toBe("not_computable_data_missing");
+    expect(catalog.checkFeasibility(intent({ metric: "progressive_passes" }), "en", true).state).toBe("no_rights");
+    expect(catalog.checkFeasibility(intent({ season: "2000-01" }), "en", true).state).toBe("no_data");
+    expect(catalog.checkFeasibility(intent({ metric: "unknown" }), "en", true).state).toBe("no_data");
     expect(catalog.checkFeasibility(intent(), "en", true).attribution_text).toContain("Fantasy Premier League");
   });
   it("does not offer a PL alternative for an uncovered CL player metric", () => {
@@ -56,7 +56,7 @@ describe("refusals", () => {
     // Free republishable Man United event coordinates cover 2017-18 only, and
     // that is not ingested yet.
     const r = catalog.checkFeasibility(intent({ viz: "shot_map" as VizType }));
-    expect(r.state).toBe("not_computable_data_missing");
+    expect(r.state).toBe("no_data");
     expect(r.reason).toContain("event_with_coords");
   });
 
@@ -69,7 +69,7 @@ describe("refusals", () => {
 
   it("refuses an uncovered season as NO_DATA", () => {
     const r = catalog.checkFeasibility(intent({ season: "2013-14" }));
-    expect(r.state).toBe("not_computable_data_missing");
+    expect(r.state).toBe("no_data");
     expect(r.reason).toContain("2013-14");
   });
 
@@ -77,14 +77,14 @@ describe("refusals", () => {
     // The distinction is the point: NO_DATA is a gap we could close by
     // integrating a source; NO_RIGHTS may never close without a licence.
     const r = catalog.checkFeasibility(intent({ metric: "progressive_passes" }));
-    expect(r.state).toBe("not_computable_no_rights");
+    expect(r.state).toBe("no_rights");
     expect(r.reason).toContain("FBref");
     expect(r.reason).toContain("redistribution");
   });
 
   it("rejects a hallucinated metric via the catalog, not the model", () => {
     const r = catalog.checkFeasibility(intent({ metric: "vibes_per_90" }));
-    expect(r.state).toBe("not_computable_data_missing");
+    expect(r.state).toBe("no_data");
     expect(r.reason).toContain("vibes_per_90");
   });
 });
@@ -150,7 +150,7 @@ describe("locale support", () => {
 
   it("uses the Spanish metric label and Spanish sentence for a NO_RIGHTS refusal", () => {
     const r = catalog.checkFeasibility(intent({ metric: "progressive_passes" }), "es");
-    expect(r.state).toBe("not_computable_no_rights");
+    expect(r.state).toBe("no_rights");
     // Spanish-only vocabulary that could not appear in the English sentence --
     // a weaker assertion (e.g. "still contains the source name") would pass
     // even if the template were never actually translated.
@@ -160,7 +160,7 @@ describe("locale support", () => {
 
   it("uses the Spanish sentence for a NO_DATA refusal", () => {
     const r = catalog.checkFeasibility(intent({ season: "2013-14" }), "es");
-    expect(r.state).toBe("not_computable_data_missing");
+    expect(r.state).toBe("no_data");
     expect(r.reason).toContain("Ninguna fuente integrada");
     expect(r.reason).toContain("2013-14");
   });
@@ -271,7 +271,7 @@ describe("alternative fallbacks", () => {
   it("offers a feasible alternative even for a wholly uncovered season", () => {
     // Without the third fallback rule this was a bare refusal and a dead end.
     const r = catalog.checkFeasibility(intent({ season: "2022-23", viz: "shot_map" as VizType }));
-    expect(r.state).toBe("not_computable_data_missing");
+    expect(r.state).toBe("no_data");
     expect(r.nearest_alternative).toBeTruthy();
     expect(catalog.checkFeasibility(r.nearest_alternative!).state).toBe("computable_now_queued");
   });
@@ -280,7 +280,7 @@ describe("alternative fallbacks", () => {
     // Honesty cuts both ways -- a plausible-looking suggestion we cannot serve
     // would be worse than admitting there is nothing.
     const r = catalog.checkFeasibility(intent({ metric: "progressive_passes" }));
-    expect(r.state).toBe("not_computable_no_rights");
+    expect(r.state).toBe("no_rights");
     expect(r.nearest_alternative ?? null).toBeNull();
   });
 });

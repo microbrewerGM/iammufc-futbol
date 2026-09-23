@@ -23,8 +23,8 @@ class FeasibilityState(str, Enum):
     AVAILABLE = "available"
     COMPUTABLE_QUEUED = "computable_now_queued"
     COMPUTABLE_EXPENSIVE = "computable_but_expensive"
-    NO_DATA = "not_computable_data_missing"
-    NO_RIGHTS = "not_computable_no_rights"
+    NO_DATA = "no_data"
+    NO_RIGHTS = "no_rights"
 
 
 class FeasibilityResult(BaseModel):
