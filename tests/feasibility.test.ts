@@ -24,6 +24,14 @@ function intent(over: Partial<QueryIntent> = {}): QueryIntent {
 }
 
 describe("feasible queries", () => {
+  it("does not claim expensive work was scheduled", () => {
+    const data = structuredClone(compiled) as unknown as CompiledCatalog;
+    for (const cell of data.coverage) cell.cost_class = "expensive";
+    const expensive = new Catalog(data);
+    expect(expensive.checkFeasibility(intent()).reason).toContain("has not been scheduled");
+    expect(expensive.checkFeasibility(intent(), "es").reason).toContain("No se ha programado");
+  });
+
   it("resolves a covered box-score metric", () => {
     const r = catalog.checkFeasibility(intent());
     expect(r.state).toBe("computable_now_queued");

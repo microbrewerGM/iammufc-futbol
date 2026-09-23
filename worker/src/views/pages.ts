@@ -176,6 +176,14 @@ ${alternative}
 </div>`;
   }
 
+  if (feasibility.state === "computable_but_expensive") {
+    return `<div class="stop">
+<p class="state">${esc(feasibility.state)}</p>
+<p><strong>${esc(feasibility.reason)}</strong></p>
+${alternative}
+</div>`;
+  }
+
   if (rows.length === 0) {
     const msg =
       locale.code === "es"
@@ -327,7 +335,7 @@ export function seasonPageBody(
   // domain dedication requires no attribution at all. The invariant that
   // actually matters is the other direction: where a credit IS required it
   // renders with the data, which the `clAttribution &&` below still enforces.
-  const clPublishable = Boolean(clCell) && clCell?.state !== "no_rights";
+  const clPublishable = clCell?.state === "available" || clCell?.state === "computable_now_queued";
   const europeanLine =
     europeanRecord && clPublishable
       ? `<p class="tagline">${esc(

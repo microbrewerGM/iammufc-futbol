@@ -8,9 +8,11 @@ refuses for the *right* reason.
 
 from __future__ import annotations
 
+from copy import deepcopy
+
 import pytest
 
-from catalog.schemas.models import EntityType, VizType
+from catalog.schemas.models import CostClass, EntityType, VizType
 from pipeline.contracts.build_catalog import check_invariants, load_catalog
 from pipeline.contracts.feasibility import FeasibilityState, check_feasibility
 from pipeline.contracts.intent import QueryIntent
@@ -64,6 +66,15 @@ def test_feasible_cheap_query(catalog):
     r = check_feasibility(intent(), catalog)
     assert r.state is FeasibilityState.COMPUTABLE_QUEUED
     assert r.source_name == "Fantasy Premier League public API"
+
+
+def test_expensive_work_is_not_claimed_scheduled(catalog):
+    expensive = deepcopy(catalog)
+    for cell in expensive.coverage:
+        cell.cost_class = CostClass.EXPENSIVE
+    result = check_feasibility(intent(), expensive)
+    assert result.state is FeasibilityState.COMPUTABLE_EXPENSIVE
+    assert "has not been scheduled" in result.reason
 
 
 def test_attribution_travels_with_the_result(catalog):
