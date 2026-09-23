@@ -43,6 +43,15 @@ describe("feasible queries", () => {
 });
 
 describe("refusals", () => {
+  it("never lets a cached artifact override coverage or rights", () => {
+    expect(catalog.checkFeasibility(intent({ metric: "progressive_passes" }), "en", true).state).toBe("not_computable_no_rights");
+    expect(catalog.checkFeasibility(intent({ season: "2000-01" }), "en", true).state).toBe("not_computable_data_missing");
+    expect(catalog.checkFeasibility(intent({ metric: "unknown" }), "en", true).state).toBe("not_computable_data_missing");
+    expect(catalog.checkFeasibility(intent(), "en", true).attribution_text).toContain("Fantasy Premier League");
+  });
+  it("does not offer a PL alternative for an uncovered CL player metric", () => {
+    expect(catalog.checkFeasibility(intent({ competition: "CL" })).nearest_alternative).toBeNull();
+  });
   it("refuses pitch overlays as NO_DATA", () => {
     // Free republishable Man United event coordinates cover 2017-18 only, and
     // that is not ingested yet.
