@@ -19,22 +19,30 @@
 
   "assets": {
     "directory": "../worker/public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
     "not_found_handling": "404-page"
   },
 
-  "observability": { "enabled": true },
+  // Request URLs can contain research intent; leave request logging disabled.
+  "observability": { "enabled": false },
 
-  // Edge caching for GET responses (Cache-Control headers set per-route in
-  // worker/src/index.ts). Requires wrangler >= 4.69.0 (pinned: 4.123.0).
-  // Invalidation is redeploy-based, not purge-based: the Worker version is
-  // part of the cache key, so nightly-refresh.yml's unconditional
-  // `wrangler deploy` after a new snapshot already invalidates every cached
-  // response -- see that workflow's own comment. No ctx.cache.purge() logic
-  // needed here as a result.
-  "cache": { "enabled": true },
+  // The Worker emits private/no-store headers for authenticated content.
+  "cache": { "enabled": false },
 
   "env": {
     "dev": {
+      // P1 private-access runtime configuration. Names only: values are
+      // per-Worker secrets configured by the owner and must never enter git.
+      // This installed Wrangler version uses these names for type generation
+      // and local missing-secret warnings; runtime configuration fails closed.
+      "secrets": {
+        "required": [
+          "ACCESS_ISSUER",
+          "ACCESS_AUD",
+          "ACCESS_OWNER_EMAILS"
+        ]
+      },
       "d1_databases": [
         {
           "binding": "DB",

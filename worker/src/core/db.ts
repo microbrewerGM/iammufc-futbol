@@ -11,6 +11,10 @@ import type { QueryIntent } from "./intent";
 export interface Env {
   DB: D1Database;
   CFG: KVNamespace;
+  ASSETS?: Fetcher;
+  ACCESS_ISSUER?: string;
+  ACCESS_AUD?: string;
+  ACCESS_OWNER_EMAILS?: string;
   AI?: { run: (model: string, input: unknown) => Promise<unknown> };
 }
 
