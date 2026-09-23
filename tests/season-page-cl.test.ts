@@ -43,6 +43,19 @@ const clRecord = {
 };
 
 describe("season page — Champions League record", () => {
+  it.each(["missing", "no_rights", "expensive"])("hides a supplied CL row when coverage is %s", (condition) => {
+    const data = structuredClone(compiled) as unknown as CompiledCatalog;
+    const matches = (cell: CompiledCatalog["coverage"][number]) => cell.metric === "goals" && cell.season === "2018-19" && cell.competition === "CL";
+    if (condition === "missing") data.coverage = data.coverage.filter((cell) => !matches(cell));
+    else for (const cell of data.coverage.filter(matches)) {
+      if (condition === "no_rights") cell.redistributable = false;
+      else cell.cost_class = "expensive";
+    }
+    const html = seasonPageBody("2018-19", squad as never, plRecord, new Catalog(data), LOCALES.en, clRecord);
+    expect(html).not.toContain("Champions League: 10 played");
+    expect(html).toContain("League record: 38 played");
+  });
+
   it("renders the European line when a CL row exists", () => {
     const html = seasonPageBody("2018-19", squad as never, plRecord, catalog, LOCALES.en, clRecord);
     expect(html).toContain("Champions League: 10 played");

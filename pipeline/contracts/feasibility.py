@@ -159,7 +159,7 @@ def check_feasibility(
     if cell.cost_class == CostClass.EXPENSIVE:
         return FeasibilityResult(
             state=FeasibilityState.COMPUTABLE_EXPENSIVE,
-            reason="Event-level render; deferred to the nightly batch.",
+            reason="This computation is too expensive to run on request. It has not been scheduled.",
             attribution_asset=rights.attribution_asset,
             attribution_text=rights.attribution_text,
             source_name=rights.name,

@@ -166,8 +166,8 @@ const REASON = {
       `${label} de ${season} proviene de ${source}, que no concede licencia de redistribución. No podemos publicarlo.`,
   },
   expensive: {
-    en: () => "Event-level render; deferred to the nightly batch.",
-    es: () => "Renderizado a nivel de evento; aplazado al proceso nocturno.",
+    en: () => "This computation is too expensive to run on request. It has not been scheduled.",
+    es: () => "Este cálculo es demasiado costoso para ejecutarlo bajo demanda. No se ha programado.",
   },
   cheapQueued: {
     en: () => "Feasible and cheap; generated on request.",
