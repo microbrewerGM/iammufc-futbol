@@ -2,8 +2,8 @@ import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from "jose";
 import { createMiddleware } from "hono/factory";
 import type { Env } from "../core/db";
 
-interface AccessConfig { issuer: string; audience: string; owners: string[] }
-export interface AccessIdentity { sub: string; email: string }
+interface AccessConfig { issuer: string; audience: string; owners: string[]; serviceClientIds?: string[] }
+export type AccessIdentity = { sub: string; email: string } | { sub: ""; serviceClientId: string };
 type AccessVerifier = (token: string, config: AccessConfig) => Promise<AccessIdentity>;
 const resolvers = new Map<string, JWTVerifyGetKey>();
 
@@ -18,8 +18,16 @@ export async function verifyAccess(token: string, config: AccessConfig, keys?: J
   }
   const { payload } = await jwtVerify(token, keys, {
     issuer: config.issuer, audience: config.audience, algorithms: ["RS256"],
-    requiredClaims: ["exp", "sub", "email"],
+    requiredClaims: ["exp", "sub"],
   });
+  // Service identities have no human email and an empty subject. Only trust
+  // this claim after signature/issuer/audience/expiry verification above.
+  if (payload.common_name !== undefined) {
+    if (payload.type !== "app" || payload.sub !== "" || payload.email !== undefined ||
+        typeof payload.common_name !== "string" ||
+        !config.serviceClientIds?.includes(payload.common_name)) throw new Error("access_denied");
+    return { sub: "", serviceClientId: payload.common_name };
+  }
   if (typeof payload.sub !== "string" || !payload.sub || typeof payload.email !== "string" ||
       !config.owners.includes(payload.email.toLowerCase())) throw new Error("access_denied");
   return { sub: payload.sub, email: payload.email.toLowerCase() };
@@ -31,7 +39,10 @@ function configuration(env: Env): AccessConfig | null {
       !env.ACCESS_OWNER_EMAILS) return null;
   const owners = env.ACCESS_OWNER_EMAILS.split(",").map((v) => v.trim().toLowerCase());
   if (owners.some((v) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v))) return null;
-  return { issuer: env.ACCESS_ISSUER, audience: env.ACCESS_AUD, owners };
+  const serviceClientIds = env.ACCESS_SERVICE_CLIENT_IDS
+    ? env.ACCESS_SERVICE_CLIENT_IDS.split(",").map((v) => v.trim()) : [];
+  if (serviceClientIds.some((v) => !/^[A-Za-z0-9._-]{1,256}$/.test(v))) return null;
+  return { issuer: env.ACCESS_ISSUER, audience: env.ACCESS_AUD, owners, serviceClientIds };
 }
 
 /** Always mounted before every route; no local/preview/health auth bypass. */
