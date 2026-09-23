@@ -81,6 +81,7 @@ export interface Locale {
     seeTopScorers: string;
     noSeasonRecord: (season: string) => string;
     noPlayerMatched: (name: string) => string;
+    noPlayerSeasonData: (name: string, season: string) => string;
     checkMatrix: string;
     noSquadData: (season: string) => string;
     disclaimer: string;
@@ -141,6 +142,7 @@ const EN: Locale = {
     seeTopScorers: "See top scorers",
     noSeasonRecord: (s) => `No season-level results integrated for ${s} yet.`,
     noPlayerMatched: (n) => `No player matched "${n}" in our data.`,
+    noPlayerSeasonData: (n, s) => `No verified Manchester United player data for ${n} in ${s}.`,
     checkMatrix: "Try a surname, or check the coverage matrix for what seasons we hold.",
     noSquadData: (s) => `No squad data integrated for ${s}.`,
     disclaimer:
@@ -204,6 +206,7 @@ const ES: Locale = {
     seeTopScorers: "Ver máximos goleadores",
     noSeasonRecord: (s) => `Aún no hay resultados de temporada integrados para ${s}.`,
     noPlayerMatched: (n) => `Ningún jugador coincide con "${n}" en nuestros datos.`,
+    noPlayerSeasonData: (n, s) => `No hay datos verificados del Manchester United para ${n} en ${s}.`,
     checkMatrix: "Prueba con un apellido, o revisa la matriz de cobertura para ver qué temporadas tenemos.",
     noSquadData: (s) => `No hay datos de plantilla integrados para ${s}.`,
     disclaimer:

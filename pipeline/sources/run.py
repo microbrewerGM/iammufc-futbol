@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import math
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -49,8 +50,13 @@ SEASONS = [
 #: This is a real coverage gap and the matrix is supposed to show it.
 XG_FROM_SEASON = "2022-23"
 
+#: Fixture-side club attribution is possible from 2018-19 onward. The archive
+#: has neither fixtures nor row-level team membership for the two earlier
+#: seasons, so their player totals cannot be represented as United-only facts.
+PLAYER_FROM_SEASON = "2018-19"
+
 #: FPL data via the community archive. The live API carries only the current
-#: season; the archive carries 2016-17 onward in the same shape.
+#: season; the archive carries changing historical schemas from 2016-17 onward.
 FPL_BASE = "https://raw.githubusercontent.com/vaastav/Fantasy-Premier-League/master/data"
 
 #: Football-Data.co.uk via the datahub mirror, NOT the origin site. The mirror
@@ -73,6 +79,15 @@ TEAM_NAMES_RESULTS = {"Man United", "Manchester United", "Man Utd"}
 #: not being silently wrong.
 POSITION_CODES = {1: "GK", 2: "DF", 3: "MF", 4: "FW"}
 NON_PLAYER_ELEMENT_TYPES = {5}
+
+#: Observed archive-wide differences after exact duplicate/reschedule collapse.
+#: These are aggregate tolerances, not per-player waivers: any missing or added
+#: history changes the season total and fails publication. Re-inventory before
+#: changing them; zero is required for every unlisted season/field.
+ARCHIVE_AGGREGATE_DELTAS: dict[str, dict[str, int]] = {
+    "2018-19": {"minutes": -3},
+    "2024-25": {"minutes": -17, "total_points": -1},
+}
 
 TIMEOUT = 60
 HEADERS = {"User-Agent": "iammufc-poc/0.1 (non-commercial fan project)"}
@@ -107,74 +122,263 @@ def utc_now() -> str:
 # ---------------------------------------------------------------------------
 
 
-def load_players(season: str) -> tuple[pd.DataFrame, str]:
-    """Manchester United player box scores for one season."""
-    players_raw = fetch(f"{FPL_BASE}/{season}/players_raw.csv")
-    players = pd.read_csv(io.BytesIO(players_raw))
+def _read_archive_csv(payload: bytes) -> pd.DataFrame:
+    """Read archive bytes without silently replacing legacy characters."""
+    try:
+        return pd.read_csv(io.BytesIO(payload))
+    except UnicodeDecodeError:
+        return pd.read_csv(io.BytesIO(payload), encoding="latin-1")
 
-    if "team_code" not in players.columns:
-        raise IngestError(
-            f"{season}: players_raw.csv has no team_code column. Upstream schema "
-            f"changed -- find another stable club identifier before ingesting."
+
+def _integer_column(frame: pd.DataFrame, column: str, season: str) -> pd.Series:
+    try:
+        values = pd.to_numeric(frame[column], errors="raise")
+    except (KeyError, TypeError, ValueError) as exc:
+        raise IngestError(f"{season}: {column} must be numeric") from exc
+    if values.isna().any() or (values % 1 != 0).any():
+        raise IngestError(f"{season}: {column} must contain finite integers")
+    return values.astype(int)
+
+
+def player_frame_from_payloads(
+    season: str,
+    players_raw: bytes,
+    gameweeks_raw: bytes,
+    fixtures_raw: bytes,
+) -> pd.DataFrame:
+    """Build United-only season totals from fixture-attributed FPL rows."""
+    players = _read_archive_csv(players_raw)
+    gameweeks = _read_archive_csv(gameweeks_raw).drop_duplicates().reset_index(drop=True)
+    fixtures = _read_archive_csv(fixtures_raw)
+
+    player_required = {
+        "id", "team", "team_code", "element_type", "web_name", "first_name",
+        "second_name", "goals_scored", "assists", "minutes", "total_points",
+    }
+    gw_required = {
+        "element", "fixture", "GW", "was_home", "goals_scored", "assists",
+        "minutes", "total_points",
+    }
+    fixture_required = {"id", "team_h", "team_a"}
+    for label, frame, required in [
+        ("players_raw.csv", players, player_required),
+        ("gws/merged_gw.csv", gameweeks, gw_required),
+        ("fixtures.csv", fixtures, fixture_required),
+    ]:
+        missing = required - set(frame.columns)
+        if missing:
+            raise IngestError(f"{season}: {label} missing {sorted(missing)}")
+
+    players["id"] = _integer_column(players, "id", season)
+    players["team"] = _integer_column(players, "team", season)
+    players["team_code"] = _integer_column(players, "team_code", season)
+    gameweeks["element"] = _integer_column(gameweeks, "element", season)
+    gameweeks["fixture"] = _integer_column(gameweeks, "fixture", season)
+    gameweeks["GW"] = _integer_column(gameweeks, "GW", season)
+    additive = {
+        "goals_scored": "goals",
+        "assists": "assists",
+        "minutes": "minutes",
+        "total_points": "points",
+    }
+    for column in additive:
+        gameweeks[column] = _integer_column(gameweeks, column, season)
+    published_columns = list(additive)
+    if season >= XG_FROM_SEASON:
+        if "expected_goals" not in gameweeks.columns:
+            raise IngestError(
+                f"{season}: expected_goals is missing but should exist from {XG_FROM_SEASON} onward"
+            )
+        try:
+            gameweeks["expected_goals"] = pd.to_numeric(
+                gameweeks["expected_goals"], errors="raise"
+            )
+        except (TypeError, ValueError) as exc:
+            raise IngestError(f"{season}: expected_goals must be numeric") from exc
+        finite_xg = gameweeks["expected_goals"].map(
+            lambda value: math.isfinite(float(value))
         )
+        if not finite_xg.all() or (gameweeks["expected_goals"] < 0).any():
+            raise IngestError(f"{season}: expected_goals must be finite and non-negative")
+        published_columns.append("expected_goals")
+    fixtures["id"] = _integer_column(fixtures, "id", season)
+    fixtures["team_h"] = _integer_column(fixtures, "team_h", season)
+    fixtures["team_a"] = _integer_column(fixtures, "team_a", season)
 
-    mufc = players[players["team_code"] == TEAM_CODE_MUFC].copy()
-    if mufc.empty:
+    mufc_ids = sorted(players.loc[players["team_code"] == TEAM_CODE_MUFC, "team"].unique())
+    if len(mufc_ids) != 1:
         raise IngestError(
-            f"{season}: team_code {TEAM_CODE_MUFC} matched no players. Either the "
-            f"season is unavailable or the club coding changed."
+            f"{season}: stable United team_code maps to {len(mufc_ids)} season team ids"
         )
+    mufc_id = int(mufc_ids[0])
 
-    # Drop managers. Reported so an upstream schema change is visible in the
-    # log rather than discovered as a missing row months later.
-    non_players = mufc[mufc["element_type"].isin(NON_PLAYER_ELEMENT_TYPES)]
+    key = ["element", "fixture", "GW"]
+    conflicts = gameweeks[gameweeks.duplicated(key, keep=False)]
+    if not conflicts.empty:
+        raise IngestError(
+            f"{season}: merged gameweeks contain {len(conflicts)} conflicting fixture rows"
+        )
+    # 2019-20 reschedules retain a zero-valued row at the original GW and the
+    # real row at the later GW for the same player/fixture. Collapse only that
+    # evidenced shape. Any earlier contribution would be double-counting risk.
+    pair_key = ["element", "fixture"]
+    repeated = gameweeks[gameweeks.duplicated(pair_key, keep=False)]
+    if not repeated.empty:
+        latest = repeated.groupby(pair_key)["GW"].idxmax()
+        earlier = repeated.drop(index=latest)
+        if not earlier[published_columns].eq(0).all().all():
+            raise IngestError(f"{season}: repeated fixtures contain earlier contributions")
+        gameweeks = gameweeks.drop(index=earlier.index).reset_index(drop=True)
+    if gameweeks.duplicated(pair_key).any():
+        raise IngestError(f"{season}: repeated fixtures cannot be resolved uniquely")
+    if fixtures["id"].duplicated().any():
+        raise IngestError(f"{season}: fixtures contain duplicate ids")
+
+    home_raw = gameweeks["was_home"]
+    if pd.api.types.is_bool_dtype(home_raw):
+        was_home = home_raw.astype(bool)
+    else:
+        normalized = home_raw.astype(str).str.lower()
+        if not normalized.isin({"true", "false"}).all():
+            raise IngestError(f"{season}: was_home contains non-boolean values")
+        was_home = normalized.eq("true")
+
+    fixture_sides = fixtures[["id", "team_h", "team_a"]].rename(columns={"id": "fixture"})
+    try:
+        joined = gameweeks.merge(
+            fixture_sides, on="fixture", how="left", validate="many_to_one", indicator=True
+        )
+    except pd.errors.MergeError as exc:
+        raise IngestError(f"{season}: fixture join is not many-to-one") from exc
+    if not joined["_merge"].eq("both").all():
+        raise IngestError(f"{season}: gameweek rows reference missing fixtures")
+    joined["fixture_team"] = joined["team_a"].where(~was_home, joined["team_h"])
+
+    if "team" in joined.columns:
+        explicit_united = joined["team"].astype(str).eq("Man Utd")
+        derived_united = joined["fixture_team"].eq(mufc_id)
+        if not explicit_united.eq(derived_united).all():
+            raise IngestError(f"{season}: explicit and fixture-derived club attribution disagree")
+
+    united = joined[joined["fixture_team"].eq(mufc_id)].copy()
+    if united.empty:
+        raise IngestError(f"{season}: no fixture-attributed Manchester United player rows")
+
+    # Reconcile complete all-club history for every player the source associates
+    # with United: anyone with a United fixture row plus the final United squad.
+    # This covers arrivals and departures without requiring unrelated clubs'
+    # historical rows to satisfy our publication contract.
+    full_totals = gameweeks.groupby("element", as_index=True)[list(additive)].sum()
+    non_players_mask = players["element_type"].isin(NON_PLAYER_ELEMENT_TYPES)
+    player_rows = players[~non_players_mask]
+    player_ids = player_rows["id"].astype(int)
+    aligned_totals = full_totals.reindex(player_ids, fill_value=0)
+    for column in additive:
+        expected_total = int(_integer_column(player_rows, column, season).sum())
+        actual_total = int(aligned_totals[column].sum())
+        allowed_delta = ARCHIVE_AGGREGATE_DELTAS.get(season, {}).get(column, 0)
+        if actual_total - expected_total != allowed_delta:
+            raise IngestError(
+                f"{season}: archive-wide {column} aggregate does not reconcile"
+            )
+    # Goals and assists reconcile archive-wide in every supported season. Keep
+    # that broader invariant so a departed United scorer cannot disappear by
+    # losing every United-tagged row. Minutes/points have isolated upstream
+    # anomalies outside the United cohort, so their stronger reconciliation is
+    # scoped below to identities the archive associates with United.
+    for _, player in player_rows.iterrows():
+        element = int(player["id"])
+        for column in ["goals_scored", "assists"]:
+            expected = int(_integer_column(pd.DataFrame([player]), column, season).iloc[0])
+            actual = int(full_totals.loc[element, column]) if element in full_totals.index else 0
+            if actual != expected:
+                raise IngestError(f"{season}: archive-wide {column} does not reconcile")
+    relevant_elements = set(united["element"].astype(int)) | set(
+        players.loc[players["team_code"] == TEAM_CODE_MUFC, "id"].astype(int)
+    )
+    for _, player in players[
+        players["id"].isin(relevant_elements)
+        & ~non_players_mask
+    ].iterrows():
+        expected = {
+            column: int(_integer_column(pd.DataFrame([player]), column, season).iloc[0])
+            for column in additive
+        }
+        element = int(player["id"])
+        if element not in full_totals.index:
+            if any(expected.values()):
+                raise IngestError(f"{season}: player snapshot lacks gameweek history")
+            continue
+        for column, value in expected.items():
+            if int(full_totals.loc[element, column]) != value:
+                raise IngestError(f"{season}: all-club {column} does not reconcile with snapshot")
+    totals = united.groupby("element", as_index=False)[list(additive)].sum().rename(
+        columns=additive
+    )
+    if season >= XG_FROM_SEASON:
+        xg = united.groupby("element", as_index=False)["expected_goals"].sum().rename(
+            columns={"expected_goals": "xg"}
+        )
+        totals = totals.merge(xg, on="element", validate="one_to_one")
+    else:
+        totals["xg"] = None
+
+    if players["id"].duplicated().any():
+        raise IngestError(f"{season}: players_raw.csv contains duplicate ids")
+    dimensions = players[players["id"].isin(totals["element"])].copy()
+    if len(dimensions) != len(totals):
+        raise IngestError(f"{season}: fixture-attributed players lack dimension rows")
+
+    non_players = dimensions[dimensions["element_type"].isin(NON_PLAYER_ELEMENT_TYPES)]
     if not non_players.empty:
         print(
             f"    excluding {len(non_players)} non-player entries "
             f"({', '.join(non_players['web_name'].astype(str))})",
             file=sys.stderr,
         )
-    mufc = mufc[~mufc["element_type"].isin(NON_PLAYER_ELEMENT_TYPES)]
-
-    # An element_type we have never seen is an upstream schema change. Fail
-    # loudly: silently emitting a NULL position would push the decision to a
-    # database constraint, which is a worse place to discover it.
-    unknown = sorted(set(mufc["element_type"].astype(int)) - set(POSITION_CODES))
+    dimensions = dimensions[~dimensions["element_type"].isin(NON_PLAYER_ELEMENT_TYPES)]
+    unknown = sorted(set(dimensions["element_type"].astype(int)) - set(POSITION_CODES))
     if unknown:
         raise IngestError(
-            f"{season}: unmapped FPL element_type(s) {unknown}. Upstream schema "
-            f"changed -- classify them before ingesting."
+            f"{season}: unmapped FPL element_type(s) {unknown}. Upstream schema changed"
         )
 
-    # xG only exists from 2022-23. Absent is null, never zero -- zero would be a
-    # claim we did not measure, which is the kind of quiet lie this project
-    # exists to avoid.
-    if "expected_goals" not in mufc.columns:
-        if season >= XG_FROM_SEASON:
-            raise IngestError(
-                f"{season}: expected_goals is missing but should exist from "
-                f"{XG_FROM_SEASON} onward. Upstream schema changed."
-            )
-        mufc["expected_goals"] = None
-
+    dimension_columns = [
+        "id", "element_type", "web_name", "first_name", "second_name"
+    ]
+    combined = dimensions[dimension_columns].merge(
+        totals, left_on="id", right_on="element", validate="one_to_one"
+    )
     out = pd.DataFrame(
         {
-            "fpl_element": mufc["id"].astype(int),
+            "fpl_element": combined["id"].astype(int),
             "season": season,
-            "web_name": mufc["web_name"].astype(str),
-            "first_name": mufc["first_name"].astype(str),
-            "second_name": mufc["second_name"].astype(str),
-            "position": mufc["element_type"].astype(int).map(POSITION_CODES),
+            "web_name": combined["web_name"].astype(str),
+            "first_name": combined["first_name"].astype(str),
+            "second_name": combined["second_name"].astype(str),
+            "position": combined["element_type"].astype(int).map(POSITION_CODES),
             "team": "Manchester United",
-            "goals": mufc["goals_scored"].astype(int),
-            "assists": mufc["assists"].astype(int),
-            "minutes": mufc["minutes"].astype(int),
-            "points": mufc["total_points"].astype(int),
-            "xg": pd.to_numeric(mufc["expected_goals"], errors="coerce"),
+            "goals": combined["goals"].astype(int),
+            "assists": combined["assists"].astype(int),
+            "minutes": combined["minutes"].astype(int),
+            "points": combined["points"].astype(int),
+            "xg": pd.to_numeric(combined["xg"], errors="coerce"),
         }
     )
     out["player_id"] = "fpl:" + out["fpl_element"].astype(str) + ":" + season
-    return out, sha256(players_raw)
+    return out
+
+
+def load_players(season: str) -> tuple[pd.DataFrame, dict[str, str]]:
+    """Manchester United-only player box scores for one attributable season."""
+    players_raw = fetch(f"{FPL_BASE}/{season}/players_raw.csv")
+    gameweeks_raw = fetch(f"{FPL_BASE}/{season}/gws/merged_gw.csv")
+    fixtures_raw = fetch(f"{FPL_BASE}/{season}/fixtures.csv")
+    return player_frame_from_payloads(season, players_raw, gameweeks_raw, fixtures_raw), {
+        f"fpl_players:{season}": sha256(players_raw),
+        f"fpl_gameweeks:{season}": sha256(gameweeks_raw),
+        f"fpl_fixtures:{season}": sha256(fixtures_raw),
+    }
 
 
 def load_results(season: str) -> tuple[pd.DataFrame, str]:
@@ -382,14 +586,18 @@ def main() -> int:
 
     for season in SEASONS:
         print(f"  fetching {season} ...", file=sys.stderr)
-        players, phash = load_players(season)
         results, rhash = load_results(season)
-        player_frames.append(players)
         season_frames.append(results)
-        source_hashes[f"fpl:{season}"] = phash
         source_hashes[f"football_data_couk:{season}"] = rhash
+        if season >= PLAYER_FROM_SEASON:
+            players, player_hashes = load_players(season)
+            player_frames.append(players)
+            source_hashes.update(player_hashes)
+            player_count = len(players)
+        else:
+            player_count = 0
         print(
-            f"    {len(players)} players, {int(results.iloc[0]['played'])} matches",
+            f"    {player_count} attributable players, {int(results.iloc[0]['played'])} matches",
             file=sys.stderr,
         )
 
@@ -426,6 +634,8 @@ def main() -> int:
         source_hashes.update(cl_hashes)
     print(f"    {len(cl_frame)} Champions League season(s) found", file=sys.stderr)
 
+    if not player_frames:
+        raise IngestError("no player seasons have fixture-level club attribution")
     players = pd.concat(player_frames, ignore_index=True)
     seasons = pd.concat(season_frames, ignore_index=True)
 
@@ -443,7 +653,7 @@ def main() -> int:
     source_statuses: dict[str, dict[str, str | None]] = {
         SOURCE_FPL: {
             "status": "observed",
-            "coverage_through": max(SEASONS),
+            "coverage_through": max(season for season in SEASONS if season >= PLAYER_FROM_SEASON),
             "retrieved_at": observed_at,
         },
         SOURCE_PL_RESULTS: {

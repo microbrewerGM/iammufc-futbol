@@ -22,7 +22,8 @@ class Granularity(str, Enum):
     """What shape of source data a metric needs.
 
     Coverage is radically uneven across these tiers for Manchester United:
-    box scores from 2016-17, event coordinates for 2017-18 ONLY, no free
+    fixture-attributed player box scores from 2018-19, event coordinates for
+    2017-18 ONLY, no free
     tracking at all. That unevenness drives the entire application design.
     """
 

@@ -40,6 +40,11 @@ Relevant endpoints:
 Current season only. History from 2016-17 via the
 `vaastav/Fantasy-Premier-League` community archive.
 
+The site publishes player totals only from 2018-19 onward, when the archive's
+merged gameweek rows can be joined to fixtures for match-time club attribution.
+The 2016-17 and 2017-18 snapshots lack that evidence and are explicit player-data
+coverage gaps rather than final-squad totals presented as United-only output.
+
 ## Re-verify
 
 - **Due:** 2027-08-18 (12-month hard limit, pin site P9)

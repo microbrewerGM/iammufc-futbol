@@ -83,6 +83,9 @@ rights:
       Unofficial and undocumented, but stable and universally used. The best
       free Man-United-specific player box-score source. Current season via the
       live API; 2016-17 onward via the vaastav/Fantasy-Premier-League archive.
+      Published player totals start at 2018-19 and aggregate only gameweek rows
+      whose fixture side proves United membership; earlier archive snapshots do
+      not provide sufficient match-time club attribution.
       RISK: endpoints can change without notice. This is a tolerated-use
       position, not a granted licence -- reassess if the Premier League objects.
 

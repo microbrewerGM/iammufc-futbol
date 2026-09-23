@@ -18,9 +18,7 @@ version: 1
 
 coverage:
 
-  # --- goals: FPL box scores, all ten seasons -----------------------------------------
-  - { metric: goals, entity_type: player, granularity: box_score, season: "2016-17", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
-  - { metric: goals, entity_type: player, granularity: box_score, season: "2017-18", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  # --- goals: fixture-attributed FPL box scores, 2018-19 onward ------------------------
   - { metric: goals, entity_type: player, granularity: box_score, season: "2018-19", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
   - { metric: goals, entity_type: player, granularity: box_score, season: "2019-20", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
   - { metric: goals, entity_type: player, granularity: box_score, season: "2020-21", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
@@ -30,9 +28,7 @@ coverage:
   - { metric: goals, entity_type: player, granularity: box_score, season: "2024-25", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
   - { metric: goals, entity_type: player, granularity: box_score, season: "2025-26", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
 
-  # --- assists: FPL box scores, all ten seasons ---------------------------------------
-  - { metric: assists, entity_type: player, granularity: box_score, season: "2016-17", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
-  - { metric: assists, entity_type: player, granularity: box_score, season: "2017-18", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  # --- assists: fixture-attributed FPL box scores, 2018-19 onward ----------------------
   - { metric: assists, entity_type: player, granularity: box_score, season: "2018-19", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
   - { metric: assists, entity_type: player, granularity: box_score, season: "2019-20", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
   - { metric: assists, entity_type: player, granularity: box_score, season: "2020-21", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
@@ -42,9 +38,7 @@ coverage:
   - { metric: assists, entity_type: player, granularity: box_score, season: "2024-25", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
   - { metric: assists, entity_type: player, granularity: box_score, season: "2025-26", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
 
-  # --- minutes: FPL box scores, all ten seasons ---------------------------------------
-  - { metric: minutes, entity_type: player, granularity: box_score, season: "2016-17", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
-  - { metric: minutes, entity_type: player, granularity: box_score, season: "2017-18", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  # --- minutes: fixture-attributed FPL box scores, 2018-19 onward ----------------------
   - { metric: minutes, entity_type: player, granularity: box_score, season: "2018-19", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
   - { metric: minutes, entity_type: player, granularity: box_score, season: "2019-20", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
   - { metric: minutes, entity_type: player, granularity: box_score, season: "2020-21", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
@@ -54,9 +48,7 @@ coverage:
   - { metric: minutes, entity_type: player, granularity: box_score, season: "2024-25", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
   - { metric: minutes, entity_type: player, granularity: box_score, season: "2025-26", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
 
-  # --- points: FPL box scores, all ten seasons ----------------------------------------
-  - { metric: points, entity_type: player, granularity: box_score, season: "2016-17", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
-  - { metric: points, entity_type: player, granularity: box_score, season: "2017-18", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
+  # --- points: fixture-attributed FPL box scores, 2018-19 onward -----------------------
   - { metric: points, entity_type: player, granularity: box_score, season: "2018-19", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
   - { metric: points, entity_type: player, granularity: box_score, season: "2019-20", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
   - { metric: points, entity_type: player, granularity: box_score, season: "2020-21", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }

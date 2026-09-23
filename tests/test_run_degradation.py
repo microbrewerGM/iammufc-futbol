@@ -71,7 +71,11 @@ def core_pipeline_mocked(tmp_path, monkeypatch):
     # SEED_PATH.relative_to(REPO_ROOT), which raises if they diverge.
     monkeypatch.setattr(run_mod, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(run_mod, "SEED_PATH", tmp_path / "0002_seed.sql")
-    monkeypatch.setattr(run_mod, "load_players", lambda s: (fake_players(), "phash"))
+    monkeypatch.setattr(
+        run_mod,
+        "load_players",
+        lambda s: (fake_players(), {f"fpl_players:{s}": "phash"}),
+    )
     monkeypatch.setattr(run_mod, "load_results", lambda s: (fake_season(), "rhash"))
     monkeypatch.setattr(run_mod, "utc_now", lambda: "2026-09-23T12:00:00+00:00")
     monkeypatch.setenv("FOOTBALL_DATA_KEY", "fake-key")
