@@ -35,10 +35,12 @@ import { Catalog, columnFeasibility, hasSubstance, type CompiledCatalog } from "
 import { artifactKey, withDefaults, type QueryIntent, type VizType } from "./core/intent";
 import { LOCALES, type Locale, type LocaleCode } from "./core/locale";
 import { parseRuleBased, proposeWithAI, type Proposal } from "./core/parser";
+import { executeComparison, parseComparison } from "./core/comparison";
 import { withSecurityHeaders } from "./security/headers";
 import { accessGate } from "./security/auth";
 import { gateQuestion, type GateRejected } from "./security/askguard";
 import { esc, html, page } from "./views/layout";
+import { comparisonPage } from "./views/comparison";
 import {
   chatForm,
   homeBody,
@@ -178,6 +180,26 @@ app.get("/api/health", async (c) => {
 function registerLocaleRoutes(code: LocaleCode) {
   const locale = LOCALES[code];
   const p = `/${code}`;
+
+  app.get(`${p}/compare`, async (c) => {
+    const seasons = catalog.seasonsFor("goals", "player", "box_score");
+    const request = parseComparison(
+      new URL(c.req.url).searchParams,
+      seasons[0] ?? "2025-26",
+    );
+    if (!request) {
+      return c.text(
+        locale.code === "es" ? "Parámetros de comparación no válidos." : "Invalid comparison parameters.",
+        400,
+      );
+    }
+    return comparisonPage(
+      request,
+      await executeComparison(c.env, catalog, request, locale.code),
+      seasons,
+      locale,
+    );
+  });
 
   app.get(p, () => {
     // Always indexable -- the coverage matrix hub, never a thin permutation.

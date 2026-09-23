@@ -68,6 +68,7 @@ export function page(body: string, opts: LayoutOptions): string {
 </head>
 <body>
 ${langToggle}
+<nav class="analysis-nav" aria-label="${locale.code === "es" ? "Análisis" : "Analysis"}"><a href="/${locale.code}/compare">${locale.code === "es" ? "Comparar por 90 minutos" : "Compare output per 90"}</a></nav>
 <main>
 ${body}
 </main>

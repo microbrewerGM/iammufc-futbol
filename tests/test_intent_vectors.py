@@ -106,3 +106,27 @@ def test_key_is_sha256_hex():
     for vec in VECTORS["vectors"]:
         assert len(vec["key"]) == 64
         assert all(c in "0123456789abcdef" for c in vec["key"])
+
+
+def test_per90_threshold_is_a_stable_key_input():
+    intent = QueryIntent(
+        metric="goals",
+        entity_type=EntityType.PLAYER,
+        entity_id="all",
+        season="2024-25",
+        filters={
+            "normalization": "per90",
+            "min_minutes": "450",
+            "comparison_version": "1",
+        },
+        viz=VizType.TABLE,
+        limit=50,
+    )
+    assert (
+        '"filters":{"comparison_version":"1","min_minutes":"450","normalization":"per90"}'
+        in canonicalize(intent)
+    )
+    changed = intent.model_copy(
+        update={"filters": {**intent.filters, "min_minutes": "451"}}
+    )
+    assert artifact_key(intent, "synthetic") != artifact_key(changed, "synthetic")
