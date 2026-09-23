@@ -66,6 +66,14 @@ body {
 
 main { max-width: 780px; margin: 0 auto; }
 
+.analysis-nav {
+  max-width: 780px;
+  margin: .5rem auto 1rem;
+  font-size: .9rem;
+}
+
+.comparison-table { max-width: 100%; overflow-x: auto; }
+
 /* Language toggle. Quiet by design (design-principles.md §2: provenance-level
    chrome must not outshout the content) but a clear signifier (§1): the
    active locale is bold + underlined, not colour alone, so it reads without
@@ -115,7 +123,7 @@ p { margin: .5rem 0; }
 
 form { display: flex; gap: .5rem; flex-wrap: wrap; }
 
-input[type="text"], select {
+input[type="text"], input[type="number"], select {
   flex: 1 1 16rem;
   min-width: 0;
   padding: .5rem .75rem;
@@ -126,8 +134,8 @@ input[type="text"], select {
   border-radius: 7px;
   transition: border-color .12s ease;
 }
-input[type="text"]:hover, select:hover { border-color: var(--muted); }
-input[type="text"]:focus-visible, select:focus-visible { border-color: var(--focus-ring); }
+input[type="text"]:hover, input[type="number"]:hover, select:hover { border-color: var(--muted); }
+input[type="text"]:focus-visible, input[type="number"]:focus-visible, select:focus-visible { border-color: var(--focus-ring); }
 
 button {
   padding: .5rem 1rem;
