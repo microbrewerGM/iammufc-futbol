@@ -24,18 +24,24 @@ on:
 permissions:
   contents: read
 
+# Deploys and nightly refreshes mutate the same dev D1 database. Queue every
+# publication run in one FIFO concurrency group; never cancel an in-flight or
+# already-waiting import. GitHub currently permits up to 100 queued runs.
+concurrency:
+  group: iammufc-dev-publication
+  cancel-in-progress: false
+  queue: max
+
 jobs:
   build-data:
     name: build-data
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     # Needed for FOOTBALL_DATA_KEY (Champions League ingest, ADR-0005) --
     # environment secrets are scoped strictly by declared environment name,
     # same mechanism deploy-dev already relies on for CF_TOKEN_DEV. `dev` has
     # no protection rules, so this adds no approval gate, only secret scope.
     environment: dev
-    concurrency:
-      group: deploy-dev-${{ github.ref }}
-      cancel-in-progress: false # never interrupt an in-flight dev deploy
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
@@ -65,9 +71,6 @@ jobs:
     needs: build-data
     runs-on: ubuntu-latest
     environment: dev # no required reviewer; dev is disposable
-    concurrency:
-      group: deploy-dev-${{ github.ref }}
-      cancel-in-progress: false
     permissions:
       contents: read
     steps:

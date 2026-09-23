@@ -93,3 +93,16 @@ CREATE TABLE IF NOT EXISTS budget_counter (
   day    TEXT PRIMARY KEY,   -- UTC date, YYYY-MM-DD
   count  INTEGER NOT NULL DEFAULT 0
 );
+
+-- One append-only record for each seed import that reached its final statement.
+-- This is load metadata, not a claim that the subsequent Worker deploy succeeded.
+CREATE TABLE IF NOT EXISTS publication_runs (
+  run_id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  snapshot_id        TEXT NOT NULL,
+  prepared_at        TEXT NOT NULL,
+  source_status_json TEXT NOT NULL,
+  loaded_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_publication_runs_loaded
+  ON publication_runs(loaded_at DESC, run_id DESC);

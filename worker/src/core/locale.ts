@@ -41,6 +41,19 @@ export interface Locale {
     askPlaceholder: string;
     askButton: string;
     examplesHeading: string;
+    freshnessHeading: string;
+    coverageThrough: (season: string) => string;
+    lastSuccessfulLoad: string;
+    sourceCoverageThrough: (season: string) => string;
+    sourceRetrieved: string;
+    sourceAsOf: string;
+    sourceAsOfUnavailable: string;
+    sourceObserved: string;
+    sourceUnavailable: string;
+    sourceNotRetrieved: string;
+    freshnessDegraded: string;
+    freshnessInconsistent: string;
+    freshnessUnavailable: string;
     coverageHeading: string;
     legendAvailable: string;
     legendNoRights: string;
@@ -89,6 +102,19 @@ const EN: Locale = {
     askPlaceholder: "Ask about Manchester United…",
     askButton: "Ask",
     examplesHeading: "Try asking",
+    freshnessHeading: "Data freshness",
+    coverageThrough: (s) => `Coverage through ${s}.`,
+    lastSuccessfulLoad: "Last successful load:",
+    sourceCoverageThrough: (s) => `Coverage through ${s}.`,
+    sourceRetrieved: "Retrieved:",
+    sourceAsOf: "Source as of:",
+    sourceAsOfUnavailable: "Source as-of date not provided.",
+    sourceObserved: "Observed in the last load.",
+    sourceUnavailable: "Unavailable during the last load; its data is absent, not zero.",
+    sourceNotRetrieved: "Not retrieved in the last load.",
+    freshnessDegraded: "The core data loaded, but an optional source was unavailable.",
+    freshnessInconsistent: "Freshness metadata does not match the current data, so this page does not describe it as current.",
+    freshnessUnavailable: "No successful data load is recorded.",
     coverageHeading: "What we can actually show",
     legendAvailable: "available",
     legendNoRights: "we have a source but no right to publish",
@@ -139,6 +165,19 @@ const ES: Locale = {
     askPlaceholder: "Pregunta sobre el Manchester United…",
     askButton: "Preguntar",
     examplesHeading: "Prueba preguntando",
+    freshnessHeading: "Actualización de los datos",
+    coverageThrough: (s) => `Cobertura hasta ${s}.`,
+    lastSuccessfulLoad: "Última carga correcta:",
+    sourceCoverageThrough: (s) => `Cobertura hasta ${s}.`,
+    sourceRetrieved: "Recuperado:",
+    sourceAsOf: "Datos de origen a fecha de:",
+    sourceAsOfUnavailable: "La fuente no proporciona una fecha de vigencia.",
+    sourceObserved: "Observada en la última carga.",
+    sourceUnavailable: "No disponible durante la última carga; sus datos están ausentes, no son cero.",
+    sourceNotRetrieved: "No se recuperó en la última carga.",
+    freshnessDegraded: "Los datos principales se cargaron, pero una fuente opcional no estaba disponible.",
+    freshnessInconsistent: "Los metadatos de actualización no coinciden con los datos actuales, por lo que esta página no los presenta como actuales.",
+    freshnessUnavailable: "No hay ninguna carga de datos correcta registrada.",
     coverageHeading: "Lo que realmente podemos mostrar",
     legendAvailable: "disponible",
     legendNoRights: "tenemos la fuente pero no el derecho de publicarla",

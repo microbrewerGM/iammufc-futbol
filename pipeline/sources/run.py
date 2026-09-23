@@ -77,6 +77,10 @@ NON_PLAYER_ELEMENT_TYPES = {5}
 TIMEOUT = 60
 HEADERS = {"User-Agent": "iammufc-poc/0.1 (non-commercial fan project)"}
 
+SOURCE_FPL = "fpl"
+SOURCE_PL_RESULTS = "football_data_couk"
+SOURCE_CL_RESULTS = "openfootball_cl"
+
 
 class IngestError(Exception):
     """Fatal. A failed ingest must never publish partial data."""
@@ -91,6 +95,11 @@ def fetch(url: str) -> bytes:
 
 def sha256(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
+
+
+def utc_now() -> str:
+    """UTC timestamp injection point for deterministic publication tests."""
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 # ---------------------------------------------------------------------------
@@ -296,8 +305,9 @@ def emit_seed(
     seasons: pd.DataFrame,
     snapshot_id: str,
     source_hashes: dict[str, str],
+    source_statuses: dict[str, dict[str, str | None]],
 ) -> None:
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    now = utc_now()
     counts = {"players": len(players), "season_stats": len(seasons)}
 
     lines = [
@@ -351,6 +361,17 @@ def emit_seed(
         )
     lines.append("")
 
+    # Must remain the final statement: its presence proves every preceding data
+    # statement in this seed completed. D1 owns the remote import transaction;
+    # do not add BEGIN/COMMIT to this generated file.
+    lines.append(
+        "INSERT INTO publication_runs "
+        "(snapshot_id, prepared_at, source_status_json) VALUES ("
+        f"{sql_str(snapshot_id)}, {sql_str(now)}, "
+        f"{sql_str(json.dumps(source_statuses, sort_keys=True))});"
+    )
+    lines.append("")
+
     SEED_PATH.parent.mkdir(parents=True, exist_ok=True)
     SEED_PATH.write_text("\n".join(lines), encoding="utf-8")
 
@@ -391,6 +412,15 @@ def main() -> int:
             file=sys.stderr,
         )
         cl_frame, cl_hashes = pd.DataFrame(), {}
+        cl_status = "unavailable"
+    else:
+        cl_status = "observed" if not cl_frame.empty else "unavailable"
+        if cl_frame.empty:
+            print(
+                "  WARNING: Champions League ingest returned no United coverage; "
+                "optional data is unavailable, not zero.",
+                file=sys.stderr,
+            )
     if not cl_frame.empty:
         season_frames.append(cl_frame)
         source_hashes.update(cl_hashes)
@@ -409,7 +439,26 @@ def main() -> int:
         json.dumps(source_hashes, sort_keys=True).encode("utf-8")
     )
 
-    emit_seed(players, seasons, snapshot_id, source_hashes)
+    observed_at = utc_now()
+    source_statuses: dict[str, dict[str, str | None]] = {
+        SOURCE_FPL: {
+            "status": "observed",
+            "coverage_through": max(SEASONS),
+            "retrieved_at": observed_at,
+        },
+        SOURCE_PL_RESULTS: {
+            "status": "observed",
+            "coverage_through": max(SEASONS),
+            "retrieved_at": observed_at,
+        },
+        SOURCE_CL_RESULTS: {
+            "status": cl_status,
+            "coverage_through": max(cl_frame["season"]) if not cl_frame.empty else None,
+            "retrieved_at": observed_at if cl_status == "observed" else None,
+        },
+    }
+
+    emit_seed(players, seasons, snapshot_id, source_hashes, source_statuses)
 
     print(
         f"ingest OK: {len(players)} player-seasons, {len(seasons)} seasons\n"
