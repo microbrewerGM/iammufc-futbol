@@ -24,7 +24,9 @@ export const SECURITY_HEADERS: Record<string, string> = {
   ].join("; "),
   "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
   "X-Content-Type-Options": "nosniff",
-  "Referrer-Policy": "no-referrer",
+  // no-referrer makes browser form POSTs send Origin:null, failing CSRF checks.
+  // Keep external referrers suppressed while allowing same-origin form posts.
+  "Referrer-Policy": "same-origin",
   "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
   "X-Robots-Tag": "noindex", // M3 lifts this per-page, behind the substance gate
 };
