@@ -36,6 +36,7 @@ import { artifactKey, withDefaults, type QueryIntent, type VizType } from "./cor
 import { LOCALES, type Locale, type LocaleCode } from "./core/locale";
 import { parseRuleBased, proposeWithAI, type Proposal } from "./core/parser";
 import { withSecurityHeaders } from "./security/headers";
+import { accessGate } from "./security/auth";
 import { gateQuestion, type GateRejected } from "./security/askguard";
 import { esc, html, page } from "./views/layout";
 import {
@@ -54,23 +55,19 @@ const AI_MODEL = "@cf/meta/llama-3.1-8b-instruct";
 const catalog = new Catalog(compiledCatalog as unknown as CompiledCatalog);
 const app = new Hono<{ Bindings: Env }>();
 
-/**
- * Cache-Control for content that is immutable between deploys. D1 only
- * changes via a migration during a fresh `wrangler deploy`, and the Worker
- * version is part of the Cache API's cache key (infra/wrangler.jsonc's
- * `cache` config comment) -- nightly-refresh.yml's unconditional redeploy
- * after a new snapshot already invalidates every cached response, so no
- * ctx.cache.purge() logic is needed here. 1h balances real D1-read/compute
- * savings against how fresh a manually re-triggered deploy needs to feel.
- * stale-if-error keeps a transient Worker failure from taking a cached page
- * down with it.
- */
-const CACHE_CONTROL = "public, max-age=3600, stale-while-revalidate=300, stale-if-error=86400";
+/** Private responses never enter browser/shared caches, even on error. */
+const CACHE_CONTROL = "private, no-store";
 
 app.use("*", async (c, next) => {
   await next();
   c.res = withSecurityHeaders(c.res);
+  c.header("Cache-Control", "private, no-store");
+  c.header("CDN-Cache-Control", "no-store");
+  c.header("Cloudflare-CDN-Cache-Control", "no-store");
+  c.header("X-Robots-Tag", "noindex, nofollow, noarchive");
 });
+app.use("*", accessGate());
+app.onError(() => new Response("Request unavailable.", { status: 503 }));
 
 // ---------------------------------------------------------------------------
 // JSON API -- locale-neutral, returns data not prose
@@ -297,7 +294,7 @@ registerLocaleRoutes("en");
 registerLocaleRoutes("es");
 
 app.get("/robots.txt", () => {
-  const body = `User-agent: *\nDisallow: /q\nDisallow: /ask\nSitemap: /sitemap.xml\n`;
+  const body = `User-agent: *\nDisallow: /\n`;
   return new Response(body, {
     headers: { "content-type": "text/plain; charset=utf-8", "Cache-Control": CACHE_CONTROL },
   });
@@ -355,7 +352,13 @@ app.get("/q", (c) => c.redirect(`/en/q?${new URL(c.req.url).searchParams.toStrin
 app.get("/player/:name/:season?", (c) => c.redirect(`/en${new URL(c.req.url).pathname}`, 301));
 app.get("/season/:season", (c) => c.redirect(`/en${new URL(c.req.url).pathname}`, 301));
 
-app.notFound((c) => {
+app.notFound(async (c) => {
+  // Worker-first routing ensures every asset passes authorization above.
+  if (["GET", "HEAD"].includes(c.req.method) && c.env.ASSETS) {
+    const asset = await c.env.ASSETS.fetch(c.req.raw);
+    if (asset.status !== 404) return asset;
+    await asset.body?.cancel();
+  }
   const locale = LOCALES[new URL(c.req.url).pathname.startsWith("/es") ? "es" : "en"];
   const t = locale.strings;
   return html(
