@@ -1,5 +1,12 @@
 import { barChartSvg, buildAltText, formatValue as formatValueEn } from "../core/chart";
-import type { ResultRow, SeasonRecord, SeasonRow, SquadRow } from "../core/db";
+import type {
+  ResultRow,
+  SeasonRecord,
+  SeasonRow,
+  SourceId,
+  SourceObservationStatus,
+  SquadRow,
+} from "../core/db";
 import { columnFeasibility, type Catalog, type FeasibilityResult } from "../core/feasibility";
 import type { QueryIntent } from "../core/intent";
 import { formatNumber, metricLabel, positionLabel, type Locale } from "../core/locale";
@@ -22,6 +29,29 @@ const EXAMPLES: Record<Locale["code"], string[]> = {
     "Muéstrame un mapa de tiros de 2024-25",
     "Pases progresivos 2024-25",
   ],
+};
+
+export type FreshnessState = "current" | "degraded" | "inconsistent" | "unavailable";
+export interface FreshnessSourceView {
+  id: SourceId;
+  status: SourceObservationStatus;
+  coverageThrough: string | null;
+  retrievedAt: string | null;
+  sourceAsOf: string | null;
+}
+export type FreshnessView =
+  | {
+      state: "current" | "degraded";
+      coverageThrough: string;
+      lastSuccessfulLoadAt: string;
+      sources: readonly FreshnessSourceView[];
+    }
+  | { state: "inconsistent" | "unavailable" };
+
+const SOURCE_LABELS: Record<SourceId, string> = {
+  fpl: "Fantasy Premier League",
+  football_data_couk: "Football-Data.co.uk",
+  openfootball_cl: "openfootball — Champions League",
 };
 
 function base(locale: Locale): string {
@@ -106,6 +136,32 @@ export function coverageMatrix(catalog: Catalog, locale: Locale): string {
   return `<h2>${esc(t.coverageHeading)}</h2>
 <p class="tagline">● ${esc(t.legendAvailable)} &nbsp; ✕ ${esc(t.legendNoRights)} &nbsp; – ${esc(t.legendNoSource)}</p>
 <table class="matrix"><thead><tr><th>${esc(t.metricCol)}</th>${head}</tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+export function freshnessPanel(view: FreshnessView, locale: Locale): string {
+  const t = locale.strings;
+  const heading = `<h2 id="data-freshness">${esc(t.freshnessHeading)}</h2>`;
+  if (view.state !== "current" && view.state !== "degraded") {
+    const message = view.state === "inconsistent" ? t.freshnessInconsistent : t.freshnessUnavailable;
+    return `<section class="card" aria-labelledby="data-freshness">${heading}<p>${esc(message)}</p></section>`;
+  }
+  const sources = view.sources
+    .map((source) => {
+      const label = SOURCE_LABELS[source.id];
+      if (source.status === "unavailable") {
+        return `<li><strong>${esc(label)}</strong> — ${esc(t.sourceUnavailable)} ${esc(t.sourceNotRetrieved)} ${esc(t.sourceAsOfUnavailable)}</li>`;
+      }
+      const asOf = source.sourceAsOf
+        ? `${esc(t.sourceAsOf)} <time datetime="${esc(source.sourceAsOf)}">${esc(source.sourceAsOf)}</time>.`
+        : esc(t.sourceAsOfUnavailable);
+      return `<li><strong>${esc(label)}</strong> — ${esc(t.sourceObserved)} ${esc(t.sourceCoverageThrough(source.coverageThrough!))} ${esc(t.sourceRetrieved)} <time datetime="${esc(source.retrievedAt!)}">${esc(source.retrievedAt!)}</time>. ${asOf}</li>`;
+    })
+    .join("\n");
+  const degraded = view.state === "degraded" ? `<p>${esc(t.freshnessDegraded)}</p>` : "";
+  return `<section class="card" aria-labelledby="data-freshness">${heading}
+<p>${esc(t.coverageThrough(view.coverageThrough))}</p>
+<p>${esc(t.lastSuccessfulLoad)} <time datetime="${esc(view.lastSuccessfulLoadAt)}">${esc(view.lastSuccessfulLoadAt)}</time>.</p>
+${degraded}<ul>${sources}</ul></section>`;
 }
 
 function dataTable(
@@ -388,7 +444,11 @@ ${clAttribution ? `<p class="tagline">${esc(clAttribution)}</p>` : ""}
 <p><a href="${base(locale)}/">${esc(t.backToMatrix)}</a></p>`;
 }
 
-export function homeBody(catalog: Catalog, locale: Locale): string {
+export function homeBody(
+  catalog: Catalog,
+  locale: Locale,
+  freshness: FreshnessView = { state: "unavailable" },
+): string {
   const t = locale.strings;
   return `<h1>iammufc</h1>
 <p class="tagline">${esc(t.siteTagline)}</p>
@@ -399,6 +459,7 @@ ${chatForm(locale)}
 ${EXAMPLES[locale.code].map((e) => `<li>${esc(e)}</li>`).join("\n")}
 </ul>
 </div>
+${freshnessPanel(freshness, locale)}
 ${coverageMatrix(catalog, locale)}`;
 }
 

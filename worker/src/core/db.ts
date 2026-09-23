@@ -104,6 +104,114 @@ export async function currentSnapshot(env: Env): Promise<string | null> {
   return row?.snapshot_id ?? null;
 }
 
+export type SourceObservationStatus = "observed" | "unavailable";
+export type SourceId = "fpl" | "football_data_couk" | "openfootball_cl";
+
+export interface SourceObservation {
+  id: SourceId;
+  status: SourceObservationStatus;
+  coverageThrough: string | null;
+  retrievedAt: string | null;
+  sourceAsOf: null;
+}
+
+export interface PublicationState {
+  snapshotId: string;
+  preparedAt: string;
+  loadedAt: string;
+  sources: readonly SourceObservation[];
+}
+
+type PublicationRow = {
+  snapshot_id: unknown;
+  prepared_at: unknown;
+  loaded_at: unknown;
+  source_status_json: unknown;
+};
+
+const SOURCE_IDS = ["fpl", "football_data_couk", "openfootball_cl"] as const;
+const SOURCE_KEYS = ["coverage_through", "retrieved_at", "status"] as const;
+const SNAPSHOT_RE = /^[a-f0-9]{64}$/;
+const SEASON_RE = /^\d{4}-\d{2}$/;
+
+function plainRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const actual = Object.keys(value).sort();
+  const wanted = [...expected].sort();
+  return actual.length === wanted.length && actual.every((key, index) => key === wanted[index]);
+}
+
+function isoTimestamp(value: unknown): string | null {
+  if (typeof value !== "string" || value.length < 10 || value.length > 40) return null;
+  const candidate = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)
+    ? `${value.replace(" ", "T")}Z`
+    : value;
+  const millis = Date.parse(candidate);
+  return Number.isFinite(millis) ? new Date(millis).toISOString() : null;
+}
+
+/** Strictly parses the latest completed seed-import record. Malformed or
+ * missing metadata becomes null; raw D1/JSON errors never reach a response. */
+export async function currentPublication(env: Env): Promise<PublicationState | null> {
+  try {
+    const row = await env.DB.prepare(
+      `SELECT snapshot_id, prepared_at, loaded_at, source_status_json
+         FROM publication_runs ORDER BY run_id DESC LIMIT 1`,
+    ).first<PublicationRow>();
+    if (!row || typeof row.snapshot_id !== "string" || !SNAPSHOT_RE.test(row.snapshot_id)) {
+      return null;
+    }
+    const preparedAt = isoTimestamp(row.prepared_at);
+    const loadedAt = isoTimestamp(row.loaded_at);
+    if (
+      !preparedAt ||
+      !loadedAt ||
+      Date.parse(loadedAt) < Date.parse(preparedAt) ||
+      typeof row.source_status_json !== "string" ||
+      row.source_status_json.length > 10_000
+    ) {
+      return null;
+    }
+    const raw: unknown = JSON.parse(row.source_status_json);
+    if (!plainRecord(raw) || !hasExactKeys(raw, SOURCE_IDS)) return null;
+
+    const sources: SourceObservation[] = [];
+    for (const id of SOURCE_IDS) {
+      const value = raw[id];
+      if (!plainRecord(value) || !hasExactKeys(value, SOURCE_KEYS)) return null;
+      const status = value.status;
+      if (status !== "observed" && status !== "unavailable") return null;
+      const coverageThrough = value.coverage_through;
+      const retrievedAt = value.retrieved_at === null ? null : isoTimestamp(value.retrieved_at);
+      if (
+        (status === "observed" &&
+          (typeof coverageThrough !== "string" ||
+            !SEASON_RE.test(coverageThrough) ||
+            !retrievedAt)) ||
+        (status === "unavailable" &&
+          (coverageThrough !== null || value.retrieved_at !== null))
+      ) {
+        return null;
+      }
+      sources.push({
+        id,
+        status,
+        coverageThrough: coverageThrough as string | null,
+        retrievedAt,
+        sourceAsOf: null,
+      });
+    }
+    return { snapshotId: row.snapshot_id, preparedAt, loadedAt, sources };
+  } catch {
+    return null;
+  }
+}
+
 /** `entity_id: "all"` means "rank every player"; anything else names one. */
 export const ALL_PLAYERS = "all";
 

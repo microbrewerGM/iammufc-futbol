@@ -27,12 +27,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: nightly-refresh
+  group: iammufc-dev-publication
   cancel-in-progress: false # never interrupt a run that is already writing
+  queue: max # retain every waiting deploy/refresh; GitHub processes the queue FIFO
 
 jobs:
   refresh-dev:
     name: refresh-dev
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: dev # no required reviewer; this is exactly what dev is for
     steps:

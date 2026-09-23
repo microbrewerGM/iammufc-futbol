@@ -73,6 +73,7 @@ def core_pipeline_mocked(tmp_path, monkeypatch):
     monkeypatch.setattr(run_mod, "SEED_PATH", tmp_path / "0002_seed.sql")
     monkeypatch.setattr(run_mod, "load_players", lambda s: (fake_players(), "phash"))
     monkeypatch.setattr(run_mod, "load_results", lambda s: (fake_season(), "rhash"))
+    monkeypatch.setattr(run_mod, "utc_now", lambda: "2026-09-23T12:00:00+00:00")
     monkeypatch.setenv("FOOTBALL_DATA_KEY", "fake-key")
     return tmp_path / "0002_seed.sql"
 
@@ -89,6 +90,10 @@ def test_cl_failure_does_not_fail_the_run(core_pipeline_mocked, capsys):
     seed = core_pipeline_mocked.read_text()
     assert "INSERT INTO players" in seed
     assert "'PL'" in seed
+    assert '"openfootball_cl": {"coverage_through": null, "retrieved_at": null' in seed
+    assert '"status": "unavailable"' in seed
+    assert seed.rstrip().splitlines()[-1].startswith("INSERT INTO publication_runs")
+    assert "BEGIN;" not in seed and "COMMIT;" not in seed
 
 
 def test_cl_failure_warns_loudly_enough_to_notice(core_pipeline_mocked, capsys):
@@ -128,3 +133,15 @@ def test_cl_success_still_adds_its_row(core_pipeline_mocked):
 
     seed = core_pipeline_mocked.read_text()
     assert "'CL'" in seed, "Champions League row must reach the seed when present"
+    assert '"openfootball_cl": {"coverage_through": "2018-19"' in seed
+    assert '"status": "observed"' in seed
+
+
+def test_cl_successful_empty_result_is_explicitly_unavailable(core_pipeline_mocked, capsys):
+    with patch.object(run_mod, "fetch_cl_all", return_value=(pd.DataFrame(), {})):
+        assert run_mod.main() == 0
+
+    seed = core_pipeline_mocked.read_text()
+    assert '"openfootball_cl": {"coverage_through": null, "retrieved_at": null' in seed
+    assert '"status": "unavailable"' in seed
+    assert "returned no United coverage" in capsys.readouterr().err

@@ -21,6 +21,7 @@ import { Hono } from "hono";
 import compiledCatalog from "./generated/catalog.json";
 import {
   allPlayerNames,
+  currentPublication,
   currentSnapshot,
   enforceBudget,
   logDemand,
@@ -30,6 +31,7 @@ import {
   seasonRecordRow,
   seasonSquadRows,
   type Env,
+  type PublicationState,
 } from "./core/db";
 import { Catalog, columnFeasibility, hasSubstance, type CompiledCatalog } from "./core/feasibility";
 import { artifactKey } from "./core/intent";
@@ -50,6 +52,7 @@ import {
   rejectionPanel,
   resultPanel,
   seasonPageBody,
+  type FreshnessView,
 } from "./views/pages";
 
 /** Pin site P14. Bump deliberately -- a different model parses differently. */
@@ -162,11 +165,81 @@ app.get("/api/catalog", (c) => {
   return res;
 });
 
+type DataState = "current" | "degraded" | "inconsistent" | "unavailable";
+const SHA256_RE = /^[a-f0-9]{64}$/;
+
+function publicationHealth(
+  snapshot: string | null,
+  publication: PublicationState | null,
+): DataState {
+  if (!snapshot) return "unavailable";
+  if (!SHA256_RE.test(snapshot) || !publication || publication.snapshotId !== snapshot) {
+    return "inconsistent";
+  }
+  const sources = new Map(publication.sources.map((source) => [source.id, source]));
+  if (
+    sources.get("fpl")?.status !== "observed" ||
+    sources.get("football_data_couk")?.status !== "observed"
+  ) {
+    return "inconsistent";
+  }
+  return sources.get("openfootball_cl")?.status === "unavailable" ? "degraded" : "current";
+}
+
+function freshnessView(
+  snapshot: string | null,
+  publication: PublicationState | null,
+): FreshnessView {
+  const state = publicationHealth(snapshot, publication);
+  if (state === "inconsistent" || state === "unavailable") return { state };
+  if (!publication) return { state: "inconsistent" };
+  const coverageThrough = (["fpl", "football_data_couk"] as const)
+    .map((id) => publication.sources.find((source) => source.id === id)!.coverageThrough as string)
+    .sort()[0]!;
+  return {
+    state,
+    coverageThrough,
+    lastSuccessfulLoadAt: publication.loadedAt,
+    sources: publication.sources.map(
+      ({ id, status, coverageThrough, retrievedAt, sourceAsOf }) => ({
+        id,
+        status,
+        coverageThrough,
+        retrievedAt,
+        sourceAsOf,
+      }),
+    ),
+  };
+}
+
 app.get("/api/health", async (c) => {
-  const snapshot = await currentSnapshot(c.env).catch(() => null);
+  const [snapshot, publication] = await Promise.all([
+    currentSnapshot(c.env).catch(() => null),
+    currentPublication(c.env),
+  ]);
+  const dataState = publicationHealth(snapshot, publication);
+  const usable = dataState === "current" || dataState === "degraded";
+  const current = usable ? publication : null;
+  const coreCoverage = current
+    ? (["fpl", "football_data_couk"] as const)
+        .map((id) => current.sources.find((source) => source.id === id)!.coverageThrough as string)
+        .sort()[0]
+    : null;
   const res = c.json({
-    ok: snapshot !== null,
-    snapshot_id: snapshot,
+    ok: usable,
+    data_state: dataState,
+    snapshot_id: snapshot && SHA256_RE.test(snapshot) ? snapshot : null,
+    snapshot_prepared_at: current?.preparedAt ?? null,
+    last_successful_refresh_at: current?.loadedAt ?? null,
+    coverage_through: coreCoverage,
+    sources:
+      current?.sources.map((source) => ({
+        id: source.id,
+        status: source.status,
+        coverage_through: source.coverageThrough,
+        source_as_of: source.sourceAsOf,
+        retrieved_at: source.retrievedAt,
+      })) ?? [],
     metrics: catalog.metrics.length,
     coverage_cells: catalog.coverage.length,
     ai_bound: Boolean(c.env.AI),
@@ -206,10 +279,14 @@ function registerLocaleRoutes(code: LocaleCode) {
     );
   });
 
-  app.get(p, () => {
+  app.get(p, async (c) => {
+    const [snapshot, publication] = await Promise.all([
+      currentSnapshot(c.env).catch(() => null),
+      currentPublication(c.env),
+    ]);
     // Always indexable -- the coverage matrix hub, never a thin permutation.
     const res = html(
-      page(homeBody(catalog, locale), {
+      page(homeBody(catalog, locale, freshnessView(snapshot, publication)), {
         title: code === "es" ? "Estadísticas del Manchester United" : "Manchester United statistics",
         locale,
         unprefixedPath: "/",
