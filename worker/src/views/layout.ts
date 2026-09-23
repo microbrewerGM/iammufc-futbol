@@ -37,8 +37,9 @@ export function page(body: string, opts: LayoutOptions): string {
   const credits = (opts.attribution ?? []).filter((a): a is string => Boolean(a));
   const unique = [...new Set(credits)];
 
-  const enHref = `/en${opts.unprefixedPath}`;
-  const esHref = `/es${opts.unprefixedPath}`;
+  const localizedPath = opts.unprefixedPath === "/" ? "" : opts.unprefixedPath;
+  const enHref = `/en${localizedPath}`;
+  const esHref = `/es${localizedPath}`;
 
   // Plain links, not a JS toggle -- the site ships script-src 'none' by
   // design (docs/design-principles.md: "the site genuinely ships no
