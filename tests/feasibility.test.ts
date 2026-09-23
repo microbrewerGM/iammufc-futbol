@@ -100,7 +100,10 @@ describe("refusals", () => {
 describe("never optimistic", () => {
   it("refuses every combination absent from the coverage matrix", () => {
     const covered = new Set(
-      catalog.coverage.filter((c) => c.redistributable).map((c) => `${c.metric}/${c.season}`),
+      catalog.coverage
+        .filter((c) => c.redistributable && c.entity_type === "player" &&
+          c.granularity === "box_score" && c.competition === "PL")
+        .map((c) => `${c.metric}/${c.season}`),
     );
     const feasibleStates = new Set([
       "available",
@@ -122,7 +125,7 @@ describe("never optimistic", () => {
 
 describe("builder support", () => {
   it("exposes only servable seasons, so infeasible picks are unselectable", () => {
-    // All ten seasons for a metric with full coverage.
+    // Only seasons with fixture-level club attribution are offered.
     expect(catalog.seasonsFor("goals", "player", "box_score")).toEqual([
       "2025-26",
       "2024-25",
@@ -132,8 +135,6 @@ describe("builder support", () => {
       "2020-21",
       "2019-20",
       "2018-19",
-      "2017-18",
-      "2016-17",
     ]);
     // xg only from 2022-23 -- FPL did not publish expected_goals earlier, and
     // the builder must not offer a season it cannot actually serve.

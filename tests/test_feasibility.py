@@ -129,7 +129,14 @@ def test_hallucinated_metric_is_rejected_by_the_catalog(catalog):
 def test_never_optimistic_for_any_unseeded_combination(catalog):
     """Sweep the space. Anything not explicitly in the coverage matrix must
     refuse -- absence of a cell never means 'probably fine'."""
-    covered = {(c.metric, c.season) for c in catalog.coverage if c.redistributable}
+    covered = {
+        (c.metric, c.season)
+        for c in catalog.coverage
+        if c.redistributable
+        and c.entity_type.value == "player"
+        and c.granularity.value == "box_score"
+        and c.competition == "PL"
+    }
     for metric in ("goals", "assists", "minutes", "points", "xg", "progressive_passes"):
         for season in ("2013-14", "2017-18", "2023-24", "2024-25", "2025-26", "2030-31"):
             r = check_feasibility(intent(metric=metric, season=season), catalog)

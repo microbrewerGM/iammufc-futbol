@@ -104,16 +104,13 @@ export function coverageMatrix(catalog: Catalog, locale: Locale): string {
   // it has a place to live. Giving this table a real competition dimension is
   // a deliberate design change, not something to fall out of a bug fix.
   const plCells = catalog.coverage.filter((c) => c.competition === "PL");
+  const playerCells = plCells.filter(
+    (c) => c.entity_type === "player" && c.granularity === "box_score",
+  );
   const seasons = [...new Set(plCells.map((c) => c.season))].sort().reverse();
-  const index = new Map<string, (typeof plCells)[number]>();
-  for (const c of plCells) {
-    const key = `${c.metric}/${c.season}`;
-    const held = index.get(key);
-    // Deterministic precedence, rather than document order: these columns feed
-    // the player tables, so a player-level cell is the one being described.
-    if (!held || (held.entity_type !== "player" && c.entity_type === "player")) {
-      index.set(key, c);
-    }
+  const index = new Map<string, (typeof playerCells)[number]>();
+  for (const c of playerCells) {
+    index.set(`${c.metric}/${c.season}`, c);
   }
 
   const head = seasons.map((s) => `<th class="num">${esc(s)}</th>`).join("");
@@ -339,7 +336,17 @@ export function playerPageBody(
 </div>`;
   }
 
-  const current = career.find((r) => r.season === season) ?? career[career.length - 1]!;
+  const requested = career.find((r) => r.season === season);
+  if (!requested) {
+    return `<h1>${esc(displayName)}</h1>
+<div class="stop">
+<p class="state">no_data</p>
+<p><strong>${esc(t.noPlayerSeasonData(displayName, season))}</strong></p>
+<p>${esc(t.checkMatrix)} <a href="${base(locale)}/">${esc(t.backToMatrix)}</a></p>
+</div>`;
+  }
+
+  const current = requested;
   const rows = career
     .map((r) => {
       const feas = columnFeasibility(catalog, "player", r.season, "PL", locale.code);
@@ -374,7 +381,11 @@ export function seasonPageBody(
 ): string {
   const t = locale.strings;
   if (squad.length === 0) {
+    const recordLine = record
+      ? `<p class="tagline">${esc(t.leagueRecord(record.played, record.won, record.drawn, record.lost, record.goals, record.goals_against))}</p>`
+      : `<p class="note">${esc(t.noSeasonRecord(season))}</p>`;
     return `<h1>${esc(season)}</h1>
+${recordLine}
 <div class="stop">
 <p class="state">no_data</p>
 <p><strong>${esc(t.noSquadData(season))}</strong></p>
