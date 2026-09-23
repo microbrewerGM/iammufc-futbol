@@ -7,6 +7,7 @@
  */
 
 import type { QueryIntent } from "./intent";
+import { parseIntent, validateExecutionSupport } from "./validate-intent";
 
 export interface Env {
   DB: D1Database;
@@ -107,6 +108,9 @@ export async function currentSnapshot(env: Env): Promise<string | null> {
 export const ALL_PLAYERS = "all";
 
 export async function runQuery(env: Env, intent: QueryIntent): Promise<QueryResult> {
+  const parsed = parseIntent(intent);
+  if (!parsed.ok || validateExecutionSupport(parsed.intent)) throw new Error("unsupported_query");
+  intent = parsed.intent;
   const column = METRIC_COLUMN[intent.metric];
   if (!column) {
     // Unreachable if feasibility ran first. Kept as a hard stop rather than a

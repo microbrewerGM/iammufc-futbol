@@ -32,7 +32,8 @@ import {
   type Env,
 } from "./core/db";
 import { Catalog, columnFeasibility, hasSubstance, type CompiledCatalog } from "./core/feasibility";
-import { artifactKey, withDefaults, type QueryIntent, type VizType } from "./core/intent";
+import { artifactKey } from "./core/intent";
+import { parseIntent, validateExecutionSupport, validateQuerySemantics } from "./core/validate-intent";
 import { LOCALES, type Locale, type LocaleCode } from "./core/locale";
 import { parseRuleBased, proposeWithAI, type Proposal } from "./core/parser";
 import { executeComparison, parseComparison } from "./core/comparison";
@@ -77,8 +78,11 @@ app.onError(() => new Response("Request unavailable.", { status: 503 }));
 
 /** Proposes. Never executes. The response has no data in it by construction. */
 app.post("/api/chat", async (c) => {
-  const body = await c.req.json<{ question?: string }>().catch(() => ({}) as { question?: string });
-  const question = (body.question ?? "").trim();
+  const body = await c.req.json<unknown>().catch(() => null);
+  if (!body || typeof body !== "object" || !("question" in body) || typeof body.question !== "string") {
+    return c.json({ error: "question is required" }, 400);
+  }
+  const question = body.question.trim();
   if (!question) return c.json({ error: "question is required" }, 400);
 
   // The gate runs before anything else touches the text -- including the
@@ -101,12 +105,11 @@ app.post("/api/chat", async (c) => {
 
 /** Executes a validated intent. Rejects anything the catalog does not permit. */
 app.post("/api/query", async (c) => {
-  const raw = await c.req.json<Partial<QueryIntent>>().catch(() => null);
-  if (!raw || typeof raw.metric !== "string" || typeof raw.season !== "string") {
-    return c.json({ error: "metric and season are required" }, 400);
-  }
-
-  const intent = withDefaults(raw);
+  const parsed = parseIntent(await c.req.json<unknown>().catch(() => null));
+  if (!parsed.ok) return c.json({ error: parsed.issue }, 400);
+  const intent = parsed.intent;
+  const semanticIssue = validateQuerySemantics(intent);
+  if (semanticIssue) return c.json({ error: semanticIssue }, 422);
   const snapshot = await currentSnapshot(c.env);
   const key = await artifactKey(intent, snapshot ?? "no-snapshot");
   const feasibility = catalog.checkFeasibility(intent);
@@ -121,6 +124,8 @@ app.post("/api/query", async (c) => {
   ) {
     return c.json({ artifact_key: key, intent, feasibility, rows: [] }, 200);
   }
+  const executionIssue = validateExecutionSupport(intent);
+  if (executionIssue) return c.json({ error: executionIssue }, 422);
 
   // Budget breaker (docs/roadmap.md M3): checked only here, right before the
   // actual compute, not earlier -- a refusal above never touches the budget.
@@ -228,14 +233,31 @@ function registerLocaleRoutes(code: LocaleCode) {
 
   /** Direct intent entry -- the "show this instead" path from a refusal. */
   app.get(`${p}/q`, async (c) => {
+    const parameters = new URL(c.req.url).searchParams;
+    const allowed = new Set([
+      "metric",
+      "entity_type",
+      "entity_id",
+      "season",
+      "competition",
+      "viz",
+      "limit",
+    ]);
+    if ([...parameters.keys()].some((key) => !allowed.has(key) || parameters.getAll(key).length !== 1)) {
+      return c.text("Unsupported or duplicate query parameter.", 400);
+    }
     const q = c.req.query();
-    const intent = withDefaults({
+    const parsed = parseIntent({
       metric: q.metric ?? "goals",
-      entity_type: "player",
+      entity_type: q.entity_type ?? "player",
       entity_id: q.entity_id ?? "all",
       season: q.season ?? "2024-25",
-      viz: (q.viz as VizType) ?? "bar",
+      competition: q.competition ?? "PL",
+      viz: q.viz ?? "bar",
+      limit: q.limit === undefined ? 10 : /^\d+$/.test(q.limit) ? Number(q.limit) : Number.NaN,
     });
+    if (!parsed.ok) return c.json({ error: parsed.issue }, 400);
+    const intent = parsed.intent;
     // Unlike /ask, this route is GET, so the language toggle CAN replay it --
     // reconstruct the query string so switching locale lands on the same
     // result, not just the home page.
@@ -470,6 +492,11 @@ async function renderChat(
    *  back to home rather than link somewhere false. */
   unprefixedPath: string = "/",
 ): Promise<Response> {
+  const parsed = parseIntent(proposal.intent);
+  if (!parsed.ok) return html("Invalid query.", 400);
+  const semanticIssue = validateQuerySemantics(parsed.intent);
+  if (semanticIssue) return html(`Unsupported query field: ${semanticIssue.field}.`, 422);
+  proposal = { ...proposal, intent: parsed.intent };
   const snapshot = await currentSnapshot(c.env);
   const key = await artifactKey(proposal.intent, snapshot ?? "no-snapshot");
   const feasibility = catalog.checkFeasibility(proposal.intent, locale.code);
@@ -479,6 +506,8 @@ async function renderChat(
   const feasible =
     feasibility.state === "available" ||
     feasibility.state === "computable_now_queued";
+  const executionIssue = feasible ? validateExecutionSupport(proposal.intent) : null;
+  if (executionIssue) return html(`Unsupported query field: ${executionIssue.field}.`, 422);
 
   // Budget breaker (docs/roadmap.md M3): checked only when a query would
   // actually run, same scope as the JSON API's check above.
