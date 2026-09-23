@@ -17,8 +17,8 @@ export type FeasibilityState =
   | "available"
   | "computable_now_queued"
   | "computable_but_expensive"
-  | "not_computable_data_missing"
-  | "not_computable_no_rights";
+  | "no_data"
+  | "no_rights";
 
 export type Granularity = "box_score" | "event_with_coords" | "tracking";
 
@@ -277,7 +277,7 @@ export class Catalog {
     if (!metric) {
       // A hallucinated metric is caught here, by the catalog, not by the model.
       return {
-        state: "not_computable_data_missing",
+        state: "no_data",
         reason: REASON.hallucinatedMetric[locale](intent.metric),
         cost_class: "cheap",
       };
@@ -291,7 +291,7 @@ export class Catalog {
 
     if (!cell) {
       return {
-        state: "not_computable_data_missing",
+        state: "no_data",
         reason: REASON.noData[locale](label, gran, intent.season, intent.competition),
         nearest_alternative: this.nearestAlternative(intent),
         cost_class: "cheap",
@@ -301,7 +301,7 @@ export class Catalog {
     if (!cell.redistributable) {
       // We may hold it privately. We may not publish it. Say which.
       return {
-        state: "not_computable_no_rights",
+        state: "no_rights",
         reason: REASON.noRights[locale](label, intent.season, cell.source_name),
         source_name: cell.source_name,
         nearest_alternative: this.nearestAlternative(intent),

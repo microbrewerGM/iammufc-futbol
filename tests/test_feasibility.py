@@ -33,6 +33,13 @@ def intent(**kw) -> QueryIntent:
     return QueryIntent(**base)
 
 
+def test_wire_states_match_the_workspace_contract():
+    assert {state.value for state in FeasibilityState} == {
+        "available", "computable_now_queued", "computable_but_expensive",
+        "no_data", "no_rights",
+    }
+
+
 def test_catalog_invariants_hold(catalog):
     assert check_invariants(catalog) == []
 

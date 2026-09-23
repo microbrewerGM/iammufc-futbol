@@ -157,11 +157,11 @@ export function resultPanel(
   // Refusals are first-class output, not error states. Naming which of the two
   // kinds of gap this is tells the user whether it could ever be closed.
   if (
-    feasibility.state === "not_computable_data_missing" ||
-    feasibility.state === "not_computable_no_rights"
+    feasibility.state === "no_data" ||
+    feasibility.state === "no_rights"
   ) {
     const kind =
-      feasibility.state === "not_computable_no_rights"
+      feasibility.state === "no_rights"
         ? locale.code === "es"
           ? "Tenemos una fuente para esto, pero no licencia para republicarla. Ese vacío necesita una licencia paga, no más ingeniería."
           : "We have a source for this, but no licence to republish it. That gap needs a paid licence, not more engineering."
@@ -227,7 +227,7 @@ function metricValueCells(
     const f = feas.get(id);
     const ok = f?.state === "computable_now_queued" || f?.state === "available";
     if (!ok) {
-      const why = f?.state === "not_computable_no_rights" ? locale.strings.legendNoRights : locale.strings.legendNoSource;
+      const why = f?.state === "no_rights" ? locale.strings.legendNoRights : locale.strings.legendNoSource;
       return `<td class="num no" title="${esc(f?.reason ?? why)}">–</td>`;
     }
     return `<td class="num">${esc(formatNumber(values[id] ?? null, m.decimals, locale.code))}</td>`;
@@ -245,7 +245,7 @@ export function playerPageBody(
   if (career.length === 0) {
     return `<h1>${esc(displayName)}</h1>
 <div class="stop">
-<p class="state">not_computable_data_missing</p>
+<p class="state">no_data</p>
 <p><strong>${esc(t.noPlayerMatched(displayName))}</strong></p>
 <p>${esc(t.checkMatrix)} <a href="${base(locale)}/">${esc(t.backToMatrix)}</a></p>
 </div>`;
@@ -288,7 +288,7 @@ export function seasonPageBody(
   if (squad.length === 0) {
     return `<h1>${esc(season)}</h1>
 <div class="stop">
-<p class="state">not_computable_data_missing</p>
+<p class="state">no_data</p>
 <p><strong>${esc(t.noSquadData(season))}</strong></p>
 <p><a href="${base(locale)}/">${esc(t.backToMatrix)}</a></p>
 </div>`;
@@ -327,7 +327,7 @@ export function seasonPageBody(
   // domain dedication requires no attribution at all. The invariant that
   // actually matters is the other direction: where a credit IS required it
   // renders with the data, which the `clAttribution &&` below still enforces.
-  const clPublishable = Boolean(clCell) && clCell?.state !== "not_computable_no_rights";
+  const clPublishable = Boolean(clCell) && clCell?.state !== "no_rights";
   const europeanLine =
     europeanRecord && clPublishable
       ? `<p class="tagline">${esc(
