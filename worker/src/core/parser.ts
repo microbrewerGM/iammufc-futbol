@@ -19,6 +19,7 @@ import type { Catalog } from "./feasibility";
 import { withDefaults, type QueryIntent, type VizType } from "./intent";
 import { ALL_PLAYERS } from "./db";
 import { delimitForPrompt } from "../security/askguard";
+import { parseIntent, validateQuerySemantics } from "./validate-intent";
 
 export interface Proposal {
   intent: QueryIntent;
@@ -193,21 +194,11 @@ export async function proposeWithAI(
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) return null;
 
-    const parsed = JSON.parse(match[0]) as Partial<QueryIntent>;
-
-    // The model proposed it; the catalog decides whether it means anything.
-    if (typeof parsed.metric !== "string" || typeof parsed.season !== "string") return null;
+    const parsed = parseIntent(JSON.parse(match[0]));
+    if (!parsed.ok || validateQuerySemantics(parsed.intent)) return null;
 
     return {
-      intent: withDefaults({
-        metric: parsed.metric,
-        entity_type: "player",
-        entity_id: parsed.entity_id ?? ALL_PLAYERS,
-        season: parsed.season,
-        competition: "PL",
-        viz: (parsed.viz as VizType) ?? "bar",
-        limit: 10,
-      }),
+      intent: parsed.intent,
       confidence: "high",
       notes: [],
       source: "ai",
