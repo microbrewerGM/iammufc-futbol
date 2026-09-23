@@ -15,6 +15,8 @@ export interface Env {
   ACCESS_ISSUER?: string;
   ACCESS_AUD?: string;
   ACCESS_OWNER_EMAILS?: string;
+  /** Optional exact service client IDs; absent disables machine identities. */
+  ACCESS_SERVICE_CLIENT_IDS?: string;
   AI?: { run: (model: string, input: unknown) => Promise<unknown> };
 }
 
