@@ -84,7 +84,7 @@ main { max-width: 780px; margin: 0 auto; }
 
 .comparison-table,
 .career-table,
-.team-season-table { max-width: 100%; overflow-x: auto; }
+.team-season-table { width: 100%; min-width: 0; max-width: 100%; overflow-x: auto; }
 .team-season-table table { min-width: 620px; }
 .team-season-table th:first-child,
 .team-season-table td:first-child {
