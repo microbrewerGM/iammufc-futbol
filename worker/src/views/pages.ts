@@ -516,10 +516,10 @@ ${comparisonMarkup}
 ${recordLine}
 ${europeanLine}
 ${comparisonMarkup}
-<table>
+<div class="squad-table" tabindex="0" role="region" aria-label="${esc(t.squadTableLabel(season))}"><table>
 <thead><tr><th>${esc(t.playerCol)}</th>${head}<th>${esc(t.posCol)}</th></tr></thead>
 <tbody>${rows}</tbody>
-</table>
+</table></div>
 ${attribution ? `<p class="tagline">${esc(attribution)}</p>` : ""}
 ${clAttribution ? `<p class="tagline">${esc(clAttribution)}</p>` : ""}
 <p><a href="${base(locale)}/">${esc(t.backToMatrix)}</a></p>`;
