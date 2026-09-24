@@ -55,6 +55,11 @@ select:focus-visible {
   outline-offset: 2px;
   border-radius: 4px;
 }
+.comparison-table:focus-visible,
+.career-table:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
 
 body {
   margin: 0;
@@ -72,7 +77,15 @@ main { max-width: 780px; margin: 0 auto; }
   font-size: .9rem;
 }
 
-.comparison-table { max-width: 100%; overflow-x: auto; }
+.comparison-table,
+.career-table { max-width: 100%; overflow-x: auto; }
+.career-table table { min-width: 780px; }
+.career-table th:first-child,
+.career-table td:first-child {
+  position: sticky;
+  left: 0;
+  background: var(--card);
+}
 
 /* Language toggle. Quiet by design (design-principles.md §2: provenance-level
    chrome must not outshout the content) but a clear signifier (§1): the
@@ -216,6 +229,9 @@ td.num, th.num { text-align: right; font-family: ui-monospace, monospace; }
 
 /* The row for the season currently being viewed on a player's career table. */
 tr.current { background: var(--accent-soft); }
+tr.current td:first-child { background: var(--accent-soft); }
+tbody tr:hover td:first-child { background: var(--card-hover); }
+tbody tr.current:hover td:first-child { background: var(--accent-soft); }
 tr.current td:first-child { font-weight: 700; }
 
 footer {

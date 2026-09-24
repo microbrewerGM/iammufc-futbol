@@ -29,6 +29,8 @@ MAX_PLAUSIBLE_MINUTES = 38 * 90 + 400
 players_schema = DataFrameSchema(
     {
         "player_id": Column(str, Check.str_length(min_value=1), unique=True),
+        "person_id": Column(str, Check.str_matches(r"^fpl:code:\d+$")),
+        "source_person_code": Column(int, Check.gt(0)),
         "fpl_element": Column(int, Check.ge(0)),
         "season": Column(str, Check.str_matches(r"^\d{4}-\d{2}$")),
         "web_name": Column(str, Check.str_length(min_value=1)),
@@ -46,6 +48,13 @@ players_schema = DataFrameSchema(
     },
     strict=False,  # extra columns (e.g. intermediate computation columns) are fine
     coerce=True,
+    unique=["person_id", "season"],
+    checks=Check(
+        lambda df: (
+            df["person_id"] == "fpl:code:" + df["source_person_code"].astype(str)
+        ).all(),
+        error="person_id must match the source-namespaced FPL code",
+    ),
 )
 
 season_stats_schema = DataFrameSchema(

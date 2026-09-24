@@ -37,4 +37,40 @@ describe("player coverage boundary", () => {
     expect(html).toContain("League record: 38 played");
     expect(html).toContain("No squad data integrated for 2017-18.");
   });
+
+  it.each([
+    ["en", "Goals / 90", "1.00", "0.50"],
+    ["es", "Goles / 90", "1,00", "0,50"],
+  ] as const)("renders localized %s trajectory rates with stable links", (code, heading, goals, assists) => {
+    const html = playerPageBody(
+      "Synthetic",
+      "2024-25",
+      career,
+      catalog,
+      LOCALES[code],
+      "fpl:code:101",
+    );
+    expect(html).toContain(heading);
+    expect(html).toContain(`>${goals}</td>`);
+    expect(html).toContain(`>${assists}</td>`);
+    expect(html).toContain("fpl%3Acode%3A101/2024-25");
+    expect(html).toContain('class="career-table" tabindex="0" role="region"');
+    expect(html).toContain(LOCALES[code].strings.careerRateExplainer);
+    expect(html).toContain('aria-current="page"');
+  });
+
+  it.each([
+    ["minutes", "No integrated source provides Minutes"],
+    ["goals", "No integrated source provides Goals"],
+  ] as const)("explains a derived-rate gap using its unavailable %s dependency", (missing, reason) => {
+    const data = structuredClone(compiled) as unknown as CompiledCatalog;
+    data.coverage = data.coverage.filter(
+      (cell) =>
+        !(cell.metric === missing && cell.entity_type === "player" && cell.season === "2024-25"),
+    );
+    const html = playerPageBody("Synthetic", "2024-25", career, new Catalog(data), LOCALES.en);
+    expect(html).toContain(reason);
+    expect(html.match(new RegExp(reason, "g"))?.length ?? 0).toBeGreaterThan(1);
+    expect(html).not.toContain('title="Feasible and cheap; generated on request."');
+  });
 });

@@ -2,6 +2,7 @@ import type { Env } from "./db";
 import type { Catalog, FeasibilityState } from "./feasibility";
 import { artifactKey, withDefaults } from "./intent";
 import type { LocaleCode } from "./locale";
+import { per90 } from "./rates";
 
 export interface ComparisonRequest {
   season: string;
@@ -99,7 +100,7 @@ export function rankComparison(rows: ComparisonRow[], minimum: number): RankedRo
     label: row.label,
     total: row.total,
     minutes: row.minutes,
-    rate: (90 * row.total) / row.minutes,
+    rate: per90(row.total, row.minutes)!,
   }));
 }
 

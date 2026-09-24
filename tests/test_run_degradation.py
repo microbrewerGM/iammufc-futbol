@@ -28,6 +28,8 @@ def fake_players() -> pd.DataFrame:
         [
             {
                 "player_id": f"fpl:1:{SEASON}",
+                "person_id": "fpl:code:101",
+                "source_person_code": 101,
                 "fpl_element": 1,
                 "season": SEASON,
                 "web_name": "Fernandes",
@@ -93,6 +95,7 @@ def test_cl_failure_does_not_fail_the_run(core_pipeline_mocked, capsys):
     assert core_pipeline_mocked.exists(), "PL/FPL seed must still be written"
     seed = core_pipeline_mocked.read_text()
     assert "INSERT INTO players" in seed
+    assert "INSERT INTO player_identities" in seed
     assert "'PL'" in seed
     assert '"openfootball_cl": {"coverage_through": null, "retrieved_at": null' in seed
     assert '"status": "unavailable"' in seed

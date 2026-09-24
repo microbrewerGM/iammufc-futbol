@@ -37,7 +37,7 @@ describe("executor defense", () => {
 
   it("preserves the supported player ranking path", async () => {
     const all = vi.fn(async () => ({
-      results: [{ label: "Synthetic", value: 2, secondary: "FW" }],
+      results: [{ label: "Synthetic", value: 2, secondary: "FW", route_key: "fpl:code:101" }],
     }));
     const bind = vi.fn((_season: string, _competition: string, _limit: number) => ({ all }));
     const prepare = vi.fn((query: string) =>
@@ -54,10 +54,11 @@ describe("executor defense", () => {
       limit: 3,
     });
     await expect(runQuery({ DB: { prepare } } as unknown as Env, intent)).resolves.toEqual({
-      rows: [{ label: "Synthetic", value: 2, secondary: "FW" }],
+      rows: [{ label: "Synthetic", value: 2, secondary: "FW", route_key: "fpl:code:101" }],
       snapshot_id: "synthetic",
       unit: "goals",
     });
     expect(bind).toHaveBeenCalledWith("2024-25", "PL", 3);
+    expect(prepare.mock.calls[1]![0]).toContain("JOIN player_identities");
   });
 });

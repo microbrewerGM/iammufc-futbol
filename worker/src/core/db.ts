@@ -35,6 +35,7 @@ export interface ResultRow {
   label: string;
   value: number | null;
   secondary?: string;
+  route_key?: string;
 }
 
 export interface QueryResult {
@@ -243,9 +244,11 @@ export async function runQuery(env: Env, intent: QueryIntent): Promise<QueryResu
 
   if (intent.entity_id === ALL_PLAYERS) {
     const stmt = env.DB.prepare(
-      `SELECT p.web_name AS label, ${column} AS value, p.position AS secondary
+      `SELECT p.web_name AS label, ${column} AS value, p.position AS secondary,
+              i.person_id AS route_key
          FROM player_season_stats s
          JOIN players p ON p.player_id = s.player_id
+         JOIN player_identities i ON i.player_id = p.player_id
         WHERE p.season = ? AND s.competition = ? AND ${column} IS NOT NULL
         ORDER BY value DESC, s.minutes DESC
         LIMIT ?`,
@@ -254,22 +257,22 @@ export async function runQuery(env: Env, intent: QueryIntent): Promise<QueryResu
     return { rows: results ?? [], snapshot_id: snapshot, unit: intent.metric };
   }
 
-  // Named player. Loose match to an exact identity first (see resolveIdentity
-  // for why: web_name changes format across seasons -- "Fernandes" one year,
-  // "B.Fernandes" the next -- and second_name can carry more than a surname),
-  // then an exact join so a broad substring can never merge two people.
-  const identity = await resolveIdentity(env, intent.entity_id, intent.competition);
+  // Named player. Resolve aliases to one stable source identity first; broad
+  // matches that identify more than one person fail closed.
+  const identity = await resolvePlayerIdentity(env, intent.entity_id, intent.competition);
   if (!identity) return { rows: [], snapshot_id: snapshot, unit: intent.metric };
 
   const { results } = await env.DB.prepare(
-    `SELECT p.web_name AS label, ${column} AS value, p.position AS secondary
+    `SELECT p.web_name AS label, ${column} AS value, p.position AS secondary,
+            i.person_id AS route_key
        FROM player_season_stats s
        JOIN players p ON p.player_id = s.player_id
+       JOIN player_identities i ON i.player_id = p.player_id
       WHERE p.season = ? AND s.competition = ?
-        AND p.first_name = ? AND p.second_name = ?
+        AND i.person_id = ?
       LIMIT ?`,
   )
-    .bind(intent.season, intent.competition, identity.first_name, identity.second_name, limit)
+    .bind(intent.season, intent.competition, identity.person_id, limit)
     .all<ResultRow>();
   return { rows: results ?? [], snapshot_id: snapshot, unit: intent.metric };
 }
@@ -284,15 +287,19 @@ export interface SeasonRow {
   position: string;
 }
 
-interface Identity {
-  first_name: string;
-  second_name: string;
+export interface PlayerIdentity {
+  person_id: string;
   web_name: string; // most recent, for display
 }
 
+interface IdentityCandidate extends PlayerIdentity {
+  exact_match: number;
+}
+
 /**
- * Resolve a loose name typed by a user to ONE exact (first_name, second_name)
- * identity, or null.
+ * Resolve a source-namespaced person id or loose historical alias to one
+ * stable identity. Exact aliases win only when they identify one person;
+ * ambiguous exact or substring matches fail closed rather than guessing.
  *
  * Two real problems this works around, found by testing against actual data
  * rather than assumed:
@@ -303,44 +310,71 @@ interface Identity {
  *     one year, "B.Fernandes" the next (FPL disambiguates on the fly). An
  *     exact match on one season's web_name misses others.
  *
- * The fix is two queries, not one broad LIKE: first find loose matches (LIKE,
- * which can over-match), then collapse to the single most-recent identity and
- * use ITS exact (first_name, second_name) for the real query. This is what
- * stops two different people who happen to share a substring from being
- * merged onto one page -- a correctness bug worse than a missed match.
+ * Names remain display/search aliases only. Careers join through the stable
+ * source identity populated by the ingest pipeline.
  */
-async function resolveIdentity(env: Env, needle: string, competition: string): Promise<Identity | null> {
-  const n = needle.toLowerCase().trim();
+export async function resolvePlayerIdentity(
+  env: Env,
+  needle: string,
+  competition = "PL",
+): Promise<PlayerIdentity | null> {
+  const n = needle.toLowerCase().replaceAll(".", "").trim();
   if (n.length < 3) return null; // avoid pathological short-substring collisions
 
-  const row = await env.DB.prepare(
-    `SELECT p.first_name, p.second_name, p.web_name
+  const { results } = await env.DB.prepare(
+    `SELECT i.person_id, p.web_name,
+            CASE WHEN i.person_id = ?
+                   OR LOWER(replace(p.web_name, '.', '')) = ?
+                   OR LOWER(p.second_name) = ?
+                   OR LOWER(p.first_name || ' ' || p.second_name) = ?
+                 THEN 1 ELSE 0 END AS exact_match
        FROM players p
+       JOIN player_identities i ON i.player_id = p.player_id
        JOIN player_season_stats s ON s.player_id = p.player_id
       WHERE s.competition = ?
         AND (
-          LOWER(replace(p.web_name, '.', '')) LIKE '%' || ? || '%'
+          i.person_id = ?
+          OR LOWER(replace(p.web_name, '.', '')) LIKE '%' || ? || '%'
           OR LOWER(p.second_name) LIKE '%' || ? || '%'
           OR LOWER(p.first_name || ' ' || p.second_name) LIKE '%' || ? || '%'
         )
-      ORDER BY p.season DESC
-      LIMIT 1`,
+      ORDER BY p.season DESC`,
   )
-    .bind(competition, n, n, n)
-    .first<Identity>();
+    .bind(n, n, n, n, competition, n, n, n, n)
+    .all<IdentityCandidate>();
 
-  return row ?? null;
+  const rows = results ?? [];
+  const distinct = (candidates: IdentityCandidate[]) => {
+    const identities = new Map<string, PlayerIdentity>();
+    for (const candidate of candidates) {
+      if (!identities.has(candidate.person_id)) {
+        identities.set(candidate.person_id, {
+          person_id: candidate.person_id,
+          web_name: candidate.web_name,
+        });
+      }
+    }
+    return [...identities.values()];
+  };
+  const loose = distinct(rows);
+  const exactIds = new Set(
+    rows.filter((row) => Number(row.exact_match) === 1).map((row) => row.person_id),
+  );
+  if (exactIds.size > 0) {
+    if (exactIds.size !== 1) return null;
+    const [personId] = exactIds;
+    return loose.find((identity) => identity.person_id === personId) ?? null;
+  }
+  return loose.length === 1 ? loose[0]! : null;
 }
 
-/** One identity, every season it appears under. Exact join on
- *  (first_name, second_name) -- the loose matching already happened in
- *  resolveIdentity, so this cannot mix two different people. */
+/** One stable identity, every season it appears under. */
 export async function playerCareerRows(
   env: Env,
   needle: string,
   competition = "PL",
 ): Promise<SeasonRow[]> {
-  const identity = await resolveIdentity(env, needle, competition);
+  const identity = await resolvePlayerIdentity(env, needle, competition);
   if (!identity) return [];
 
   const { results } = await env.DB.prepare(
@@ -348,10 +382,11 @@ export async function playerCareerRows(
             p.position AS position
        FROM player_season_stats s
        JOIN players p ON p.player_id = s.player_id
-      WHERE s.competition = ? AND p.first_name = ? AND p.second_name = ?
+       JOIN player_identities i ON i.player_id = p.player_id
+      WHERE s.competition = ? AND i.person_id = ?
       ORDER BY p.season`,
   )
-    .bind(competition, identity.first_name, identity.second_name)
+    .bind(competition, identity.person_id)
     .all<SeasonRow>();
   return results ?? [];
 }
@@ -362,12 +397,13 @@ export async function resolvePlayerName(
   needle: string,
   competition = "PL",
 ): Promise<string | null> {
-  const identity = await resolveIdentity(env, needle, competition);
+  const identity = await resolvePlayerIdentity(env, needle, competition);
   return identity?.web_name ?? null;
 }
 
 export interface SquadRow {
   label: string;
+  route_key: string;
   secondary: string; // position
   goals: number;
   assists: number;
@@ -382,10 +418,11 @@ export async function seasonSquadRows(
   competition = "PL",
 ): Promise<SquadRow[]> {
   const stmt = env.DB.prepare(
-    `SELECT p.web_name AS label, p.position AS secondary,
+    `SELECT p.web_name AS label, i.person_id AS route_key, p.position AS secondary,
             s.goals, s.assists, s.minutes, s.points, s.xg
        FROM player_season_stats s
        JOIN players p ON p.player_id = s.player_id
+       JOIN player_identities i ON i.player_id = p.player_id
       WHERE p.season = ? AND s.competition = ?
       ORDER BY s.minutes DESC`,
   ).bind(season, competition);
