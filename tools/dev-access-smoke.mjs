@@ -13,6 +13,13 @@ const topKeys = ['ai_bound', 'coverage_cells', 'coverage_through', 'data_state',
   'last_successful_refresh_at', 'metrics', 'ok', 'snapshot_id', 'snapshot_prepared_at', 'sources'];
 const sourceKeys = ['coverage_through', 'id', 'retrieved_at', 'source_as_of', 'status'];
 const sourceIds = ['fpl', 'football_data_couk', 'openfootball_cl'];
+const modelStatuses = ['not_configured', 'accepted', 'provider_error', 'invalid_output',
+  'unsupported_intent'];
+const chatKeys = ['confidence', 'feasibility', 'model_status', 'next', 'notes',
+  'proposed_intent', 'source'];
+const intentKeys = ['competition', 'entity_id', 'entity_type', 'limit', 'metric', 'season', 'viz'];
+const feasibilityKeys = new Set(['attribution_asset', 'attribution_text', 'cost_class',
+  'nearest_alternative', 'reason', 'source_name', 'state']);
 const plain = (value) => value !== null && typeof value === 'object' && !Array.isArray(value) &&
   [Object.prototype, null].includes(Object.getPrototypeOf(value));
 const exactKeys = (value, expected) => {
@@ -58,6 +65,34 @@ export function validateHealthPayload(value) {
   return value.data_state;
 }
 
+/** Validate only the stable proposal boundary and return a finite model status.
+ * Provider text, notes, response bodies and proposed values never leave memory. */
+export function validateChatPayload(value) {
+  if (!exactKeys(value, chatKeys) || !exactKeys(value.proposed_intent, intentKeys) ||
+      !plain(value.feasibility) || Object.keys(value.feasibility).some((key) => !feasibilityKeys.has(key)) ||
+      !['rules', 'ai'].includes(value.source) || !modelStatuses.includes(value.model_status) ||
+      value.confidence !== 'high' || !Array.isArray(value.notes) ||
+      value.notes.some((note) => typeof note !== 'string') ||
+      value.next !== 'POST the proposed_intent to /api/query to execute it.') return null;
+  const intent = value.proposed_intent;
+  if (intent.metric !== 'goals' || intent.entity_type !== 'player' || intent.entity_id !== 'all' ||
+      intent.season !== '2024-25' || intent.competition !== 'PL' || intent.viz !== 'bar' ||
+      intent.limit !== 10) return null;
+  if ((value.source === 'ai') !== (value.model_status === 'accepted')) return null;
+  const expectedNotes = ['accepted', 'not_configured'].includes(value.model_status)
+    ? [] : [`AI proposal unavailable (${value.model_status}); using rules.`];
+  if (value.notes.length !== expectedNotes.length ||
+      value.notes.some((note, index) => note !== expectedNotes[index])) return null;
+  return value.model_status;
+}
+
+function validateUnsupportedPayload(value) {
+  return exactKeys(value, ['code', 'feasibility', 'proposed_intent', 'reason', 'rejected', 'suggestion']) &&
+    value.rejected === true && value.code === 'unsupported_semantics' &&
+    typeof value.reason === 'string' && typeof value.suggestion === 'string' &&
+    value.proposed_intent === null && value.feasibility === null;
+}
+
 export async function smoke(env, request = fetch) {
   const id = env.CF_ACCESS_CLIENT_ID;
   const secret = env.CF_ACCESS_CLIENT_SECRET;
@@ -69,12 +104,18 @@ export async function smoke(env, request = fetch) {
     { path: '/style.css', marker: 'font-family' },
     { path: '/en/ask', marker: 'Assists — 2023-24 PL', method: 'POST', body: 'q=Top+assists+2023-24' },
     { path: '/api/health', health: true },
+    { path: '/api/chat', chat: true, method: 'POST',
+      body: JSON.stringify({ question: 'Top goals 2024-25' }), contentType: 'application/json' },
+    { path: '/api/chat', unsupported: true, method: 'POST',
+      body: JSON.stringify({ question: 'Top goals per 90 2024-25' }), contentType: 'application/json' },
   ];
   const results = [];
   for (const check of cases) {
     const response = await request(origin + check.path, {
       method: check.method ?? 'GET', redirect: 'manual', signal: AbortSignal.timeout(15000),
-      headers: { ...headers, ...(check.body ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}) },
+      headers: { ...headers, ...(check.body ? {
+        'Content-Type': check.contentType ?? 'application/x-www-form-urlencoded',
+      } : {}) },
       ...(check.body ? { body: check.body } : {}),
     });
     const privateResponse = response.headers.get('cache-control')?.includes('no-store');
@@ -82,13 +123,27 @@ export async function smoke(env, request = fetch) {
     // health metadata. Only the finite current/degraded/invalid state may leave.
     const body = await response.text();
     let healthState = null;
+    let modelStatus = null;
+    let unsupported = false;
     if (check.health && /^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type') ?? '')) {
       try { healthState = validateHealthPayload(JSON.parse(body)); } catch { healthState = null; }
     }
-    const pass = response.status === 200 && Boolean(privateResponse) &&
-      (check.health ? healthState !== null : body.includes(check.marker));
+    if (check.chat && /^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type') ?? '')) {
+      try { modelStatus = validateChatPayload(JSON.parse(body)); } catch { modelStatus = null; }
+    }
+    if (check.unsupported && /^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type') ?? '')) {
+      try { unsupported = validateUnsupportedPayload(JSON.parse(body)); } catch { unsupported = false; }
+    }
+    const expectedStatus = check.unsupported ? 422 : 200;
+    const contentPass = check.health ? healthState !== null
+      : check.chat ? modelStatus !== null
+      : check.unsupported ? unsupported
+      : body.includes(check.marker);
+    const pass = response.status === expectedStatus && Boolean(privateResponse) && contentPass;
     results.push({ path: check.path, status: response.status, pass,
-      ...(check.health ? { health_state: pass ? healthState : 'invalid' } : {}) });
+      ...(check.health ? { health_state: pass ? healthState : 'invalid' } : {}),
+      ...(check.chat ? { model_status: pass ? modelStatus : 'invalid' } : {}),
+      ...(check.unsupported ? { gate_status: pass ? 'unsupported_semantics' : 'invalid' } : {}) });
   }
   return results;
 }
