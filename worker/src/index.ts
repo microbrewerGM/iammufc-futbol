@@ -28,6 +28,7 @@ import {
   playerCareerRows,
   resolvePlayerIdentity,
   runQuery,
+  seasonHistoryRows,
   seasonRecordRow,
   seasonSquadRows,
   type Env,
@@ -39,6 +40,7 @@ import { parseIntent, validateExecutionSupport, validateQuerySemantics } from ".
 import { LOCALES, type Locale, type LocaleCode } from "./core/locale";
 import { parseRuleBased, proposeWithAI, type Proposal } from "./core/parser";
 import { executeComparison, parseComparison } from "./core/comparison";
+import { buildSeasonComparison, eligibleLeagueSeasons } from "./core/season-comparison";
 import { withSecurityHeaders } from "./security/headers";
 import { accessGate } from "./security/auth";
 import { gateQuestion, type GateRejected } from "./security/askguard";
@@ -383,15 +385,18 @@ function registerLocaleRoutes(code: LocaleCode) {
 
   app.get(`${p}/season/:season`, async (c) => {
     const season = c.req.param("season");
+    const eligibleSeasons = eligibleLeagueSeasons(catalog, season);
     // Champions League record fetched alongside the league one. Returns null
     // for every season United did not enter it, which is the common case and
     // not an error -- seasonPageBody simply renders no European line.
-    const [squad, record, europeanRecord] = await Promise.all([
+    const [squad, record, europeanRecord, history] = await Promise.all([
       seasonSquadRows(c.env, season),
       seasonRecordRow(c.env, season),
       seasonRecordRow(c.env, season, "CL"),
+      seasonHistoryRows(c.env, eligibleSeasons),
     ]);
-    const body = seasonPageBody(season, squad, record, catalog, locale, europeanRecord);
+    const comparison = buildSeasonComparison(history, eligibleSeasons, catalog, code);
+    const body = seasonPageBody(season, squad, record, catalog, locale, europeanRecord, comparison);
     const res = html(
       page(body, {
         title: `${season}`,

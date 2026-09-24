@@ -68,7 +68,10 @@ export function page(body: string, opts: LayoutOptions): string {
 </head>
 <body>
 ${langToggle}
-<nav class="analysis-nav" aria-label="${locale.code === "es" ? "Análisis" : "Analysis"}"><a href="/${locale.code}/compare">${locale.code === "es" ? "Comparar por 90 minutos" : "Compare output per 90"}</a></nav>
+<nav class="analysis-nav" aria-label="${locale.code === "es" ? "Análisis" : "Analysis"}">
+<a href="/${locale.code}/compare">${locale.code === "es" ? "Comparar por 90 minutos" : "Compare output per 90"}</a>
+<a href="/${locale.code}/season/2025-26#team-seasons">${locale.code === "es" ? "Comparar temporadas" : "Compare league seasons"}</a>
+</nav>
 <main>
 ${body}
 </main>
