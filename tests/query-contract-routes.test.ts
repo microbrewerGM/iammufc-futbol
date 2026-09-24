@@ -156,6 +156,7 @@ describe("honest query contract routes", () => {
 
     const degradedEnv = {
       ...env,
+      AI_PROPOSALS_ENABLED: "true",
       AI: { run: async () => { throw new Error("synthetic-provider-detail"); } },
     } as unknown as Env;
     const degraded = await app.request(
@@ -173,9 +174,32 @@ describe("honest query contract routes", () => {
     expect(JSON.stringify(body)).not.toContain("synthetic-provider-detail");
   });
 
+  it("keeps live inference disabled after the candidate fails its release gate", async () => {
+    const run = vi.fn(async () => ({ response: JSON.stringify(base) }));
+    const response = await app.request(
+      "https://site.invalid/api/chat",
+      {
+        method: "POST",
+        headers: { ...auth, "content-type": "application/json" },
+        body: JSON.stringify({ question: "Top goals 2024-25" }),
+      },
+      { ...env, AI: { run } } as unknown as Env,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      source: "rules",
+      model_status: "disabled",
+      confidence: "high",
+      notes: ["AI proposal unavailable (disabled); using rules."],
+    });
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("does not let AI change a deterministically requested competition", async () => {
     const changedCompetitionEnv = {
       ...env,
+      AI_PROPOSALS_ENABLED: "true",
       AI: { run: async () => ({ response: JSON.stringify({ ...base, competition: "PL" }) }) },
     } as unknown as Env;
     const response = await app.request(
@@ -198,6 +222,7 @@ describe("honest query contract routes", () => {
   it("does not let AI replace an explicitly quoted player", async () => {
     const changedIdentityEnv = {
       ...env,
+      AI_PROPOSALS_ENABLED: "true",
       AI: {
         run: async () => ({
           response: JSON.stringify({ ...base, entity_id: "Guessed Player" }),
@@ -230,7 +255,7 @@ describe("honest query contract routes", () => {
         headers: { ...auth, "content-type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({ q: "Most assists" }).toString(),
       },
-      { ...env, AI: { run } } as unknown as Env,
+      { ...env, AI_PROPOSALS_ENABLED: "true", AI: { run } } as unknown as Env,
     );
     expect(response.status).toBe(200);
     expect(await response.text()).toContain("ambiguous and has not been run");
@@ -250,7 +275,7 @@ describe("honest query contract routes", () => {
         headers: { ...auth, "content-type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({ q: "Fernandes goals 2024-25" }).toString(),
       },
-      { ...env, AI: { run } } as unknown as Env,
+      { ...env, AI_PROPOSALS_ENABLED: "true", AI: { run } } as unknown as Env,
     );
     expect(response.status).toBe(200);
     expect(await response.text()).toContain("Player identity is ambiguous.");
@@ -267,7 +292,7 @@ describe("honest query contract routes", () => {
         headers: { ...auth, "content-type": "application/json" },
         body: JSON.stringify({ question: "Top goals per 90 2024-25" }),
       },
-      { ...env, AI: { run } } as unknown as Env,
+      { ...env, AI_PROPOSALS_ENABLED: "true", AI: { run } } as unknown as Env,
     );
     expect(response.status).toBe(422);
     expect(await response.json()).toMatchObject({

@@ -13,7 +13,7 @@ const topKeys = ['ai_bound', 'coverage_cells', 'coverage_through', 'data_state',
   'last_successful_refresh_at', 'metrics', 'ok', 'snapshot_id', 'snapshot_prepared_at', 'sources'];
 const sourceKeys = ['coverage_through', 'id', 'retrieved_at', 'source_as_of', 'status'];
 const sourceIds = ['fpl', 'football_data_couk', 'openfootball_cl'];
-const modelStatuses = ['not_configured', 'accepted', 'provider_error', 'invalid_output',
+const modelStatuses = ['not_configured', 'disabled', 'accepted', 'provider_error', 'invalid_output',
   'unsupported_intent'];
 const chatKeys = ['confidence', 'feasibility', 'model_status', 'next', 'notes',
   'proposed_intent', 'source'];
