@@ -41,6 +41,7 @@ export type RejectCode =
   | "too_long"
   | "unsafe_input"
   | "injection_attempt"
+  | "unsupported_semantics"
   | "not_mens_first_team"
   | "off_topic"
   | "not_statistical";
@@ -180,6 +181,16 @@ const INJECTION_PATTERNS: RegExp[] = [
   /\b(respond|reply|answer|output)\b[^.]{0,25}\b(only in|exclusively|instead)\b/i,
 ];
 
+/** Constraints the current QueryIntent cannot represent. Refuse them before
+ * the model can silently discard the requested qualifier. */
+const UNSUPPORTED_SEMANTIC_PATTERNS: RegExp[] = [
+  /(?:\b(?:per|por)[-\s]*90(?:\s+(?:minutes?|mins?|minutos?))?\b|\/\s*90\b)/i,
+  /\b(?:(?:only|among|solo|sólo)\s+(?:goalkeepers?|keepers?|midfielders?|defenders?|forwards?|porteros?|centrocampistas?|defensas?|delanteros?)|(?:goalkeepers?|keepers?|midfielders?|defenders?|forwards?|porteros?|centrocampistas?|defensas?|delanteros?)\s+(?:only|solo|sólo))\b/i,
+  /\b(?:with\s+)?(?:at\s+least|minimum)\s+\d+\s+(?:minutes?|mins?)\b/i,
+  /\bcon\s+al\s+menos\s+\d+\s+minutos?\b/i,
+  /\b(?:europa league|fa cup|league cup|carabao cup|domestic cup|copa doméstica)\b/i,
+];
+
 /**
  * C0/C1 control characters plus the Unicode bidirectional-override and
  * invisible-formatting characters. The bidi set matters specifically because
@@ -229,6 +240,16 @@ const COPY: Record<RejectCode, Record<LocaleCode, { reason: string; suggestion: 
       reason:
         "Eso se lee como una instrucción al sistema y no como una pregunta de fútbol, así que no se ejecutó.",
       suggestion: "Haz una pregunta estadística: quién anotó más en 2021-22",
+    },
+  },
+  unsupported_semantics: {
+    en: {
+      reason: "That question includes a filter or rate this Ask form cannot represent safely yet.",
+      suggestion: "Remove the position, minimum-minutes or per-90 qualifier and ask again.",
+    },
+    es: {
+      reason: "Esa pregunta incluye un filtro o una tasa que este formulario aún no puede representar con seguridad.",
+      suggestion: "Quita el filtro de posición, minutos mínimos o por 90 y vuelve a preguntar.",
     },
   },
   not_mens_first_team: {
@@ -326,6 +347,10 @@ export function gateQuestion(
   // Hostile text stops here and never reaches the model.
   if (INJECTION_PATTERNS.some((re) => re.test(question))) {
     return reject("injection_attempt", locale);
+  }
+
+  if (UNSUPPORTED_SEMANTIC_PATTERNS.some((re) => re.test(question))) {
+    return reject("unsupported_semantics", locale);
   }
 
   const text = question.toLowerCase();

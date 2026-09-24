@@ -19,7 +19,7 @@ vi.mock("../worker/src/core/db", async (original) => ({
   currentSnapshot: vi.fn(async () => "synthetic"),
   logDemand: vi.fn(async () => {}),
   enforceBudget: vi.fn(async () => true),
-  allPlayerNames: vi.fn(async () => new Set(["rashford"])),
+  allPlayerNames: vi.fn(async () => ["Rashford", "Fernandes", "Bruno Fernandes"]),
   runQuery: vi.fn(async (_env: unknown, intent: { entity_type: string }) => ({
     rows:
       intent.entity_type === "season"
@@ -144,6 +144,140 @@ describe("honest query contract routes", () => {
       expect(allPlayerNames).not.toHaveBeenCalled();
     },
   );
+
+  it("surfaces a finite model status on chat proposals", async () => {
+    const response = await post("/api/chat", { question: "Top goals 2024-25" });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      source: "rules",
+      model_status: "not_configured",
+      confidence: "high",
+    });
+
+    const degradedEnv = {
+      ...env,
+      AI: { run: async () => { throw new Error("synthetic-provider-detail"); } },
+    } as unknown as Env;
+    const degraded = await app.request(
+      "https://site.invalid/api/chat",
+      {
+        method: "POST",
+        headers: { ...auth, "content-type": "application/json" },
+        body: JSON.stringify({ question: "Top goals 2024-25" }),
+      },
+      degradedEnv,
+    );
+    const body = await degraded.json() as { model_status: string; notes: string[] };
+    expect(body.model_status).toBe("provider_error");
+    expect(body.notes).toContain("AI proposal unavailable (provider_error); using rules.");
+    expect(JSON.stringify(body)).not.toContain("synthetic-provider-detail");
+  });
+
+  it("does not let AI change a deterministically requested competition", async () => {
+    const changedCompetitionEnv = {
+      ...env,
+      AI: { run: async () => ({ response: JSON.stringify({ ...base, competition: "PL" }) }) },
+    } as unknown as Env;
+    const response = await app.request(
+      "https://site.invalid/api/chat",
+      {
+        method: "POST",
+        headers: { ...auth, "content-type": "application/json" },
+        body: JSON.stringify({ question: "Top goals 2024-25 Champions League" }),
+      },
+      changedCompetitionEnv,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      source: "rules",
+      model_status: "unsupported_intent",
+      proposed_intent: { competition: "CL" },
+    });
+  });
+
+  it("does not let AI replace an explicitly quoted player", async () => {
+    const changedIdentityEnv = {
+      ...env,
+      AI: {
+        run: async () => ({
+          response: JSON.stringify({ ...base, entity_id: "Guessed Player" }),
+        }),
+      },
+    } as unknown as Env;
+    const response = await app.request(
+      "https://site.invalid/api/chat",
+      {
+        method: "POST",
+        headers: { ...auth, "content-type": "application/json" },
+        body: JSON.stringify({ question: '\"Rashford\" goals 2024-25' }),
+      },
+      changedIdentityEnv,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      source: "rules",
+      model_status: "unsupported_intent",
+      proposed_intent: { entity_id: "Rashford" },
+    });
+  });
+
+  it("does not execute an ambiguous ask proposal", async () => {
+    const run = vi.fn(async () => ({ response: "{}" }));
+    const response = await app.request(
+      "https://site.invalid/en/ask",
+      {
+        method: "POST",
+        headers: { ...auth, "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ q: "Most assists" }).toString(),
+      },
+      { ...env, AI: { run } } as unknown as Env,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain("ambiguous and has not been run");
+    expect(currentSnapshot).not.toHaveBeenCalled();
+    expect(logDemand).not.toHaveBeenCalled();
+    expect(enforceBudget).not.toHaveBeenCalled();
+    expect(runQuery).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("does not let the model guess an overlapping player alias", async () => {
+    const run = vi.fn(async () => ({ response: JSON.stringify(base) }));
+    const response = await app.request(
+      "https://site.invalid/en/ask",
+      {
+        method: "POST",
+        headers: { ...auth, "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ q: "Fernandes goals 2024-25" }).toString(),
+      },
+      { ...env, AI: { run } } as unknown as Env,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain("Player identity is ambiguous.");
+    expect(run).not.toHaveBeenCalled();
+    expect(runQuery).not.toHaveBeenCalled();
+  });
+
+  it("refuses unsupported semantics before model inference", async () => {
+    const run = vi.fn(async () => ({ response: JSON.stringify(base) }));
+    const response = await app.request(
+      "https://site.invalid/api/chat",
+      {
+        method: "POST",
+        headers: { ...auth, "content-type": "application/json" },
+        body: JSON.stringify({ question: "Top goals per 90 2024-25" }),
+      },
+      { ...env, AI: { run } } as unknown as Env,
+    );
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({
+      rejected: true,
+      code: "unsupported_semantics",
+      proposed_intent: null,
+    });
+    expect(run).not.toHaveBeenCalled();
+    expect(runQuery).not.toHaveBeenCalled();
+  });
 
   it.each([
     "?viz=pie",

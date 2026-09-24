@@ -27,7 +27,22 @@ export interface Proposal {
   /** Shown to the user so the parse is visible and correctable, never implicit. */
   notes: string[];
   source: "rules" | "ai";
+  /** Finite, sanitized model outcome. Never contains provider text or input. */
+  model_status:
+    | "not_configured"
+    | "not_attempted_ambiguous"
+    | "accepted"
+    | "provider_error"
+    | "invalid_output"
+    | "unsupported_intent";
 }
+
+export type AiProposalResult =
+  | { proposal: Proposal; failure: null }
+  | {
+      proposal: null;
+      failure: "provider_error" | "invalid_output" | "unsupported_intent";
+    };
 
 const METRIC_SYNONYMS: Record<string, string[]> = {
   goals: ["goal", "goals", "scorer", "scorers", "scoring", "scored", "goles"],
@@ -90,6 +105,33 @@ function detectViz(text: string): VizType | null {
   return null;
 }
 
+function detectCompetition(text: string): string {
+  return /\b(champions league|champions|ucl|liga de campeones)\b/i.test(text) ? "CL" : "PL";
+}
+
+/** A short alias overlapping a longer known display name is not enough to
+ * choose a person. Full-name mentions and unique aliases remain usable. */
+export function hasAmbiguousPlayerReference(
+  question: string,
+  knownPlayerNames: readonly string[],
+): boolean {
+  // Quotes are the UI's explicit identity syntax. The executor still resolves
+  // the value against stable source identity and fails closed if it is not unique.
+  if (/"[^"]{3,}"|'[^']{3,}'/.test(question)) return false;
+  const text = question.toLowerCase();
+  const mentionedAliases = new Set<string>();
+  for (const name of knownPlayerNames) {
+    const normalized = name.toLowerCase().replaceAll(".", "").trim();
+    if (normalized.length < 4) continue;
+    const parts = normalized.split(/\s+/).filter((part) => part.length >= 4);
+    if (text.includes(normalized) || parts.some((part) => text.includes(part))) {
+      mentionedAliases.add(normalized);
+    }
+  }
+  if (mentionedAliases.size < 2) return false;
+  return ![...mentionedAliases].some((name) => name.includes(" ") && text.includes(name));
+}
+
 const RANKING_HINTS = [
   "top",
   "most",
@@ -139,7 +181,7 @@ export function parseRuleBased(question: string, catalog: Catalog): Proposal {
     entity_type: "player",
     entity_id: named ?? (asksForRanking || !named ? ALL_PLAYERS : named),
     season: season ?? allSeasons[0]!,
-    competition: "PL",
+    competition: detectCompetition(text),
     viz: viz ?? "bar",
     limit: 10,
   });
@@ -149,6 +191,7 @@ export function parseRuleBased(question: string, catalog: Catalog): Proposal {
     confidence: metric && season ? "high" : "low",
     notes,
     source: "rules",
+    model_status: "not_configured",
   };
 }
 
@@ -163,9 +206,10 @@ function buildPrompt(question: string, catalog: Catalog): string {
     "Respond with ONE JSON object and nothing else.",
     `Valid metric values: ${metrics}`,
     `Valid season values: ${seasons}`,
+    "Valid competition values: PL, CL",
     "Valid viz values: table, bar, line, shot_map, pass_map, heatmap",
     'Use entity_id "all" to rank every player; otherwise give the player name.',
-    'Shape: {"metric":"...","entity_type":"player","entity_id":"...","season":"YYYY-YY","viz":"..."}',
+    'Shape: {"metric":"...","entity_type":"player","entity_id":"...","season":"YYYY-YY","competition":"PL|CL","viz":"..."}',
     // Instructions come BEFORE the data, and the data is fenced. Neither is a
     // security boundary -- catalog validation of the output is -- but both cost
     // nothing and remove the trivial "the last line wins" failure.
@@ -180,7 +224,7 @@ export async function proposeWithAI(
   catalog: Catalog,
   ai: NonNullable<import("./db").Env["AI"]>,
   model: string,
-): Promise<Proposal | null> {
+): Promise<AiProposalResult> {
   try {
     const raw = (await ai.run(model, {
       messages: [
@@ -190,22 +234,36 @@ export async function proposeWithAI(
       max_tokens: 200,
     })) as { response?: string };
 
-    const text = raw?.response ?? "";
+    const text = raw?.response;
+    if (typeof text !== "string") return { proposal: null, failure: "invalid_output" };
     const match = text.match(/\{[\s\S]*\}/);
-    if (!match) return null;
+    if (!match) return { proposal: null, failure: "invalid_output" };
 
-    const parsed = parseIntent(JSON.parse(match[0]));
-    if (!parsed.ok || validateQuerySemantics(parsed.intent)) return null;
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(match[0]);
+    } catch {
+      return { proposal: null, failure: "invalid_output" };
+    }
+    const parsed = parseIntent(decoded);
+    if (!parsed.ok) return { proposal: null, failure: "invalid_output" };
+    if (validateQuerySemantics(parsed.intent)) {
+      return { proposal: null, failure: "unsupported_intent" };
+    }
 
     return {
-      intent: parsed.intent,
-      confidence: "high",
-      notes: [],
-      source: "ai",
+      proposal: {
+        intent: parsed.intent,
+        confidence: "high",
+        notes: [],
+        source: "ai",
+        model_status: "accepted",
+      },
+      failure: null,
     };
   } catch {
     // Any AI failure falls back to the rule-based path. The site never depends
     // on an inference call succeeding.
-    return null;
+    return { proposal: null, failure: "provider_error" };
   }
 }

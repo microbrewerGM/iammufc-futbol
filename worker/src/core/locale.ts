@@ -61,6 +61,7 @@ export interface Locale {
     parsedAsRules: string;
     parsedAsAi: string;
     assumptions: string;
+    clarificationRequired: string;
     dataHeading: string;
     metricCol: string;
     seasonCol: string;
@@ -140,6 +141,8 @@ const EN: Locale = {
     parsedAsRules: "Parsed as (rule-based)",
     parsedAsAi: "Parsed as (AI-assisted)",
     assumptions: "Assumptions:",
+    clarificationRequired:
+      "This proposal is ambiguous and has not been run. Add the missing metric or season, then ask again.",
     dataHeading: "Data",
     metricCol: "Metric",
     seasonCol: "Season",
@@ -222,6 +225,8 @@ const ES: Locale = {
     parsedAsRules: "Interpretado como (basado en reglas)",
     parsedAsAi: "Interpretado como (asistido por IA)",
     assumptions: "Suposiciones:",
+    clarificationRequired:
+      "Esta propuesta es ambigua y no se ha ejecutado. Añade la métrica o la temporada que falta y vuelve a preguntar.",
     dataHeading: "Datos",
     metricCol: "Métrica",
     seasonCol: "Temporada",

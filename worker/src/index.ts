@@ -38,7 +38,12 @@ import { Catalog, columnFeasibility, hasSubstance, type CompiledCatalog } from "
 import { artifactKey } from "./core/intent";
 import { parseIntent, validateExecutionSupport, validateQuerySemantics } from "./core/validate-intent";
 import { LOCALES, type Locale, type LocaleCode } from "./core/locale";
-import { parseRuleBased, proposeWithAI, type Proposal } from "./core/parser";
+import {
+  hasAmbiguousPlayerReference,
+  parseRuleBased,
+  proposeWithAI,
+  type Proposal,
+} from "./core/parser";
 import { executeComparison, parseComparison } from "./core/comparison";
 import { buildSeasonComparison, eligibleLeagueSeasons } from "./core/season-comparison";
 import { withSecurityHeaders } from "./security/headers";
@@ -92,15 +97,17 @@ app.post("/api/chat", async (c) => {
 
   // The gate runs before anything else touches the text -- including the
   // model. A rejected question costs zero inference.
-  const verdict = gateQuestion(question, "en", await allPlayerNames(c.env));
+  const playerNames = await allPlayerNames(c.env);
+  const verdict = gateQuestion(question, "en", playerNames);
   if (!verdict.allowed) return c.json(rejectionBody(verdict), 422);
 
-  const proposal = await propose(verdict.question, c.env);
+  const proposal = await propose(verdict.question, c.env, playerNames);
   const feasibility = catalog.checkFeasibility(proposal.intent);
 
   return c.json({
     proposed_intent: proposal.intent,
     source: proposal.source,
+    model_status: proposal.model_status,
     confidence: proposal.confidence,
     notes: proposal.notes,
     feasibility,
@@ -304,10 +311,16 @@ function registerLocaleRoutes(code: LocaleCode) {
     const question = String(form.get("q") ?? "").trim();
     if (!question) return c.redirect(p, 303);
 
-    const verdict = gateQuestion(question, locale.code, await allPlayerNames(c.env));
+    const playerNames = await allPlayerNames(c.env);
+    const verdict = gateQuestion(question, locale.code, playerNames);
     if (!verdict.allowed) return renderRejection(locale, verdict, question);
 
-    return renderChat(c, locale, await propose(verdict.question, c.env), verdict.question);
+    return renderChat(
+      c,
+      locale,
+      await propose(verdict.question, c.env, playerNames),
+      verdict.question,
+    );
   });
 
   /** Direct intent entry -- the "show this instead" path from a refusal. */
@@ -344,7 +357,13 @@ function registerLocaleRoutes(code: LocaleCode) {
     return renderChat(
       c,
       locale,
-      { intent, confidence: "high", notes: [], source: "rules" },
+      {
+        intent,
+        confidence: "high",
+        notes: [],
+        source: "rules",
+        model_status: "not_configured",
+      },
       null,
       `/q${qs}`,
     );
@@ -551,18 +570,64 @@ ${rejectionPanel(verdict, locale)}
   return html(page(body, { title: verdict.code, locale, unprefixedPath: "/" }));
 }
 
-async function propose(question: string, env: Env): Promise<Proposal> {
+async function propose(
+  question: string,
+  env: Env,
+  knownPlayerNames: readonly string[] = [],
+): Promise<Proposal> {
   // Rule-based always runs: it is the floor, and it makes the site fully usable
   // with no account, no network call, and no inference cost.
   const rules = parseRuleBased(question, catalog);
-  if (!env.AI) return rules;
+  const identityAmbiguous = hasAmbiguousPlayerReference(question, knownPlayerNames);
+  if (!env.AI) {
+    return identityAmbiguous
+      ? {
+          ...rules,
+          confidence: "low",
+          notes: [...rules.notes, "Player identity is ambiguous."],
+          model_status: "not_attempted_ambiguous",
+        }
+      : rules;
+  }
+
+  // The model may extract fields, but it must not invent a missing metric or
+  // season. Keep ambiguous input visible and require the user to correct it.
+  if (rules.confidence === "low" || identityAmbiguous) {
+    return {
+      ...rules,
+      confidence: "low",
+      notes: identityAmbiguous
+        ? [...rules.notes, "Player identity is ambiguous."]
+        : rules.notes,
+      model_status: "not_attempted_ambiguous",
+    };
+  }
 
   const ai = await proposeWithAI(question, catalog, env.AI, AI_MODEL);
-  if (!ai) return rules;
+  if (!ai.proposal) {
+    return {
+      ...rules,
+      model_status: ai.failure,
+      notes: [...rules.notes, `AI proposal unavailable (${ai.failure}); using rules.`],
+    };
+  }
 
   // Whatever the model returned is still only a proposal, and the catalog is
   // what decides whether it means anything.
-  return catalog.metric(ai.intent.metric) ? ai : rules;
+  const quotedIdentity = /"([^"]+)"|'([^']+)'/.exec(question);
+  const preservesDeterministicFields =
+    ai.proposal.intent.metric === rules.intent.metric
+    && ai.proposal.intent.season === rules.intent.season
+    && ai.proposal.intent.competition === rules.intent.competition
+    && ai.proposal.intent.viz === rules.intent.viz
+    && (!quotedIdentity || ai.proposal.intent.entity_id === rules.intent.entity_id);
+  return catalog.metric(ai.proposal.intent.metric) && preservesDeterministicFields
+    ? ai.proposal
+    : {
+        ...rules,
+        model_status: "unsupported_intent",
+        notes: [...rules.notes, "AI proposal unavailable (unsupported_intent); using rules."],
+      };
 }
 
 async function renderChat(
@@ -581,6 +646,20 @@ async function renderChat(
   const semanticIssue = validateQuerySemantics(parsed.intent);
   if (semanticIssue) return html(`Unsupported query field: ${semanticIssue.field}.`, 422);
   proposal = { ...proposal, intent: parsed.intent };
+  if (question !== null && proposal.confidence === "low") {
+    const body = `<h1>iammufc</h1>
+<div class="card">${chatForm(locale, question)}</div>
+${intentPanel(proposal, locale)}
+<div class="stop"><p><strong>${esc(locale.strings.clarificationRequired)}</strong></p></div>
+<p><a href="/${locale.code}">${esc(locale.strings.backToMatrix)}</a></p>`;
+    return html(
+      page(body, {
+        title: proposal.intent.metric,
+        locale,
+        unprefixedPath,
+      }),
+    );
+  }
   const snapshot = await currentSnapshot(c.env);
   const key = await artifactKey(proposal.intent, snapshot ?? "no-snapshot");
   const feasibility = catalog.checkFeasibility(proposal.intent, locale.code);
