@@ -47,7 +47,7 @@ export function comparisonPage(
               : "No comparable rows meet these requirements. Missing data is not zero."
         }</p>`;
   const body = `<h1>${title}</h1>
-    <p>${es ? "Totales de temporada FPL de jugadores identificados con Manchester United en la captura de la fuente. No se ha verificado que excluyan aportaciones en otros clubes tras un traspaso." : "FPL season totals for players listed with Manchester United in the source snapshot. Totals are not verified to exclude contributions at other clubs after a transfer."}</p>
+    <p>${es ? "Totales de la Premier League atribuidos solo a partidos en los que el jugador representó al Manchester United." : "Premier League totals attributed only to fixtures in which the player represented Manchester United."}</p>
     <form method="get" action="/${locale.code}/compare">
       <label for="season">${es ? "Temporada" : "Season"}</label><select name="season" id="season">${[...new Set([request.season, ...seasons])]
         .sort()

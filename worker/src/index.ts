@@ -26,7 +26,7 @@ import {
   enforceBudget,
   logDemand,
   playerCareerRows,
-  resolvePlayerName,
+  resolvePlayerIdentity,
   runQuery,
   seasonRecordRow,
   seasonSquadRows,
@@ -352,16 +352,18 @@ function registerLocaleRoutes(code: LocaleCode) {
     const nameParam = decodeURIComponent(c.req.param("name"));
     const seasonParam = c.req.param("season");
 
-    const displayName = (await resolvePlayerName(c.env, nameParam)) ?? nameParam;
-    const career = await playerCareerRows(c.env, nameParam);
+    const identity = await resolvePlayerIdentity(c.env, nameParam);
+    const displayName = identity?.web_name ?? nameParam;
+    const personKey = identity?.person_id ?? nameParam;
+    const career = identity ? await playerCareerRows(c.env, identity.person_id) : [];
     const season = seasonParam ?? career[career.length - 1]?.season ?? "2024-25";
 
-    const body = playerPageBody(displayName, season, career, catalog, locale);
+    const body = playerPageBody(displayName, season, career, catalog, locale, personKey);
     const res = html(
       page(body, {
         title: `${displayName}`,
         locale,
-        unprefixedPath: `/player/${encodeURIComponent(nameParam)}/${season}`,
+        unprefixedPath: `/player/${encodeURIComponent(personKey)}/${season}`,
         snapshotId: await currentSnapshot(c.env),
       }),
     );

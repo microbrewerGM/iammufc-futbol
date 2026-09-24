@@ -23,6 +23,8 @@ def players(snapshot_suffix: str, goals: int) -> pd.DataFrame:
         [
             {
                 "player_id": f"fpl:1:2024-25-{snapshot_suffix}",
+                "person_id": "fpl:code:101",
+                "source_person_code": 101,
                 "fpl_element": 1,
                 "season": "2024-25",
                 "web_name": "Test",
@@ -94,7 +96,14 @@ def execute_atomic(connection: sqlite3.Connection, sql: str) -> None:
 def state(connection: sqlite3.Connection) -> tuple[list[tuple], ...]:
     return tuple(
         connection.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall()
-        for table in ("players", "player_season_stats", "season_stats", "snapshots", "publication_runs")
+        for table in (
+            "players",
+            "player_identities",
+            "player_season_stats",
+            "season_stats",
+            "snapshots",
+            "publication_runs",
+        )
     )
 
 
@@ -114,6 +123,9 @@ def test_schema_is_idempotent_without_changing_existing_data() -> None:
     assert db.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='publication_runs'"
     ).fetchone() == ("publication_runs",)
+    assert db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='player_identities'"
+    ).fetchone() == ("player_identities",)
 
 
 def test_publication_insert_is_last_and_contains_no_transaction_control(

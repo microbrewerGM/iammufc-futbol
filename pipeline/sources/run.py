@@ -152,7 +152,7 @@ def player_frame_from_payloads(
     fixtures = _read_archive_csv(fixtures_raw)
 
     player_required = {
-        "id", "team", "team_code", "element_type", "web_name", "first_name",
+        "id", "code", "team", "team_code", "element_type", "web_name", "first_name",
         "second_name", "goals_scored", "assists", "minutes", "total_points",
     }
     gw_required = {
@@ -170,6 +170,9 @@ def player_frame_from_payloads(
             raise IngestError(f"{season}: {label} missing {sorted(missing)}")
 
     players["id"] = _integer_column(players, "id", season)
+    players["code"] = _integer_column(players, "code", season)
+    if (players["code"] <= 0).any():
+        raise IngestError(f"{season}: code must contain positive integers")
     players["team"] = _integer_column(players, "team", season)
     players["team_code"] = _integer_column(players, "team_code", season)
     gameweeks["element"] = _integer_column(gameweeks, "element", season)
@@ -344,7 +347,7 @@ def player_frame_from_payloads(
         )
 
     dimension_columns = [
-        "id", "element_type", "web_name", "first_name", "second_name"
+        "id", "code", "element_type", "web_name", "first_name", "second_name"
     ]
     combined = dimensions[dimension_columns].merge(
         totals, left_on="id", right_on="element", validate="one_to_one"
@@ -352,6 +355,7 @@ def player_frame_from_payloads(
     out = pd.DataFrame(
         {
             "fpl_element": combined["id"].astype(int),
+            "source_person_code": combined["code"].astype(int),
             "season": season,
             "web_name": combined["web_name"].astype(str),
             "first_name": combined["first_name"].astype(str),
@@ -366,6 +370,7 @@ def player_frame_from_payloads(
         }
     )
     out["player_id"] = "fpl:" + out["fpl_element"].astype(str) + ":" + season
+    out["person_id"] = "fpl:code:" + out["source_person_code"].astype(str)
     return out
 
 
@@ -512,7 +517,11 @@ def emit_seed(
     source_statuses: dict[str, dict[str, str | None]],
 ) -> None:
     now = utc_now()
-    counts = {"players": len(players), "season_stats": len(seasons)}
+    counts = {
+        "players": len(players),
+        "player_identities": len(players),
+        "season_stats": len(seasons),
+    }
 
     lines = [
         "-- GENERATED FILE -- DO NOT COMMIT (gitignored).",
@@ -521,6 +530,7 @@ def emit_seed(
         f"-- generated: {now}",
         "",
         "DELETE FROM player_season_stats;",
+        "DELETE FROM player_identities;",
         "DELETE FROM players;",
         "DELETE FROM season_stats;",
         "DELETE FROM snapshots;",
@@ -539,6 +549,15 @@ def emit_seed(
             f"{sql_str(r['player_id'])}, {int(r['fpl_element'])}, {sql_str(r['season'])}, "
             f"{sql_str(r['web_name'])}, {sql_str(r['first_name'])}, "
             f"{sql_str(r['second_name'])}, {sql_str(r['position'])}, {sql_str(r['team'])});"
+        )
+    lines.append("")
+
+    for _, r in players.iterrows():
+        lines.append(
+            "INSERT INTO player_identities (player_id, person_id, source_id, "
+            "source_person_code, season) VALUES ("
+            f"{sql_str(r['player_id'])}, {sql_str(r['person_id'])}, 'fpl', "
+            f"{int(r['source_person_code'])}, {sql_str(r['season'])});"
         )
     lines.append("")
 

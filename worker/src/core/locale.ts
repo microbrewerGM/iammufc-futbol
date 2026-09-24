@@ -70,6 +70,10 @@ export interface Locale {
     fullSquadFor: (season: string) => string;
     artifactNote: string;
     careerRecordFor: (season: string) => string;
+    goalsPer90Col: string;
+    assistsPer90Col: string;
+    careerRateExplainer: string;
+    careerTableLabel: string;
     dashExplainer: string;
     squadHeading: (season: string) => string;
     leagueRecord: (p: number, w: number, d: number, l: number, gf: number, ga: number) => string;
@@ -131,9 +135,14 @@ const EN: Locale = {
     backToMatrix: "Back to the coverage matrix",
     fullSquadFor: (s) => `Full squad for ${s}`,
     artifactNote: "identical questions produce this same key.",
-    careerRecordFor: (s) => `Career record across every season we hold. Current: ${s}.`,
+    careerRecordFor: (s) => `Manchester United output by season. Selected: ${s}.`,
+    goalsPer90Col: "Goals / 90",
+    assistsPer90Col: "Assists / 90",
+    careerRateExplainer:
+      "Per 90 = 90 × total ÷ minutes. A dash means a value is unavailable; missing data is not zero.",
+    careerTableLabel: "Manchester United player output by season",
     dashExplainer:
-      "– means no source for that season, or (for xG/progressive passes) a source we hold but may not republish. Hover a dash for the reason.",
+      "A dash means no source for that season, or a source value that is unavailable for publication.",
     squadHeading: (s) => `Squad — ${s}`,
     leagueRecord: (p, w, d, l, gf, ga) =>
       `League record: ${p} played, ${w}W ${d}D ${l}L, ${gf}–${ga} goals.`,
@@ -195,9 +204,14 @@ const ES: Locale = {
     backToMatrix: "Volver a la matriz de cobertura",
     fullSquadFor: (s) => `Plantilla completa de ${s}`,
     artifactNote: "preguntas idénticas producen esta misma clave.",
-    careerRecordFor: (s) => `Trayectoria en cada temporada disponible. Actual: ${s}.`,
+    careerRecordFor: (s) => `Producción del Manchester United por temporada. Seleccionada: ${s}.`,
+    goalsPer90Col: "Goles / 90",
+    assistsPer90Col: "Asistencias / 90",
+    careerRateExplainer:
+      "Por 90 = 90 × total ÷ minutos. Un guion significa que un valor no está disponible; los datos ausentes no son cero.",
+    careerTableLabel: "Producción del jugador del Manchester United por temporada",
     dashExplainer:
-      "– significa que no hay fuente para esa temporada, o (para xG/pases progresivos) una fuente que tenemos pero no podemos republicar. Pasa el cursor sobre el guion para ver el motivo.",
+      "Un guion significa que no hay fuente para esa temporada, o que un valor no está disponible para publicación.",
     squadHeading: (s) => `Plantilla — ${s}`,
     leagueRecord: (p, w, d, l, gf, ga) =>
       `Récord en liga: ${p} jugados, ${w}G ${d}E ${l}P, ${gf}–${ga} goles.`,

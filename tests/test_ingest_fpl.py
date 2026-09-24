@@ -17,6 +17,7 @@ def players() -> bytes:
         [
             {
                 "id": 1,
+                "code": 101,
                 "team": 10,
                 "team_code": 1,
                 "element_type": 3,
@@ -30,6 +31,7 @@ def players() -> bytes:
             },
             {
                 "id": 2,
+                "code": 202,
                 "team": 20,
                 "team_code": 20,
                 "element_type": 4,
@@ -116,8 +118,25 @@ def test_fixture_attribution_keeps_only_united_output_and_includes_departure():
     assert result.loc[1, ["goals", "assists", "minutes", "points"]].tolist() == [1, 1, 180, 12]
     assert result.loc[2, ["goals", "assists", "minutes", "points"]].tolist() == [1, 0, 90, 6]
     assert result.loc[2, "web_name"] == "Moved"
+    assert result.loc[1, "person_id"] == "fpl:code:101"
+    assert result.loc[2, "source_person_code"] == 202
     assert result["team"].eq("Manchester United").all()
     assert result["xg"].isna().all()
+
+
+def test_missing_or_nonpositive_stable_person_code_fails_closed():
+    missing = pd.read_csv(io.BytesIO(players())).drop(columns=["code"])
+    with pytest.raises(run.IngestError, match="missing .*code"):
+        run.player_frame_from_payloads(
+            "2021-22", csv_bytes(missing.to_dict("records")), gameweeks(), fixtures()
+        )
+
+    invalid = pd.read_csv(io.BytesIO(players()))
+    invalid.loc[0, "code"] = 0
+    with pytest.raises(run.IngestError, match="code must contain positive integers"):
+        run.player_frame_from_payloads(
+            "2021-22", csv_bytes(invalid.to_dict("records")), gameweeks(), fixtures()
+        )
 
 
 def test_fixture_attribution_supports_legacy_rows_without_explicit_team():

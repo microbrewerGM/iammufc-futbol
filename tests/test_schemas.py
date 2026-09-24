@@ -14,6 +14,8 @@ from pipeline.sources.schemas import validate_players, validate_season_stats
 
 VALID_PLAYER = {
     "player_id": "fpl:1:2024-25",
+    "person_id": "fpl:code:101",
+    "source_person_code": 101,
     "fpl_element": 1,
     "season": "2024-25",
     "web_name": "Fernandes",
@@ -101,6 +103,23 @@ def test_malformed_season_string_rejected():
 
 def test_duplicate_player_id_rejected():
     df = pd.concat([players_df(), players_df()], ignore_index=True)
+    with pytest.raises(pandera.errors.SchemaErrors):
+        validate_players(df)
+
+
+def test_nonpositive_source_person_code_rejected():
+    with pytest.raises(pandera.errors.SchemaErrors):
+        validate_players(players_df(source_person_code=0, person_id="fpl:code:0"))
+
+
+def test_person_id_must_match_source_person_code():
+    with pytest.raises(pandera.errors.SchemaErrors):
+        validate_players(players_df(source_person_code=101, person_id="fpl:code:202"))
+
+
+def test_duplicate_person_season_rejected_even_when_player_ids_differ():
+    other = players_df(player_id="fpl:2:2024-25", fpl_element=2)
+    df = pd.concat([players_df(), other], ignore_index=True)
     with pytest.raises(pandera.errors.SchemaErrors):
         validate_players(df)
 

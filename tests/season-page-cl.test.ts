@@ -19,7 +19,7 @@ import compiled from "../worker/src/generated/catalog.json" with { type: "json" 
 const catalog = new Catalog(compiled as unknown as CompiledCatalog);
 
 const squad = [
-  { label: "B.Fernandes", secondary: "MF", goals: 8, assists: 6, minutes: 3017, points: 174, xg: 9.93 },
+  { label: "B.Fernandes", route_key: "fpl:code:101", secondary: "MF", goals: 8, assists: 6, minutes: 3017, points: 174, xg: 9.93 },
 ];
 
 const plRecord = {
@@ -61,6 +61,7 @@ describe("season page — Champions League record", () => {
     expect(html).toContain("Champions League: 10 played");
     expect(html).toContain("4W 2D 4L");
     expect(html).toContain("13–15 goals");
+    expect(html).toContain("/player/fpl%3Acode%3A101/2018-19");
   });
 
   it("renders the line for a public-domain source that mandates no credit", () => {

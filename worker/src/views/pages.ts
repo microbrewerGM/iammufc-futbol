@@ -11,6 +11,7 @@ import { columnFeasibility, type Catalog, type FeasibilityResult } from "../core
 import type { QueryIntent } from "../core/intent";
 import { formatNumber, metricLabel, positionLabel, type Locale } from "../core/locale";
 import type { Proposal } from "../core/parser";
+import { per90 } from "../core/rates";
 import type { GateRejected } from "../security/askguard";
 import { esc } from "./layout";
 
@@ -173,7 +174,7 @@ function dataTable(
   const body = rows
     .map(
       (r) =>
-        `<tr><td><a href="${base(locale)}/player/${encodeURIComponent(r.label)}/${esc(season)}">${esc(r.label)}</a></td>` +
+        `<tr><td><a href="${base(locale)}/player/${encodeURIComponent(r.route_key ?? r.label)}/${esc(season)}">${esc(r.label)}</a></td>` +
         `<td>${esc(positionLabel(r.secondary ?? "", locale.code))}</td>` +
         `<td class="num">${esc(fmt(r.value))}</td></tr>`,
     )
@@ -291,6 +292,10 @@ ${intent.entity_type === "season" ? seasonDataTable(rows, label, decimals, local
 
 const METRIC_ORDER = ["goals", "assists", "minutes", "points", "xg"] as const;
 
+function isExecutable(result: FeasibilityResult | undefined): boolean {
+  return result?.state === "computable_now_queued" || result?.state === "available";
+}
+
 function metricHeadCells(catalog: Catalog, feas: Map<string, FeasibilityResult>, locale: Locale): string {
   return METRIC_ORDER.map((id) => {
     if (!catalog.metric(id)) return "";
@@ -306,17 +311,67 @@ function metricValueCells(
   values: Partial<Record<(typeof METRIC_ORDER)[number], number | null>>,
   locale: Locale,
 ): string {
-  return METRIC_ORDER.map((id) => {
-    const m = catalog.metric(id);
-    if (!m) return "";
-    const f = feas.get(id);
-    const ok = f?.state === "computable_now_queued" || f?.state === "available";
-    if (!ok) {
-      const why = f?.state === "no_rights" ? locale.strings.legendNoRights : locale.strings.legendNoSource;
-      return `<td class="num no" title="${esc(f?.reason ?? why)}">–</td>`;
-    }
-    return `<td class="num">${esc(formatNumber(values[id] ?? null, m.decimals, locale.code))}</td>`;
-  }).join("");
+  return METRIC_ORDER.map((id) => metricValueCell(catalog, feas, values, id, locale)).join("");
+}
+
+function metricValueCell(
+  catalog: Catalog,
+  feas: Map<string, FeasibilityResult>,
+  values: Partial<Record<(typeof METRIC_ORDER)[number], number | null>>,
+  id: (typeof METRIC_ORDER)[number],
+  locale: Locale,
+): string {
+  const metric = catalog.metric(id);
+  if (!metric) return "";
+  const result = feas.get(id);
+  const executable = result?.state === "computable_now_queued" || result?.state === "available";
+  if (!executable) {
+    const why = result?.state === "no_rights" ? locale.strings.legendNoRights : locale.strings.legendNoSource;
+    return `<td class="num no" title="${esc(result?.reason ?? why)}">–</td>`;
+  }
+  return `<td class="num">${esc(formatNumber(values[id] ?? null, metric.decimals, locale.code))}</td>`;
+}
+
+function rateValueCell(
+  feas: Map<string, FeasibilityResult>,
+  metric: "goals" | "assists",
+  total: number | null,
+  minutes: number | null,
+  locale: Locale,
+): string {
+  const numerator = feas.get(metric);
+  const denominator = feas.get("minutes");
+  const dependencies = [numerator, denominator];
+  const executable = dependencies.every(isExecutable);
+  const value = executable ? per90(total, minutes) : null;
+  if (value === null) {
+    const reason = !executable
+      ? dependencies.find((result) => !isExecutable(result))?.reason ?? locale.strings.legendNoSource
+      : locale.strings.careerRateExplainer;
+    return `<td class="num no" title="${esc(reason)}">–</td>`;
+  }
+  return `<td class="num">${esc(formatNumber(value, 2, locale.code))}</td>`;
+}
+
+function careerHeadCells(
+  catalog: Catalog,
+  locale: Locale,
+): string {
+  const metricHead = (id: (typeof METRIC_ORDER)[number]) => {
+    const metric = catalog.metric(id);
+    if (!metric) return "";
+    return `<th class="num">${esc(metricLabel(catalog, id, locale.code))}</th>`;
+  };
+  const rateHead = (label: string) => `<th class="num">${esc(label)}</th>`;
+  return [
+    metricHead("goals"),
+    rateHead(locale.strings.goalsPer90Col),
+    metricHead("assists"),
+    rateHead(locale.strings.assistsPer90Col),
+    metricHead("minutes"),
+    metricHead("points"),
+    metricHead("xg"),
+  ].join("");
 }
 
 export function playerPageBody(
@@ -325,6 +380,7 @@ export function playerPageBody(
   career: SeasonRow[],
   catalog: Catalog,
   locale: Locale,
+  personKey = displayName,
 ): string {
   const t = locale.strings;
   if (career.length === 0) {
@@ -350,22 +406,31 @@ export function playerPageBody(
   const rows = career
     .map((r) => {
       const feas = columnFeasibility(catalog, "player", r.season, "PL", locale.code);
-      const cells = metricValueCells(catalog, feas, r, locale);
+      const cells = [
+        metricValueCell(catalog, feas, r, "goals", locale),
+        rateValueCell(feas, "goals", r.goals, r.minutes, locale),
+        metricValueCell(catalog, feas, r, "assists", locale),
+        rateValueCell(feas, "assists", r.assists, r.minutes, locale),
+        metricValueCell(catalog, feas, r, "minutes", locale),
+        metricValueCell(catalog, feas, r, "points", locale),
+        metricValueCell(catalog, feas, r, "xg", locale),
+      ].join("");
       const here = r.season === current.season ? ' class="current"' : "";
-      return `<tr${here}><td><a href="${base(locale)}/player/${encodeURIComponent(displayName)}/${esc(r.season)}">${esc(r.season)}</a></td>${cells}<td>${esc(positionLabel(r.position, locale.code))}</td></tr>`;
+      return `<tr${here}><td><a${r.season === current.season ? ' aria-current="page"' : ""} href="${base(locale)}/player/${encodeURIComponent(personKey)}/${esc(r.season)}">${esc(r.season)}</a></td>${cells}<td>${esc(positionLabel(r.position, locale.code))}</td></tr>`;
     })
     .join("");
 
   const headFeas = columnFeasibility(catalog, "player", current.season, "PL", locale.code);
-  const head = metricHeadCells(catalog, headFeas, locale);
+  const head = careerHeadCells(catalog, locale);
   const attribution = headFeas.get("goals")?.attribution_text;
 
   return `<h1>${esc(displayName)}</h1>
 <p class="tagline">${esc(t.careerRecordFor(current.season))}</p>
-<table>
+<div class="career-table" tabindex="0" role="region" aria-label="${esc(t.careerTableLabel)}"><table>
 <thead><tr><th>${esc(t.seasonCol)}</th>${head}<th>${esc(t.posCol)}</th></tr></thead>
 <tbody>${rows}</tbody>
-</table>
+</table></div>
+<p class="tagline">${esc(t.careerRateExplainer)}</p>
 <p class="tagline">${esc(t.dashExplainer)}</p>
 ${attribution ? `<p class="tagline">${esc(attribution)}</p>` : ""}
 <p><a href="${base(locale)}/">${esc(t.backToMatrix)}</a></p>`;
@@ -398,7 +463,7 @@ ${recordLine}
   const rows = squad
     .map(
       (p) =>
-        `<tr><td><a href="${base(locale)}/player/${encodeURIComponent(p.label)}/${esc(season)}">${esc(p.label)}</a></td>` +
+        `<tr><td><a href="${base(locale)}/player/${encodeURIComponent(p.route_key)}/${esc(season)}">${esc(p.label)}</a></td>` +
         `${metricValueCells(catalog, feas, p, locale)}<td>${esc(positionLabel(p.secondary, locale.code))}</td></tr>`,
     )
     .join("");

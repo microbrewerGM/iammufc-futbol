@@ -138,5 +138,7 @@ describe("per-90 comparison", () => {
     expect(body).toContain('name="min_minutes"');
     expect(body).toContain("450");
     expect(body).toContain("min_minutes=450");
+    expect(body).toContain("atribuidos solo a partidos");
+    expect(body).not.toContain("No se ha verificado");
   });
 });

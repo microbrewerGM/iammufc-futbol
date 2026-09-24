@@ -27,6 +27,24 @@ CREATE TABLE IF NOT EXISTS players (
 CREATE INDEX IF NOT EXISTS idx_players_season ON players(season);
 CREATE INDEX IF NOT EXISTS idx_players_web_name ON players(web_name);
 
+-- Stable source identity across seasons. Keep players.player_id season-scoped:
+-- FPL element ids change between seasons and remain the correct fact key.
+-- This additive mapping makes mixed-version deploys and rollback safe: an old
+-- Worker ignores it, while the new Worker never falls back to name joining.
+CREATE TABLE IF NOT EXISTS player_identities (
+  player_id          TEXT PRIMARY KEY,
+  person_id          TEXT NOT NULL, -- source-namespaced: "fpl:code:<code>"
+  source_id          TEXT NOT NULL CHECK (source_id = 'fpl'),
+  source_person_code INTEGER NOT NULL CHECK (source_person_code > 0),
+  season             TEXT NOT NULL,
+  FOREIGN KEY (player_id) REFERENCES players(player_id) ON DELETE CASCADE,
+  UNIQUE (person_id, season),
+  UNIQUE (source_id, source_person_code, season)
+);
+
+CREATE INDEX IF NOT EXISTS idx_player_identities_person
+  ON player_identities(person_id);
+
 CREATE TABLE IF NOT EXISTS player_season_stats (
   player_id     TEXT NOT NULL,
   season        TEXT NOT NULL,
