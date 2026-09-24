@@ -43,6 +43,9 @@
           "ACCESS_OWNER_EMAILS"
         ]
       },
+      // Dev-only P9 candidate evaluation. This is non-sensitive configuration;
+      // remove or set false if the 1B candidate fails the corrected live gate.
+      "vars": { "AI_PROPOSALS_ENABLED": "true" },
       "d1_databases": [
         {
           "binding": "DB",
