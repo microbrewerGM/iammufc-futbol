@@ -590,6 +590,19 @@ async function propose(
       : rules;
   }
 
+  if (env.AI_PROPOSALS_ENABLED !== "true") {
+    return {
+      ...rules,
+      confidence: identityAmbiguous ? "low" : rules.confidence,
+      notes: [
+        ...rules.notes,
+        ...(identityAmbiguous ? ["Player identity is ambiguous."] : []),
+        "AI proposal unavailable (disabled); using rules.",
+      ],
+      model_status: "disabled",
+    };
+  }
+
   // The model may extract fields, but it must not invent a missing metric or
   // season. Keep ambiguous input visible and require the user to correct it.
   if (rules.confidence === "low" || identityAmbiguous) {

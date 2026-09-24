@@ -30,6 +30,7 @@ export interface Proposal {
   /** Finite, sanitized model outcome. Never contains provider text or input. */
   model_status:
     | "not_configured"
+    | "disabled"
     | "not_attempted_ambiguous"
     | "accepted"
     | "provider_error"

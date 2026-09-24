@@ -19,6 +19,8 @@ export interface Env {
   /** Optional exact service client IDs; absent disables machine identities. */
   ACCESS_SERVICE_CLIENT_IDS?: string;
   AI?: { run: (model: string, input: unknown) => Promise<unknown> };
+  /** Explicit opt-in after a candidate passes evaluation; absent keeps rules-only. */
+  AI_PROPOSALS_ENABLED?: string;
 }
 
 /** Metric id -> physical column. A fixed map is what makes the metric name

@@ -68,6 +68,8 @@ test('chat validator accepts finite model outcomes and rejects drift', () => {
     model_status: 'provider_error',
     notes: ['AI proposal unavailable (provider_error); using rules.'] }), 'provider_error');
   assert.equal(validateChatPayload({ ...validChat, model_status: 'private-provider-text' }), null);
+  assert.equal(validateChatPayload({ ...validChat, source: 'rules', model_status: 'disabled',
+    notes: ['AI proposal unavailable (disabled); using rules.'] }), 'disabled');
   assert.equal(validateChatPayload({ ...validChat, provider_exception: 'private' }), null);
   assert.equal(validateChatPayload({ ...validChat, notes: ['private-provider-text'] }), null);
   assert.equal(validateChatPayload({ ...validChat,
