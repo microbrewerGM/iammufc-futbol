@@ -12,6 +12,7 @@ import type { QueryIntent } from "../core/intent";
 import { formatNumber, metricLabel, positionLabel, type Locale } from "../core/locale";
 import type { Proposal } from "../core/parser";
 import { per90 } from "../core/rates";
+import type { SeasonComparison } from "../core/season-comparison";
 import type { GateRejected } from "../security/askguard";
 import { esc } from "./layout";
 
@@ -443,14 +444,17 @@ export function seasonPageBody(
   catalog: Catalog,
   locale: Locale,
   europeanRecord: SeasonRecord | null = null,
+  comparison: SeasonComparison | null = null,
 ): string {
   const t = locale.strings;
+  const comparisonMarkup = teamSeasonComparison(season, comparison, locale);
   if (squad.length === 0) {
     const recordLine = record
       ? `<p class="tagline">${esc(t.leagueRecord(record.played, record.won, record.drawn, record.lost, record.goals, record.goals_against))}</p>`
       : `<p class="note">${esc(t.noSeasonRecord(season))}</p>`;
     return `<h1>${esc(season)}</h1>
 ${recordLine}
+${comparisonMarkup}
 <div class="stop">
 <p class="state">no_data</p>
 <p><strong>${esc(t.noSquadData(season))}</strong></p>
@@ -511,6 +515,7 @@ ${recordLine}
   return `<h1>${esc(t.squadHeading(season))}</h1>
 ${recordLine}
 ${europeanLine}
+${comparisonMarkup}
 <table>
 <thead><tr><th>${esc(t.playerCol)}</th>${head}<th>${esc(t.posCol)}</th></tr></thead>
 <tbody>${rows}</tbody>
@@ -518,6 +523,36 @@ ${europeanLine}
 ${attribution ? `<p class="tagline">${esc(attribution)}</p>` : ""}
 ${clAttribution ? `<p class="tagline">${esc(clAttribution)}</p>` : ""}
 <p><a href="${base(locale)}/">${esc(t.backToMatrix)}</a></p>`;
+}
+
+function teamSeasonComparison(
+  selectedSeason: string,
+  comparison: SeasonComparison | null,
+  locale: Locale,
+): string {
+  const t = locale.strings;
+  if (!comparison?.ok) {
+    return comparison
+      ? `<section aria-labelledby="team-seasons"><h2 id="team-seasons">${esc(t.teamSeasonsHeading)}</h2><p class="note">${esc(t.teamSeasonsUnavailable)}</p></section>`
+      : "";
+  }
+  const rows = comparison.rows.map((row) => {
+    const selected = row.season === selectedSeason;
+    const partial = row.partial ? ` <span class="partial">${esc(t.partialLabel)}</span>` : "";
+    return `<tr${selected ? ' class="current"' : ""}><th scope="row"><a${selected ? ' aria-current="page"' : ""} href="${base(locale)}/season/${esc(row.season)}">${esc(row.season)}</a>${partial}</th>` +
+      `<td class="num">${row.played}</td><td class="num">${row.league_points}</td>` +
+      `<td class="num">${esc(formatNumber(row.points_per_match, 2, locale.code))}</td>` +
+      `<td class="num">${row.goals}</td><td class="num">${esc(formatNumber(row.goals_per_match, 2, locale.code))}</td></tr>`;
+  }).join("");
+  return `<section aria-labelledby="team-seasons"><h2 id="team-seasons">${esc(t.teamSeasonsHeading)}</h2>
+<p class="tagline">${esc(t.teamSeasonsIntro)}</p>
+<div class="team-season-table" tabindex="0" role="region" aria-label="${esc(t.teamSeasonsTableLabel)}"><table>
+<caption class="sr-only">${esc(t.teamSeasonsTableLabel)}</caption>
+<thead><tr><th scope="col">${esc(t.seasonCol)}</th><th scope="col" class="num">${esc(t.playedCol)}</th><th scope="col" class="num">${esc(t.leaguePointsCol)}</th><th scope="col" class="num">${esc(t.pointsPerMatchCol)}</th><th scope="col" class="num">${esc(t.goalsForCol)}</th><th scope="col" class="num">${esc(t.goalsPerMatchCol)}</th></tr></thead>
+<tbody>${rows}</tbody></table></div>
+<p class="tagline">${esc(t.teamSeasonsExplainer)}</p>
+<p class="tagline">${esc(t.teamSeasonsSource(comparison.sourceName))}</p>
+${comparison.attribution ? `<p class="tagline">${esc(comparison.attribution)}</p>` : ""}</section>`;
 }
 
 export function homeBody(

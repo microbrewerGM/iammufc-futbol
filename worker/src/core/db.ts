@@ -440,6 +440,26 @@ export interface SeasonRecord {
   goals_against: number;
 }
 
+export interface SeasonHistoryRecord extends SeasonRecord {
+  snapshot_id: string;
+}
+
+export async function seasonHistoryRows(
+  env: Env,
+  seasons: readonly string[],
+  competition = "PL",
+): Promise<SeasonHistoryRecord[]> {
+  if (seasons.length === 0) return [];
+  const placeholders = seasons.map(() => "?").join(", ");
+  const { results } = await env.DB.prepare(
+    `SELECT season, played, won, drawn, lost, goals, goals_against, snapshot_id
+       FROM season_stats
+      WHERE competition = ? AND season IN (${placeholders})
+      ORDER BY season DESC`,
+  ).bind(competition, ...seasons).all<SeasonHistoryRecord>();
+  return results ?? [];
+}
+
 export async function seasonRecordRow(
   env: Env,
   season: string,

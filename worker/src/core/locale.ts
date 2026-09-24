@@ -76,6 +76,18 @@ export interface Locale {
     careerTableLabel: string;
     dashExplainer: string;
     squadHeading: (season: string) => string;
+    teamSeasonsHeading: string;
+    teamSeasonsIntro: string;
+    teamSeasonsTableLabel: string;
+    playedCol: string;
+    leaguePointsCol: string;
+    pointsPerMatchCol: string;
+    goalsForCol: string;
+    goalsPerMatchCol: string;
+    partialLabel: string;
+    teamSeasonsExplainer: string;
+    teamSeasonsSource: (source: string) => string;
+    teamSeasonsUnavailable: string;
     leagueRecord: (p: number, w: number, d: number, l: number, gf: number, ga: number) => string;
     /** Champions League season record. Separate string from leagueRecord, not a
      *  parameterised competition name: "played/won/drawn/lost" reads naturally
@@ -144,6 +156,18 @@ const EN: Locale = {
     dashExplainer:
       "A dash means no source for that season, or a source value that is unavailable for publication.",
     squadHeading: (s) => `Squad — ${s}`,
+    teamSeasonsHeading: "League season comparison",
+    teamSeasonsIntro: "The selected season and earlier covered Premier League seasons.",
+    teamSeasonsTableLabel: "Manchester United Premier League seasons",
+    playedCol: "Played",
+    leaguePointsCol: "League points",
+    pointsPerMatchCol: "Points / match",
+    goalsForCol: "Goals for",
+    goalsPerMatchCol: "Goals for / match",
+    partialLabel: "Partial",
+    teamSeasonsExplainer: "League points = 3 × wins + draws. Per-match rates divide by games played. Fewer than 38 recorded matches is partial; rates are not forecasts or performance verdicts.",
+    teamSeasonsSource: (source) => `Source: ${source}.`,
+    teamSeasonsUnavailable: "The league-season comparison is unavailable because its coverage or publication snapshot is incomplete.",
     leagueRecord: (p, w, d, l, gf, ga) =>
       `League record: ${p} played, ${w}W ${d}D ${l}L, ${gf}–${ga} goals.`,
     europeanRecord: (p, w, d, l, gf, ga) =>
@@ -213,6 +237,18 @@ const ES: Locale = {
     dashExplainer:
       "Un guion significa que no hay fuente para esa temporada, o que un valor no está disponible para publicación.",
     squadHeading: (s) => `Plantilla — ${s}`,
+    teamSeasonsHeading: "Comparación de temporadas de liga",
+    teamSeasonsIntro: "La temporada seleccionada y las temporadas anteriores con cobertura de la Premier League.",
+    teamSeasonsTableLabel: "Temporadas del Manchester United en la Premier League",
+    playedCol: "Jugados",
+    leaguePointsCol: "Puntos de liga",
+    pointsPerMatchCol: "Puntos / partido",
+    goalsForCol: "Goles a favor",
+    goalsPerMatchCol: "Goles a favor / partido",
+    partialLabel: "Parcial",
+    teamSeasonsExplainer: "Puntos de liga = 3 × victorias + empates. Las tasas por partido dividen por partidos jugados. Menos de 38 partidos registrados indica una temporada parcial; las tasas no son pronósticos ni veredictos de rendimiento.",
+    teamSeasonsSource: (source) => `Fuente: ${source}.`,
+    teamSeasonsUnavailable: "La comparación de temporadas no está disponible porque su cobertura o instantánea de publicación está incompleta.",
     leagueRecord: (p, w, d, l, gf, ga) =>
       `Récord en liga: ${p} jugados, ${w}G ${d}E ${l}P, ${gf}–${ga} goles.`,
     europeanRecord: (p, w, d, l, gf, ga) =>
