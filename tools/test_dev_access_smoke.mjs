@@ -23,7 +23,7 @@ const validHealth = {
 };
 const validChat = {
   proposed_intent: { metric: 'goals', entity_type: 'player', entity_id: 'all',
-    season: '2024-25', competition: 'PL', viz: 'bar', limit: 10 },
+    season: '2024-25', competition: 'PL', dimensions: [], filters: {}, viz: 'bar', limit: 10 },
   source: 'ai', model_status: 'accepted', confidence: 'high', notes: [],
   feasibility: { state: 'available' },
   next: 'POST the proposed_intent to /api/query to execute it.',
@@ -74,6 +74,10 @@ test('chat validator accepts finite model outcomes and rejects drift', () => {
   assert.equal(validateChatPayload({ ...validChat, notes: ['private-provider-text'] }), null);
   assert.equal(validateChatPayload({ ...validChat,
     proposed_intent: { ...validChat.proposed_intent, competition: 'CL' } }), null);
+  assert.equal(validateChatPayload({ ...validChat,
+    proposed_intent: { ...validChat.proposed_intent, dimensions: ['position'] } }), null);
+  assert.equal(validateChatPayload({ ...validChat,
+    proposed_intent: { ...validChat.proposed_intent, filters: { position: 'GK' } } }), null);
   assert.equal(validateChatPayload({ ...validChat,
     proposed_intent: { ...validChat.proposed_intent, raw_response: 'private' } }), null);
   assert.equal(validateChatPayload({ ...validChat, source: 'rules', model_status: 'accepted' }), null);

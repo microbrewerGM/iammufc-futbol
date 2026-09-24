@@ -17,7 +17,8 @@ const modelStatuses = ['not_configured', 'disabled', 'accepted', 'provider_error
   'unsupported_intent'];
 const chatKeys = ['confidence', 'feasibility', 'model_status', 'next', 'notes',
   'proposed_intent', 'source'];
-const intentKeys = ['competition', 'entity_id', 'entity_type', 'limit', 'metric', 'season', 'viz'];
+const intentKeys = ['competition', 'dimensions', 'entity_id', 'entity_type', 'filters', 'limit',
+  'metric', 'season', 'viz'];
 const feasibilityKeys = new Set(['attribution_asset', 'attribution_text', 'cost_class',
   'nearest_alternative', 'reason', 'source_name', 'state']);
 const plain = (value) => value !== null && typeof value === 'object' && !Array.isArray(value) &&
@@ -77,7 +78,8 @@ export function validateChatPayload(value) {
   const intent = value.proposed_intent;
   if (intent.metric !== 'goals' || intent.entity_type !== 'player' || intent.entity_id !== 'all' ||
       intent.season !== '2024-25' || intent.competition !== 'PL' || intent.viz !== 'bar' ||
-      intent.limit !== 10) return null;
+      intent.limit !== 10 || !Array.isArray(intent.dimensions) || intent.dimensions.length !== 0 ||
+      !plain(intent.filters) || Object.keys(intent.filters).length !== 0) return null;
   if ((value.source === 'ai') !== (value.model_status === 'accepted')) return null;
   const expectedNotes = ['accepted', 'not_configured'].includes(value.model_status)
     ? [] : [`AI proposal unavailable (${value.model_status}); using rules.`];
