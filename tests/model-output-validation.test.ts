@@ -24,7 +24,7 @@ it("preserves a supported complete proposal and canonical defaults", async () =>
   expect(preserved.proposal?.intent).toEqual(season);
 });
 
-it("requests deterministic schema-constrained output", async () => {
+it("requests deterministic bounded output", async () => {
   let input: Record<string, unknown> | null = null;
   await proposeWithAI("Synthetic football question", catalog,
     { run: async (_model: string, value: unknown) => {
@@ -33,15 +33,9 @@ it("requests deterministic schema-constrained output", async () => {
     } }, "synthetic-model");
   expect(input).toMatchObject({
     temperature: 0,
-    response_format: {
-      type: "json_schema",
-      json_schema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["metric", "entity_type", "entity_id", "season", "competition", "viz", "limit"],
-      },
-    },
+    max_tokens: 200,
   });
+  expect(input).not.toHaveProperty("response_format");
 });
 
 it("refuses malformed/unsupported model fields without silently discarding them", async () => {

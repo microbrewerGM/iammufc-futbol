@@ -219,27 +219,6 @@ function buildPrompt(question: string, catalog: Catalog): string {
   ].join("\n");
 }
 
-function responseFormat(catalog: Catalog) {
-  const seasons = [...new Set(catalog.coverage.map((cell) => cell.season))].sort();
-  return {
-    type: "json_schema",
-    json_schema: {
-      type: "object",
-      properties: {
-        metric: { type: "string", enum: catalog.metrics.map((metric) => metric.metric_id) },
-        entity_type: { type: "string", enum: ["player"] },
-        entity_id: { type: "string" },
-        season: { type: "string", enum: seasons },
-        competition: { type: "string", enum: ["PL", "CL"] },
-        viz: { type: "string", enum: ["table", "bar", "line", "shot_map", "pass_map", "heatmap"] },
-        limit: { type: "integer", minimum: 1, maximum: 50 },
-      },
-      required: ["metric", "entity_type", "entity_id", "season", "competition", "viz", "limit"],
-      additionalProperties: false,
-    },
-  };
-}
-
 export async function proposeWithAI(
   question: string,
   catalog: Catalog,
@@ -254,7 +233,6 @@ export async function proposeWithAI(
       ],
       max_tokens: 200,
       temperature: 0,
-      response_format: responseFormat(catalog),
     })) as { response?: string };
 
     const text = raw?.response;

@@ -63,7 +63,7 @@ import {
 } from "./views/pages";
 
 /** Pin site P14. Bump deliberately -- a different model parses differently. */
-const AI_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+const AI_MODEL = "@cf/meta/llama-3.2-1b-instruct";
 
 const catalog = new Catalog(compiledCatalog as unknown as CompiledCatalog);
 const app = new Hono<{ Bindings: Env }>();
