@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { denialSmoke, runSmoke, smoke, validateHealthPayload } from './dev-access-smoke.mjs';
+import { denialSmoke, runSmoke, smoke, validateChatPayload,
+  validateHealthPayload } from './dev-access-smoke.mjs';
 
 const env = { CF_ACCESS_CLIENT_ID: 'synthetic-id', CF_ACCESS_CLIENT_SECRET: 'synthetic-secret' };
 const snapshot = 'a'.repeat(64);
@@ -20,6 +21,15 @@ const validHealth = {
   coverage_cells: 25,
   ai_bound: false,
 };
+const validChat = {
+  proposed_intent: { metric: 'goals', entity_type: 'player', entity_id: 'all',
+    season: '2024-25', competition: 'PL', viz: 'bar', limit: 10 },
+  source: 'ai', model_status: 'accepted', confidence: 'high', notes: [],
+  feasibility: { state: 'available' },
+  next: 'POST the proposed_intent to /api/query to execute it.',
+};
+const unsupported = { rejected: true, code: 'unsupported_semantics', reason: 'private',
+  suggestion: 'private', proposed_intent: null, feasibility: null };
 test('fixed dev origin, manual redirects, private response and all checks', async () => {
   const calls = [];
   const results = await smoke(env, async (url, init) => {
@@ -28,21 +38,45 @@ test('fixed dev origin, manual redirects, private response and all checks', asyn
     assert.equal(init.redirect, 'manual');
     assert.equal(init.headers.Origin, new URL(url).origin);
     assert.equal(init.headers['CF-Access-Client-Secret'], env.CF_ACCESS_CLIENT_SECRET);
-    const health = new URL(url).pathname === '/api/health';
+    const path = new URL(url).pathname;
+    const health = path === '/api/health';
+    const chat = path === '/api/chat';
+    const rejected = chat && init.body.includes('per 90');
     return new Response(health
       ? JSON.stringify(validHealth)
+      : chat ? JSON.stringify(rejected ? unsupported : validChat)
       : 'Ask about Manchester United Pregunta sobre el Manchester United font-family Assists — 2023-24 PL',
-    { headers: { 'cache-control': 'private, no-store',
-      ...(health ? { 'content-type': 'application/json; charset=UTF-8' } : {}) } });
+    { status: rejected ? 422 : 200, headers: { 'cache-control': 'private, no-store',
+      ...((health || chat) ? { 'content-type': 'application/json; charset=UTF-8' } : {}) } });
   });
-  assert.equal(calls.length, 5);
+  assert.equal(calls.length, 7);
   assert.equal(calls.find((call) => new URL(call.url).pathname === '/en/ask').init.method, 'POST');
   assert.equal(calls.find((call) => new URL(call.url).pathname === '/api/health').init.method, 'GET');
   assert.ok(results.every((result) => result.pass));
-  assert.deepEqual(results.at(-1), { path: '/api/health', status: 200, pass: true, health_state: 'current' });
+  assert.deepEqual(results.at(-2), { path: '/api/chat', status: 200, pass: true,
+    model_status: 'accepted' });
+  assert.deepEqual(results.at(-1), { path: '/api/chat', status: 422, pass: true,
+    gate_status: 'unsupported_semantics' });
   assert.ok(!JSON.stringify(results).includes('synthetic'));
   assert.ok(!JSON.stringify(results).includes(snapshot));
   assert.ok(!JSON.stringify(results).includes(retrieved));
+});
+
+test('chat validator accepts finite model outcomes and rejects drift', () => {
+  assert.equal(validateChatPayload(validChat), 'accepted');
+  assert.equal(validateChatPayload({ ...validChat, source: 'rules',
+    model_status: 'provider_error',
+    notes: ['AI proposal unavailable (provider_error); using rules.'] }), 'provider_error');
+  assert.equal(validateChatPayload({ ...validChat, model_status: 'private-provider-text' }), null);
+  assert.equal(validateChatPayload({ ...validChat, provider_exception: 'private' }), null);
+  assert.equal(validateChatPayload({ ...validChat, notes: ['private-provider-text'] }), null);
+  assert.equal(validateChatPayload({ ...validChat,
+    proposed_intent: { ...validChat.proposed_intent, competition: 'CL' } }), null);
+  assert.equal(validateChatPayload({ ...validChat,
+    proposed_intent: { ...validChat.proposed_intent, raw_response: 'private' } }), null);
+  assert.equal(validateChatPayload({ ...validChat, source: 'rules', model_status: 'accepted' }), null);
+  assert.equal(validateChatPayload({ ...validChat, source: 'rules', model_status: 'provider_error',
+    notes: ['AI proposal unavailable (provider_error); using rules.'] }), 'provider_error');
 });
 test('login redirects and non-private responses fail without following redirects', async () => {
   const results = await smoke(env, async () => new Response('', { status: 302,
@@ -116,7 +150,8 @@ test('malformed JSON and misleading JSON content type fail without leaking detai
       { headers: { 'cache-control': 'private, no-store',
         ...(health ? { 'content-type': contentType } : {}) } });
     });
-    assert.deepEqual(results.at(-1), { path: '/api/health', status: 200, pass: false, health_state: 'invalid' });
+    assert.deepEqual(results.find((result) => result.path === '/api/health'),
+      { path: '/api/health', status: 200, pass: false, health_state: 'invalid' });
     assert.ok(!JSON.stringify(results).includes('private-body'));
   }
 });
@@ -175,12 +210,16 @@ test('combined smoke requires authenticated success and denial success', async (
   const results = await runSmoke(env, async (url, init) => {
     const headers = new Headers(init.headers);
     if (!headers.has('CF-Access-Client-Id')) return accessRedirect();
-    const health = new URL(url).pathname === '/api/health';
+    const path = new URL(url).pathname;
+    const health = path === '/api/health';
+    const chat = path === '/api/chat';
+    const rejected = chat && init.body.includes('per 90');
     return new Response(health ? JSON.stringify(validHealth) :
+      chat ? JSON.stringify(rejected ? unsupported : validChat) :
       'Ask about Manchester United Pregunta sobre el Manchester United font-family Assists — 2023-24 PL',
-    { headers: { 'cache-control': 'private, no-store',
-      ...(health ? { 'content-type': 'application/json' } : {}) } });
+    { status: rejected ? 422 : 200, headers: { 'cache-control': 'private, no-store',
+      ...((health || chat) ? { 'content-type': 'application/json' } : {}) } });
   });
-  assert.equal(results.length, 36);
+  assert.equal(results.length, 38);
   assert.ok(results.every((result) => result.pass));
 });
