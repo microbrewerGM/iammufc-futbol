@@ -232,6 +232,7 @@ export async function proposeWithAI(
         { role: "user", content: buildPrompt(question, catalog) },
       ],
       max_tokens: 200,
+      temperature: 0,
     })) as { response?: string };
 
     const text = raw?.response;
