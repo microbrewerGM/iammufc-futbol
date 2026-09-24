@@ -76,6 +76,7 @@ export interface Locale {
     careerTableLabel: string;
     dashExplainer: string;
     squadHeading: (season: string) => string;
+    squadTableLabel: (season: string) => string;
     teamSeasonsHeading: string;
     teamSeasonsIntro: string;
     teamSeasonsTableLabel: string;
@@ -156,6 +157,7 @@ const EN: Locale = {
     dashExplainer:
       "A dash means no source for that season, or a source value that is unavailable for publication.",
     squadHeading: (s) => `Squad — ${s}`,
+    squadTableLabel: (s) => `Manchester United squad output for ${s}`,
     teamSeasonsHeading: "League season comparison",
     teamSeasonsIntro: "The selected season and earlier covered Premier League seasons.",
     teamSeasonsTableLabel: "Manchester United Premier League seasons",
@@ -237,6 +239,7 @@ const ES: Locale = {
     dashExplainer:
       "Un guion significa que no hay fuente para esa temporada, o que un valor no está disponible para publicación.",
     squadHeading: (s) => `Plantilla — ${s}`,
+    squadTableLabel: (s) => `Producción de la plantilla del Manchester United en ${s}`,
     teamSeasonsHeading: "Comparación de temporadas de liga",
     teamSeasonsIntro: "La temporada seleccionada y las temporadas anteriores con cobertura de la Premier League.",
     teamSeasonsTableLabel: "Temporadas del Manchester United en la Premier League",

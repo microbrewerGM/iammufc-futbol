@@ -38,6 +38,18 @@ describe("player coverage boundary", () => {
     expect(html).toContain("No squad data integrated for 2017-18.");
   });
 
+  it("contains a populated squad table in a labelled keyboard-scrollable region", () => {
+    const html = seasonPageBody(
+      "2024-25",
+      [{ label: "Synthetic", route_key: "fpl:code:101", secondary: "MF", goals: 2, assists: 1, minutes: 180, points: 20, xg: 1.2 }],
+      { ...record, season: "2024-25" },
+      catalog,
+      LOCALES.en,
+    );
+    expect(html).toContain('class="squad-table" tabindex="0" role="region"');
+    expect(html).toContain('aria-label="Manchester United squad output for 2024-25"');
+  });
+
   it.each([
     ["en", "Goals / 90", "1.00", "0.50"],
     ["es", "Goles / 90", "1,00", "0,50"],
