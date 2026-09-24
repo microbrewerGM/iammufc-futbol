@@ -86,16 +86,8 @@ main { max-width: 780px; margin: 0 auto; }
 .career-table,
 .team-season-table { width: 100%; min-width: 0; max-width: 100%; overflow-x: auto; }
 .team-season-table table { min-width: 620px; }
-.team-season-table th:first-child,
-.team-season-table td:first-child {
-  position: sticky;
-  left: 0;
-  background: var(--card);
-}
 .partial { display: block; color: var(--muted); font-size: .7rem; font-weight: 500; }
-.team-season-table tr.current th:first-child { background: var(--accent-soft); }
-.team-season-table tbody tr:hover th:first-child { background: var(--card-hover); }
-.team-season-table tbody tr.current:hover th:first-child { background: var(--accent-soft); }
+.team-season-table tr.current th:first-child { font-weight: 700; }
 .career-table table { min-width: 780px; }
 .career-table th:first-child,
 .career-table td:first-child {
