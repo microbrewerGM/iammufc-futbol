@@ -24,6 +24,15 @@ infra/migrations/*_seed.sql
 **/GEMINI.md
 **/COPILOT_INSTRUCTIONS.md
 
+# Private platform canonical metadata (tracked legacy inputs remain until handoff)
+/catalog/coverage/
+/catalog/metrics/
+/catalog/rights/
+/docs/data_retrievers/
+
+# Local scratch worktrees and experiments
+/scratch/
+
 # Build / tooling
 node_modules/
 dist/
