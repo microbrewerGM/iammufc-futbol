@@ -198,7 +198,6 @@ describe("locale support", () => {
           attribution_text: "English-only attribution.",
           attribution_text_es: null,
           source_name: "No-ES Source",
-          licence_id: "test",
         },
       ],
     });
@@ -235,7 +234,6 @@ describe("SEO substance gate (hasSubstance)", () => {
         attribution_text: null,
         attribution_text_es: null,
         source_name: "FBref / Sports Reference",
-        licence_id: "none",
       })),
     });
     const feas = columnFeasibility(synthetic, "player", "2024-25");
@@ -260,7 +258,6 @@ describe("SEO substance gate (hasSubstance)", () => {
           attribution_text: null,
           attribution_text_es: null,
           source_name: "Fantasy Premier League public API",
-          licence_id: "unofficial-tolerated",
         })),
       });
     expect(hasSubstance(columnFeasibility(covered(1), "player", "2024-25"))).toBe(false);

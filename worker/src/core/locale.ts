@@ -55,6 +55,23 @@ export interface Locale {
     freshnessInconsistent: string;
     freshnessUnavailable: string;
     coverageHeading: string;
+    dataCatalogTitle: string;
+    dataCatalogIntro: string;
+    dataCatalogEmpty: string;
+    dataCatalogTableLabel: string;
+    definitionCol: string;
+    entityCol: string;
+    competitionCol: string;
+    granularityCol: string;
+    sourceCol: string;
+    availabilityCol: string;
+    feasibilityCol: string;
+    attributionHeading: string;
+    availableForPublication: string;
+    unavailableForPublication: string;
+    feasibilityQueued: string;
+    feasibilityExpensive: string;
+    feasibilityNoRights: string;
     legendAvailable: string;
     legendNoRights: string;
     legendNoSource: string;
@@ -135,6 +152,23 @@ const EN: Locale = {
     freshnessInconsistent: "Freshness metadata does not match the current data, so this page does not describe it as current.",
     freshnessUnavailable: "No successful data load is recorded.",
     coverageHeading: "What we can actually show",
+    dataCatalogTitle: "Data and sources",
+    dataCatalogIntro: "Declared Manchester United men's first-team coverage and sources. A permitted coverage cell does not guarantee that a matching database row exists; missing combinations are never treated as zero.",
+    dataCatalogEmpty: "No data coverage is currently published.",
+    dataCatalogTableLabel: "Declared data coverage by metric, season, competition and source",
+    definitionCol: "Definition",
+    entityCol: "Entity",
+    competitionCol: "Competition",
+    granularityCol: "Detail",
+    sourceCol: "Source",
+    availabilityCol: "Publishing status",
+    feasibilityCol: "Capability",
+    attributionHeading: "Source attribution",
+    availableForPublication: "Permitted when present",
+    unavailableForPublication: "Not permitted",
+    feasibilityQueued: "Computable now (queued)",
+    feasibilityExpensive: "Computable but expensive",
+    feasibilityNoRights: "No publication rights",
     legendAvailable: "available",
     legendNoRights: "we have a source but no right to publish",
     legendNoSource: "no source integrated",
@@ -219,6 +253,23 @@ const ES: Locale = {
     freshnessInconsistent: "Los metadatos de actualización no coinciden con los datos actuales, por lo que esta página no los presenta como actuales.",
     freshnessUnavailable: "No hay ninguna carga de datos correcta registrada.",
     coverageHeading: "Lo que realmente podemos mostrar",
+    dataCatalogTitle: "Datos y fuentes",
+    dataCatalogIntro: "Cobertura y fuentes declaradas para el primer equipo masculino del Manchester United. Una celda permitida no garantiza que exista una fila correspondiente en la base de datos; las combinaciones ausentes nunca equivalen a cero.",
+    dataCatalogEmpty: "Actualmente no hay cobertura de datos publicada.",
+    dataCatalogTableLabel: "Cobertura de datos declarada por métrica, temporada, competición y fuente",
+    definitionCol: "Definición",
+    entityCol: "Entidad",
+    competitionCol: "Competición",
+    granularityCol: "Detalle",
+    sourceCol: "Fuente",
+    availabilityCol: "Estado de publicación",
+    feasibilityCol: "Capacidad",
+    attributionHeading: "Atribución de las fuentes",
+    availableForPublication: "Permitido si está presente",
+    unavailableForPublication: "No permitido",
+    feasibilityQueued: "Calculable ahora (en cola)",
+    feasibilityExpensive: "Calculable, pero costoso",
+    feasibilityNoRights: "Sin derechos de publicación",
     legendAvailable: "disponible",
     legendNoRights: "tenemos la fuente pero no el derecho de publicarla",
     legendNoSource: "ninguna fuente integrada",

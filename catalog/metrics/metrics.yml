@@ -12,6 +12,7 @@ metrics:
     label_en: Goals
     label_es: Goles
     description: Goals scored in the competition.
+    description_es: Goles marcados en la competición.
     granularity: box_score
     unit: count
     decimals: 0
@@ -20,6 +21,7 @@ metrics:
     label_en: Assists
     label_es: Asistencias
     description: Assists recorded in the competition.
+    description_es: Asistencias registradas en la competición.
     granularity: box_score
     unit: count
     decimals: 0
@@ -27,7 +29,8 @@ metrics:
   - metric_id: minutes
     label_en: Minutes played
     label_es: Minutos jugados
-    description: Total minutes on the pitch.
+    description: Total minutes played.
+    description_es: Total de minutos jugados.
     granularity: box_score
     unit: minutes
     decimals: 0
@@ -35,9 +38,8 @@ metrics:
   - metric_id: points
     label_en: Fantasy points
     label_es: Puntos fantasy
-    description: >
-      Fantasy Premier League points. A derived scoring construct, not a football
-      performance measure -- labelled as such wherever it is displayed.
+    description: Fantasy Premier League scoring points; this is a fantasy-game score, not a general performance rating.
+    description_es: Puntos del sistema de Fantasy Premier League; es una puntuación del juego fantasy, no una valoración general del rendimiento.
     granularity: box_score
     unit: points
     decimals: 0
@@ -45,11 +47,8 @@ metrics:
   - metric_id: xg
     label_en: Expected goals
     label_es: Goles esperados
-    description: >
-      Expected goals, as published in the FPL `expected_goals` field
-      (Opta-derived). Present from 2022-23 onward. Understat also carries xG
-      back to 2014-15, but grants no redistribution licence -- so earlier
-      seasons are a rights problem, not a data problem.
+    description: Expected goals (xG), an estimate of the scoring likelihood of chances.
+    description_es: Goles esperados (xG), una estimación de la probabilidad de marcar de las ocasiones.
     granularity: box_score
     unit: xg
     decimals: 2
@@ -64,10 +63,8 @@ metrics:
   - metric_id: progressive_passes
     label_en: Progressive passes
     label_es: Pases progresivos
-    description: >
-      Passes that move the ball significantly toward the opponent's goal.
-      Opta-derived and available from FBref, which explicitly forbids building
-      tools on its scraped data. No green-tier source carries it.
+    description: Passes that move the ball significantly toward the opponent's goal.
+    description_es: Pases que hacen avanzar el balón de forma significativa hacia la portería rival.
     granularity: box_score
     unit: count
     decimals: 0

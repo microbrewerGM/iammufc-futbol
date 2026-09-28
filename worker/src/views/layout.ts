@@ -68,9 +68,10 @@ export function page(body: string, opts: LayoutOptions): string {
 </head>
 <body>
 ${langToggle}
-<nav class="analysis-nav" aria-label="${locale.code === "es" ? "Análisis" : "Analysis"}">
+<nav class="analysis-nav" aria-label="${locale.code === "es" ? "Análisis y datos" : "Analysis and data"}">
 <a href="/${locale.code}/compare">${locale.code === "es" ? "Comparar por 90 minutos" : "Compare output per 90"}</a>
 <a href="/${locale.code}/season/2025-26#team-seasons">${locale.code === "es" ? "Comparar temporadas" : "Compare league seasons"}</a>
+<a href="/${locale.code}/data">${locale.code === "es" ? "Datos y fuentes" : "Data and sources"}</a>
 </nav>
 <nav class="session-nav" aria-label="${locale.code === "es" ? "Sesión" : "Session"}">
 <a href="/cdn-cgi/access/logout" referrerpolicy="no-referrer" title="${locale.code === "es" ? "Cierra la sesión en todas las aplicaciones de Cloudflare Access" : "Signs you out of all Cloudflare Access applications"}">${locale.code === "es" ? "Cerrar sesión de Access" : "Sign out of Access"}</a>

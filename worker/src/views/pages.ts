@@ -137,6 +137,73 @@ export function coverageMatrix(catalog: Catalog, locale: Locale): string {
 <table class="matrix"><thead><tr><th>${esc(t.metricCol)}</th>${head}</tr></thead><tbody>${rows}</tbody></table>`;
 }
 
+const ENTITY_LABELS = {
+  en: { player: "Player", match: "Match", season: "Season", opponent: "Opponent", competition: "Competition" },
+  es: { player: "Jugador", match: "Partido", season: "Temporada", opponent: "Rival", competition: "Competición" },
+} as const;
+
+const GRANULARITY_LABELS = {
+  en: { box_score: "Summary totals", event_with_coords: "Events with coordinates", tracking: "Tracking" },
+  es: { box_score: "Totales resumidos", event_with_coords: "Eventos con coordenadas", tracking: "Seguimiento" },
+} as const;
+
+export function dataAvailabilityPage(catalog: Catalog, locale: Locale): string {
+  const t = locale.strings;
+  const metrics = new Map(catalog.metrics.map((metric) => [metric.metric_id, metric]));
+  const cells = [...catalog.coverage].sort((left, right) =>
+    left.source_name.localeCompare(right.source_name) ||
+    left.competition.localeCompare(right.competition) ||
+    right.season.localeCompare(left.season) ||
+    left.entity_type.localeCompare(right.entity_type) ||
+    left.metric.localeCompare(right.metric),
+  );
+
+  if (cells.length === 0) {
+    return `<h1>${esc(t.dataCatalogTitle)}</h1>
+<p class="tagline">${esc(t.dataCatalogIntro)}</p>
+<p class="card">${esc(t.dataCatalogEmpty)}</p>`;
+  }
+
+  const rows = cells.map((cell) => {
+    const metric = metrics.get(cell.metric);
+    const definition = locale.code === "es" ? metric?.description_es : metric?.description;
+    const entity = ENTITY_LABELS[locale.code][cell.entity_type as keyof typeof ENTITY_LABELS.en] ?? cell.entity_type;
+    const granularity = GRANULARITY_LABELS[locale.code][cell.granularity];
+    const publication = cell.redistributable ? t.availableForPublication : t.unavailableForPublication;
+    const feasibility = !cell.redistributable
+      ? t.feasibilityNoRights
+      : cell.cost_class === "expensive"
+        ? t.feasibilityExpensive
+        : t.feasibilityQueued;
+    return `<tr><th scope="row">${esc(metricLabel(catalog, cell.metric, locale.code))}</th>` +
+      `<td>${esc(definition ?? cell.metric)}</td><td>${esc(entity)}</td>` +
+      `<td>${esc(cell.competition)}</td><td>${esc(cell.season)}</td>` +
+      `<td>${esc(granularity)}</td><td>${esc(cell.source_name)}</td><td>${esc(publication)}</td>` +
+      `<td>${esc(feasibility)}</td></tr>`;
+  }).join("");
+
+  const attributionKeys = new Set<string>();
+  const attributions: string[] = [];
+  for (const cell of cells) {
+    const text = locale.code === "es" && cell.attribution_text_es
+      ? cell.attribution_text_es
+      : cell.attribution_text;
+    if (!text) continue;
+    const key = `${cell.source_id}\u0000${cell.source_name}\u0000${text}`;
+    if (attributionKeys.has(key)) continue;
+    attributionKeys.add(key);
+    attributions.push(`<li><strong>${esc(cell.source_name)}:</strong> ${esc(text.trim())}</li>`);
+  }
+
+  return `<h1>${esc(t.dataCatalogTitle)}</h1>
+<p class="tagline">${esc(t.dataCatalogIntro)}</p>
+<div class="data-catalog-table" tabindex="0" role="region" aria-label="${esc(t.dataCatalogTableLabel)}"><table>
+<caption class="sr-only">${esc(t.dataCatalogTableLabel)}</caption>
+<thead><tr><th scope="col">${esc(t.metricCol)}</th><th scope="col">${esc(t.definitionCol)}</th><th scope="col">${esc(t.entityCol)}</th><th scope="col">${esc(t.competitionCol)}</th><th scope="col">${esc(t.seasonCol)}</th><th scope="col">${esc(t.granularityCol)}</th><th scope="col">${esc(t.sourceCol)}</th><th scope="col">${esc(t.availabilityCol)}</th><th scope="col">${esc(t.feasibilityCol)}</th></tr></thead>
+<tbody>${rows}</tbody></table></div>
+<section aria-labelledby="source-attribution"><h2 id="source-attribution">${esc(t.attributionHeading)}</h2><ul>${attributions.join("")}</ul></section>`;
+}
+
 export function freshnessPanel(view: FreshnessView, locale: Locale): string {
   const t = locale.strings;
   const heading = `<h2 id="data-freshness">${esc(t.freshnessHeading)}</h2>`;
