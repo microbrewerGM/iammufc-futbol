@@ -72,6 +72,9 @@ ${langToggle}
 <a href="/${locale.code}/compare">${locale.code === "es" ? "Comparar por 90 minutos" : "Compare output per 90"}</a>
 <a href="/${locale.code}/season/2025-26#team-seasons">${locale.code === "es" ? "Comparar temporadas" : "Compare league seasons"}</a>
 </nav>
+<nav class="session-nav" aria-label="${locale.code === "es" ? "Sesión" : "Session"}">
+<a href="/cdn-cgi/access/logout" referrerpolicy="no-referrer" title="${locale.code === "es" ? "Cierra la sesión en todas las aplicaciones de Cloudflare Access" : "Signs you out of all Cloudflare Access applications"}">${locale.code === "es" ? "Cerrar sesión de Access" : "Sign out of Access"}</a>
+</nav>
 <main>
 ${body}
 </main>
