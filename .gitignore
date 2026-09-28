@@ -15,6 +15,15 @@ infra/migrations/*_seed.sql
 .dev.vars
 *.pem
 
+# Private workspace / AI-assisted development instructions
+/.claude/
+/.codex/
+**/AGENTS.md
+/CLAUDE.md
+**/CLAUDE.md
+**/GEMINI.md
+**/COPILOT_INSTRUCTIONS.md
+
 # Build / tooling
 node_modules/
 dist/
