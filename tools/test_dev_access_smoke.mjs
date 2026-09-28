@@ -45,11 +45,11 @@ test('fixed dev origin, manual redirects, private response and all checks', asyn
     return new Response(health
       ? JSON.stringify(validHealth)
       : chat ? JSON.stringify(rejected ? unsupported : validChat)
-      : 'Ask about Manchester United Pregunta sobre el Manchester United font-family Assists — 2023-24 PL',
+      : 'Ask about Manchester United Pregunta sobre el Manchester United Data and sources Datos y fuentes font-family Assists — 2023-24 PL',
     { status: rejected ? 422 : 200, headers: { 'cache-control': 'private, no-store',
       ...((health || chat) ? { 'content-type': 'application/json; charset=UTF-8' } : {}) } });
   });
-  assert.equal(calls.length, 7);
+  assert.equal(calls.length, 9);
   assert.equal(calls.find((call) => new URL(call.url).pathname === '/en/ask').init.method, 'POST');
   assert.equal(calls.find((call) => new URL(call.url).pathname === '/api/health').init.method, 'GET');
   assert.ok(results.every((result) => result.pass));
@@ -138,7 +138,7 @@ test('health response requires JSON content type and never emits raw metadata', 
   const results = await smoke(env, async (url) => {
     const health = new URL(url).pathname === '/api/health';
     return new Response(health ? JSON.stringify(validHealth) :
-      'Ask about Manchester United Pregunta sobre el Manchester United font-family Assists — 2023-24 PL',
+      'Ask about Manchester United Pregunta sobre el Manchester United Data and sources Datos y fuentes font-family Assists — 2023-24 PL',
     { headers: { 'cache-control': 'private, no-store' } });
   });
   const health = results.find((result) => result.path === '/api/health');
@@ -152,7 +152,7 @@ test('malformed JSON and misleading JSON content type fail without leaking detai
     const results = await smoke(env, async (url) => {
       const health = new URL(url).pathname === '/api/health';
       return new Response(health ? body :
-        'Ask about Manchester United Pregunta sobre el Manchester United font-family Assists — 2023-24 PL',
+        'Ask about Manchester United Pregunta sobre el Manchester United Data and sources Datos y fuentes font-family Assists — 2023-24 PL',
       { headers: { 'cache-control': 'private, no-store',
         ...(health ? { 'content-type': contentType } : {}) } });
     });
@@ -179,8 +179,8 @@ test('anonymous and forged probes are fixed-origin, credential-free and do not f
     assert.equal(headers.has('Authorization'), false);
     return accessRedirect();
   });
-  assert.equal(calls.length, 31);
-  assert.equal(calls.filter(({ init }) => init.method === 'HEAD').length, 14);
+  assert.equal(calls.length, 35);
+  assert.equal(calls.filter(({ init }) => init.method === 'HEAD').length, 16);
   assert.equal(calls.filter(({ init }) => new Headers(init.headers).has('CF-Access-Jwt-Assertion')).length, 3);
   assert.ok(results.every((result) => result.pass));
   assert.ok(!JSON.stringify(results).includes('private=value'));
@@ -222,10 +222,10 @@ test('combined smoke requires authenticated success and denial success', async (
     const rejected = chat && init.body.includes('per 90');
     return new Response(health ? JSON.stringify(validHealth) :
       chat ? JSON.stringify(rejected ? unsupported : validChat) :
-      'Ask about Manchester United Pregunta sobre el Manchester United font-family Assists — 2023-24 PL',
+      'Ask about Manchester United Pregunta sobre el Manchester United Data and sources Datos y fuentes font-family Assists — 2023-24 PL',
     { status: rejected ? 422 : 200, headers: { 'cache-control': 'private, no-store',
       ...((health || chat) ? { 'content-type': 'application/json' } : {}) } });
   });
-  assert.equal(results.length, 38);
+  assert.equal(results.length, 44);
   assert.ok(results.every((result) => result.pass));
 });

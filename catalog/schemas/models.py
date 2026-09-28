@@ -120,6 +120,7 @@ class Metric(BaseModel):
     label_en: str
     label_es: str
     description: str
+    description_es: str
     granularity: Granularity
     unit: str = "count"
     decimals: int = 0

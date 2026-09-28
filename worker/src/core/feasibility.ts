@@ -47,8 +47,6 @@ export interface CoverageCell {
   attribution_text: string | null;
   attribution_text_es: string | null;
   source_name: string;
-  licence_id: string;
-  notes?: string | null;
 }
 
 export interface MetricDef {
@@ -56,6 +54,7 @@ export interface MetricDef {
   label_en: string;
   label_es: string;
   description: string;
+  description_es: string;
   granularity: Granularity;
   unit: string;
   decimals: number;

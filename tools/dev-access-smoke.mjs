@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 const origin = 'https://iammufc-dev.aaron-cf2.workers.dev';
 const accessHost = 'odd-fog-375d.cloudflareaccess.com';
 const denialCases = [
-  '/en', '/es', '/en/compare', '/es/compare', '/api/catalog', '/api/health',
+  '/en', '/es', '/en/compare', '/es/compare', '/en/data', '/es/data', '/api/catalog', '/api/health',
   '/style.css', '/robots.txt', '/sitemap.xml', '/', '/q', '/player/access-probe',
   '/season/access-probe', '/__access_probe_not_found__',
 ];
@@ -103,6 +103,8 @@ export async function smoke(env, request = fetch) {
   const cases = [
     { path: '/en', marker: 'Ask about Manchester United' },
     { path: '/es', marker: 'Pregunta sobre el Manchester United' },
+    { path: '/en/data', marker: 'Data and sources' },
+    { path: '/es/data', marker: 'Datos y fuentes' },
     { path: '/style.css', marker: 'font-family' },
     { path: '/en/ask', marker: 'Assists — 2023-24 PL', method: 'POST', body: 'q=Top+assists+2023-24' },
     { path: '/api/health', health: true },

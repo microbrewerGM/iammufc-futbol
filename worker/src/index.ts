@@ -53,6 +53,7 @@ import { esc, html, page } from "./views/layout";
 import { comparisonPage } from "./views/comparison";
 import {
   chatForm,
+  dataAvailabilityPage,
   homeBody,
   intentPanel,
   playerPageBody,
@@ -267,6 +268,18 @@ app.get("/api/health", async (c) => {
 function registerLocaleRoutes(code: LocaleCode) {
   const locale = LOCALES[code];
   const p = `/${code}`;
+
+  app.get(`${p}/data`, () => {
+    const res = html(
+      page(dataAvailabilityPage(catalog, locale), {
+        title: locale.strings.dataCatalogTitle,
+        locale,
+        unprefixedPath: "/data",
+      }),
+    );
+    res.headers.set("Cache-Control", CACHE_CONTROL);
+    return res;
+  });
 
   app.get(`${p}/compare`, async (c) => {
     const seasons = catalog.seasonsFor("goals", "player", "box_score");
@@ -496,6 +509,7 @@ app.get("/sitemap.xml", async (c) => {
 // the canonical /en/ URL rather than treating the two as separate pages.
 app.get("/", (c) => c.redirect("/en", 301));
 app.get("/q", (c) => c.redirect(`/en/q?${new URL(c.req.url).searchParams.toString()}`, 301));
+app.get("/data", (c) => c.redirect("/en/data", 301));
 app.get("/player/:name/:season?", (c) => c.redirect(`/en${new URL(c.req.url).pathname}`, 301));
 app.get("/season/:season", (c) => c.redirect(`/en${new URL(c.req.url).pathname}`, 301));
 

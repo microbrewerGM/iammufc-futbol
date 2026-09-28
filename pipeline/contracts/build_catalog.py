@@ -152,23 +152,35 @@ def warnings(catalog: Catalog, today: date | None = None) -> list[str]:
 
 
 def compile_for_worker(catalog: Catalog) -> dict:
-    """Emit the shape the Worker reads.
+    """Emit the closed, public-safe shape the Worker reads.
 
-    Rights are inlined per coverage cell so the Worker never has to join at
-    request time, and so attribution travels with the thing it attributes.
+    Only fields intentionally rendered or used by the Worker cross this
+    boundary. Internal rights rationale, licence identifiers, freshness checks,
+    retrieval details and notes remain in the producer catalog. Attribution is
+    inlined so it travels with the data it describes.
     """
     rights = catalog.rights_by_id()
+    metric_fields = {
+        "metric_id", "label_en", "label_es", "description", "description_es",
+        "granularity", "unit", "decimals",
+    }
+    coverage_fields = {
+        "metric", "entity_type", "granularity", "season", "competition",
+        "source_id", "redistributable", "cost_class",
+    }
     return {
         "version": 1,
-        "metrics": [m.model_dump(mode="json") for m in catalog.metrics],
+        "metrics": [
+            m.model_dump(mode="json", include=metric_fields)
+            for m in catalog.metrics
+        ],
         "coverage": [
             {
-                **cell.model_dump(mode="json"),
+                **cell.model_dump(mode="json", include=coverage_fields),
                 "attribution_asset": rights[cell.source_id].attribution_asset,
                 "attribution_text": rights[cell.source_id].attribution_text,
                 "attribution_text_es": rights[cell.source_id].attribution_text_es,
                 "source_name": rights[cell.source_id].name,
-                "licence_id": rights[cell.source_id].licence_id,
             }
             for cell in catalog.coverage
             if cell.source_id in rights
