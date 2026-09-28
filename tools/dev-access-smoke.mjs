@@ -4,7 +4,8 @@ import { pathToFileURL } from 'node:url';
 const origin = 'https://iammufc-dev.aaron-cf2.workers.dev';
 const accessHost = 'odd-fog-375d.cloudflareaccess.com';
 const denialCases = [
-  '/en', '/es', '/en/compare', '/es/compare', '/en/data', '/es/data', '/api/catalog', '/api/health',
+  '/en', '/es', '/en/compare', '/es/compare', '/en/data', '/es/data',
+  '/en/season/2015-16', '/es/season/2015-16', '/api/catalog', '/api/health',
   '/style.css', '/robots.txt', '/sitemap.xml', '/', '/q', '/player/access-probe',
   '/season/access-probe', '/__access_probe_not_found__',
 ];
@@ -105,6 +106,8 @@ export async function smoke(env, request = fetch) {
     { path: '/es', marker: 'Pregunta sobre el Manchester United' },
     { path: '/en/data', marker: 'Data and sources' },
     { path: '/es/data', marker: 'Datos y fuentes' },
+    { path: '/en/season/2015-16', markers: ['League season comparison', '49–35 goals', '>1.74</td>'] },
+    { path: '/es/season/2015-16', markers: ['Comparación de temporadas de liga', '49–35 goles', '>1,74</td>'] },
     { path: '/style.css', marker: 'font-family' },
     { path: '/en/ask', marker: 'Assists — 2023-24 PL', method: 'POST', body: 'q=Top+assists+2023-24' },
     { path: '/api/health', health: true },
@@ -142,7 +145,7 @@ export async function smoke(env, request = fetch) {
     const contentPass = check.health ? healthState !== null
       : check.chat ? modelStatus !== null
       : check.unsupported ? unsupported
-      : body.includes(check.marker);
+      : (check.markers ?? [check.marker]).every((marker) => body.includes(marker));
     const pass = response.status === expectedStatus && Boolean(privateResponse) && contentPass;
     results.push({ path: check.path, status: response.status, pass,
       ...(check.health ? { health_state: pass ? healthState : 'invalid' } : {}),
