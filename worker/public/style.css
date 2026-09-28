@@ -83,6 +83,18 @@ main { max-width: 780px; margin: 0 auto; }
   gap: .5rem 1rem;
 }
 
+.session-nav {
+  max-width: 780px;
+  margin: -.5rem auto 1rem;
+  font-size: .9rem;
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (max-width: 620px) {
+  .session-nav { justify-content: flex-start; }
+}
+
 .comparison-table,
 .career-table,
 .team-season-table,
