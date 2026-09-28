@@ -10,7 +10,7 @@ const career = [
   { season: "2024-25", goals: 2, assists: 1, minutes: 180, points: 20, xg: 1.2, position: "MF" },
 ];
 const record = {
-  season: "2017-18", played: 38, won: 25, drawn: 6, lost: 7, goals: 68, goals_against: 28,
+  season: "2015-16", played: 38, won: 19, drawn: 9, lost: 10, goals: 49, goals_against: 35,
 };
 
 describe("player coverage boundary", () => {
@@ -33,9 +33,9 @@ describe("player coverage boundary", () => {
   });
 
   it("retains an early league record when squad data is unavailable", () => {
-    const html = seasonPageBody("2017-18", [], record, catalog, LOCALES.en);
+    const html = seasonPageBody("2015-16", [], record, catalog, LOCALES.en);
     expect(html).toContain("League record: 38 played");
-    expect(html).toContain("No squad data integrated for 2017-18.");
+    expect(html).toContain("No squad data integrated for 2015-16.");
   });
 
   it("contains a populated squad table in a labelled keyboard-scrollable region", () => {
