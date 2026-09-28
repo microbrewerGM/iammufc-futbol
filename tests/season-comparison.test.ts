@@ -41,7 +41,7 @@ describe("team-season comparison", () => {
   it("selects covered PL seasons through the requested season without CL duplicates", () => {
     const seasons = eligibleLeagueSeasons(catalog, "2024-25");
     expect(seasons[0]).toBe("2024-25");
-    expect(seasons.at(-1)).toBe("2016-17");
+    expect(seasons.at(-1)).toBe("2015-16");
     expect(seasons).not.toContain("2025-26");
     expect(new Set(seasons).size).toBe(seasons.length);
     expect(eligibleLeagueSeasons(catalog, "2030-31")).toEqual([]);
@@ -65,6 +65,23 @@ describe("team-season comparison", () => {
       goals_per_match: 44 / 38,
       partial: false,
     });
+  });
+
+  it.each([
+    ["en", "1.74", "1.29"],
+    ["es", "1,74", "1,29"],
+  ] as const)("renders the exact localized 2015-16 record in %s", (code, ppg, gpg) => {
+    const historic = row({
+      season: "2015-16", played: 38, won: 19, drawn: 9, lost: 10,
+      goals: 49, goals_against: 35,
+    });
+    const result = buildSeasonComparison([historic], ["2015-16"], catalog, code);
+    expect(result.ok && result.rows[0]).toMatchObject({ league_points: 66 });
+    const html = seasonPageBody("2015-16", [], historic, catalog, LOCALES[code], null, result);
+    expect(html).toContain(`>${ppg}</td>`);
+    expect(html).toContain(`>${gpg}</td>`);
+    expect(html).toContain(`aria-current="page" href="/${code}/season/2015-16"`);
+    expect(html).toContain("Football-Data.co.uk");
   });
 
   it("marks partial rows and rejects zero or more-than-38-match records", () => {

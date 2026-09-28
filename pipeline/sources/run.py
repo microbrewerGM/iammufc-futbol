@@ -33,6 +33,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SEED_PATH = REPO_ROOT / "infra" / "migrations" / "0002_seed.sql"
 
 SEASONS = [
+    "2015-16",
     "2016-17",
     "2017-18",
     "2018-19",
@@ -44,6 +45,7 @@ SEASONS = [
     "2024-25",
     "2025-26",
 ]
+COMPLETE_PL_SEASONS = frozenset(SEASONS)
 
 #: FPL publishes `expected_goals` from 2022-23 onward only. Earlier seasons get
 #: NULL, never 0 -- zero would assert we measured nothing, which is a quiet lie.
@@ -54,6 +56,16 @@ XG_FROM_SEASON = "2022-23"
 #: has neither fixtures nor row-level team membership for the two earlier
 #: seasons, so their player totals cannot be represented as United-only facts.
 PLAYER_FROM_SEASON = "2018-19"
+
+#: United's openfootball Champions League adapter begins in 2016-17. PL
+#: history is intentionally wider; adding a PL season must not imply CL
+#: capability or trigger an unsupported CL retrieval.
+CL_SEASONS = frozenset(
+    {
+        "2016-17", "2017-18", "2018-19", "2019-20", "2020-21",
+        "2021-22", "2022-23", "2023-24", "2024-25", "2025-26",
+    }
+)
 
 #: FPL data via the community archive. The live API carries only the current
 #: season; the archive carries changing historical schemas from 2016-17 onward.
@@ -424,6 +436,11 @@ def load_results(season: str) -> tuple[pd.DataFrame, str]:
             }
         ]
     )
+    if season in COMPLETE_PL_SEASONS and int(row.iloc[0]["played"]) != 38:
+        raise IngestError(
+            f"{season}: expected 38 completed Premier League matches, "
+            f"got {int(row.iloc[0]['played'])}"
+        )
     return row, sha256(raw)
 
 
@@ -628,7 +645,9 @@ def main() -> int:
     # No API key, so nothing to gate this on and no credential to leak.
     print("  fetching Champions League (openfootball) ...", file=sys.stderr)
     try:
-        cl_frame, cl_hashes = fetch_cl_all(SEASONS)
+        cl_frame, cl_hashes = fetch_cl_all(
+            [season for season in SEASONS if season in CL_SEASONS]
+        )
     except OpenfootballCLError as exc:
         # Not fatal, for the same reason as before: this is an additive bonus
         # source and the site's core is PL/FPL data. A loud warning is the only
