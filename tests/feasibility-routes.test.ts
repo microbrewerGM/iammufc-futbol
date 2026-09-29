@@ -11,12 +11,14 @@ vi.mock("jose", async (original) => ({
 vi.mock("../worker/src/core/db", async (original) => ({
   ...await original<typeof import("../worker/src/core/db")>(),
   currentSnapshot: vi.fn(async () => "synthetic"),
-  logDemand: vi.fn(async () => {}),
+  logQueryAggregate: vi.fn(async () => {}),
+  readQueryCache: vi.fn(async () => ({ result: null, outcome: "miss" })),
+  writeQueryCache: vi.fn(async () => false),
   enforceBudget: vi.fn(async () => true),
   runQuery: vi.fn(async () => ({ rows: [{ label: "Synthetic", value: 2 }], snapshot_id: "synthetic" })),
 }));
 import app from "../worker/src/index";
-import { enforceBudget, runQuery } from "../worker/src/core/db";
+import { enforceBudget, readQueryCache, runQuery, writeQueryCache } from "../worker/src/core/db";
 
 const env = {
   ACCESS_ISSUER: "https://example.cloudflareaccess.com", ACCESS_AUD: "a".repeat(64),
@@ -29,7 +31,7 @@ beforeEach(() => vi.clearAllMocks());
 afterEach(() => vi.restoreAllMocks());
 
 describe("feasibility execution gate", () => {
-  it.each<FeasibilityState>(["no_data", "no_rights", "computable_but_expensive"])("does not execute or charge %s", async (state) => {
+  it.each<FeasibilityState>(["no_data", "no_rights"])("does not read cache, execute or charge %s", async (state) => {
     vi.spyOn(Catalog.prototype, "checkFeasibility").mockReturnValue({ state, reason: "Synthetic refusal", cost_class: "expensive" });
     const api = await app.request("https://site.invalid/api/query", { method: "POST", headers, body: JSON.stringify(intent) }, env);
     expect(api.status).toBe(200);
@@ -43,6 +45,42 @@ describe("feasibility execution gate", () => {
       expect(markup).not.toContain("<svg");
       expect(markup).not.toContain("query returned nothing");
     }
+    expect(enforceBudget).not.toHaveBeenCalled();
+    expect(runQuery).not.toHaveBeenCalled();
+    expect(readQueryCache).not.toHaveBeenCalled();
+    expect(writeQueryCache).not.toHaveBeenCalled();
+  });
+
+  it("checks an expensive request for an existing artifact but does not compute a miss", async () => {
+    vi.spyOn(Catalog.prototype, "checkFeasibility").mockReturnValue({
+      state: "computable_but_expensive", reason: "Synthetic deferral", cost_class: "expensive",
+    });
+    const response = await app.request("https://site.invalid/api/query", {
+      method: "POST", headers, body: JSON.stringify(intent),
+    }, env);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ feasibility: { state: "computable_but_expensive" }, rows: [] });
+    expect(readQueryCache).toHaveBeenCalledOnce();
+    expect(enforceBudget).not.toHaveBeenCalled();
+    expect(runQuery).not.toHaveBeenCalled();
+    expect(writeQueryCache).not.toHaveBeenCalled();
+  });
+
+  it("serves an existing expensive artifact only after the current rights check", async () => {
+    vi.spyOn(Catalog.prototype, "checkFeasibility").mockImplementation((_intent, _locale, artifactExists) =>
+      artifactExists
+        ? { state: "available", reason: "Cached", cost_class: "cheap" }
+        : { state: "computable_but_expensive", reason: "Synthetic deferral", cost_class: "expensive" },
+    );
+    vi.mocked(readQueryCache).mockResolvedValueOnce({
+      outcome: "hit",
+      result: { rows: [{ label: "Cached", value: 3 }], snapshot_id: "synthetic", unit: "goals" },
+    });
+    const response = await app.request("https://site.invalid/api/query", {
+      method: "POST", headers, body: JSON.stringify(intent),
+    }, env);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ feasibility: { state: "available" }, rows: [{ label: "Cached", value: 3 }] });
     expect(enforceBudget).not.toHaveBeenCalled();
     expect(runQuery).not.toHaveBeenCalled();
   });

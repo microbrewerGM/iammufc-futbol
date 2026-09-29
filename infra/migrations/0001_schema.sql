@@ -88,19 +88,40 @@ CREATE TABLE IF NOT EXISTS assets (
   created_at        TEXT NOT NULL
 );
 
--- Demand signal. Infeasible requests are the MOST valuable rows here: they say
--- what data to integrate next. Intent hash only -- no PII, no accounts.
-CREATE TABLE IF NOT EXISTS demand_log (
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  intent_hash   TEXT NOT NULL,
-  metric        TEXT NOT NULL,
-  season        TEXT NOT NULL,
-  viz           TEXT NOT NULL,
-  state         TEXT NOT NULL,          -- the feasibility state returned
-  created_at    TEXT NOT NULL
-);
+-- Retire the original event-level demand log. Its exact hash/season/timestamp
+-- tuples were enumerable and linkable to Access/provider timing. Old Workers
+-- already treat logging failure as non-fatal, so dropping it is rollback-safe.
+DROP TABLE IF EXISTS demand_log;
 
-CREATE INDEX IF NOT EXISTS idx_demand_state ON demand_log(state, created_at);
+-- Content-addressed query results. The artifact key already binds the
+-- canonical intent, snapshot and code/renderer versions; snapshot_id is kept
+-- in the primary key as an explicit stale-result guard. This table contains
+-- results only, never natural-language questions or requester information.
+CREATE TABLE IF NOT EXISTS query_result_cache (
+  artifact_key  TEXT NOT NULL CHECK (length(artifact_key) = 64 AND artifact_key NOT GLOB '*[^0-9a-f]*'),
+  snapshot_id   TEXT NOT NULL CHECK (length(snapshot_id) = 64 AND snapshot_id NOT GLOB '*[^0-9a-f]*'),
+  schema_version INTEGER NOT NULL DEFAULT 1 CHECK (schema_version = 1),
+  result_json   TEXT NOT NULL CHECK (length(result_json) BETWEEN 1 AND 100000),
+  PRIMARY KEY (artifact_key, snapshot_id)
+) WITHOUT ROWID;
+
+-- Privacy-safe demand telemetry. These are lifetime counters over finite,
+-- code-owned dimensions, not request events. Deliberately absent: timestamps,
+-- artifact/intent hashes, seasons, entity ids, questions, identities, network
+-- data, headers and free-form errors. The fingerprintable legacy event table
+-- above is removed; old Workers already fail open when that write is absent.
+CREATE TABLE IF NOT EXISTS query_demand_aggregate (
+  metric            TEXT NOT NULL CHECK (metric IN ('goals', 'assists', 'minutes', 'points', 'xg', 'progressive_passes', 'other')),
+  question_family   TEXT NOT NULL CHECK (question_family IN ('player_ranking', 'player_lookup', 'team_season', 'match', 'opponent', 'competition')),
+  viz               TEXT NOT NULL CHECK (viz IN ('table', 'bar', 'line', 'shot_map', 'pass_map', 'heatmap')),
+  feasibility_state TEXT NOT NULL CHECK (feasibility_state IN ('available', 'computable_now_queued', 'computable_but_expensive', 'no_data', 'no_rights')),
+  cache_outcome     TEXT NOT NULL CHECK (cache_outcome IN ('hit', 'miss', 'unavailable', 'not_applicable')),
+  result_outcome    TEXT NOT NULL CHECK (result_outcome IN ('success', 'refused', 'budget_exceeded')),
+  locale            TEXT NOT NULL CHECK (locale IN ('api', 'en', 'es')),
+  route_family      TEXT NOT NULL CHECK (route_family IN ('query_api', 'query_page', 'ask_page')),
+  request_count     INTEGER NOT NULL DEFAULT 0 CHECK (request_count >= 0),
+  PRIMARY KEY (metric, question_family, viz, feasibility_state, cache_outcome, result_outcome, locale, route_family)
+) WITHOUT ROWID;
 
 -- Budget breaker for the compute path (/api/query, /ask, /q). One row per UTC
 -- day -- the day boundary IS the reset, no separate cleanup job needed. D1 is

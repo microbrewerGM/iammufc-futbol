@@ -24,13 +24,16 @@ import {
   currentPublication,
   currentSnapshot,
   enforceBudget,
-  logDemand,
+  logQueryAggregate,
   playerCareerRows,
+  readQueryCache,
   resolvePlayerIdentity,
   runQuery,
   seasonHistoryRows,
   seasonRecordRow,
   seasonSquadRows,
+  writeQueryCache,
+  type CacheOutcome,
   type Env,
   type PublicationState,
 } from "./core/db";
@@ -71,6 +74,36 @@ const app = new Hono<{ Bindings: Env }>();
 
 /** Private responses never enter browser/shared caches, even on error. */
 const CACHE_CONTROL = "private, no-store";
+
+type CachedExecution =
+  | { result: Awaited<ReturnType<typeof runQuery>>; cacheOutcome: CacheOutcome; overBudget: false }
+  | { result: null; cacheOutcome: CacheOutcome; overBudget: boolean };
+
+/** Cache hits are free; only a miss reaches the budget breaker and executor.
+ * Cache storage is advisory, so every read/write failure degrades to compute. */
+async function executeWithCache(
+  env: Env,
+  intent: Parameters<typeof runQuery>[1],
+  key: string,
+  snapshot: string | null,
+  allowCompute: boolean,
+): Promise<CachedExecution> {
+  const cached = await readQueryCache(env, key, snapshot, intent);
+  if (cached.result) return { result: cached.result, cacheOutcome: "hit", overBudget: false };
+  if (!allowCompute) return { result: null, cacheOutcome: cached.outcome, overBudget: false };
+  if (!(await enforceBudget(env))) {
+    return { result: null, cacheOutcome: cached.outcome, overBudget: true };
+  }
+  const result = await runQuery(env, intent, snapshot);
+  // The seed import is atomic, but it can commit between the first snapshot
+  // read and the data SELECT. Re-read after execution so rows observed across
+  // that boundary are never labelled or cached under the old artifact key.
+  const snapshotAfterExecution = await currentSnapshot(env);
+  if (snapshotAfterExecution !== snapshot) throw new Error("snapshot_changed_during_query");
+  const stored = await writeQueryCache(env, key, snapshot, result, intent);
+  const cacheOutcome = cached.outcome === "unavailable" || !stored ? "unavailable" : cached.outcome;
+  return { result, cacheOutcome, overBudget: false };
+}
 
 app.use("*", async (c, next) => {
   await next();
@@ -127,33 +160,41 @@ app.post("/api/query", async (c) => {
   const key = await artifactKey(intent, snapshot ?? "no-snapshot");
   const feasibility = catalog.checkFeasibility(intent);
 
-  // Logged before the branch, so refusals are recorded too -- infeasible
-  // requests are the most valuable demand signal we have.
-  await logDemand(c.env, key, intent, feasibility.state).catch(() => {});
-
-  if (
-    feasibility.state !== "available" &&
-    feasibility.state !== "computable_now_queued"
-  ) {
+  if (feasibility.state === "no_data" || feasibility.state === "no_rights") {
+    await logQueryAggregate(c.env, intent, feasibility.state, "not_applicable", "refused", "api", "query_api")
+      .catch(() => {});
     return c.json({ artifact_key: key, intent, feasibility, rows: [] }, 200);
   }
   const executionIssue = validateExecutionSupport(intent);
   if (executionIssue) return c.json({ error: executionIssue }, 422);
 
-  // Budget breaker (docs/roadmap.md M3): checked only here, right before the
-  // actual compute, not earlier -- a refusal above never touches the budget.
-  if (!(await enforceBudget(c.env))) {
+  const execution = await executeWithCache(
+    c.env, intent, key, snapshot, feasibility.state !== "computable_but_expensive",
+  );
+  const responseFeasibility = execution.cacheOutcome === "hit"
+    ? catalog.checkFeasibility(intent, "en", true)
+    : feasibility;
+  const resultOutcome = execution.overBudget
+    ? "budget_exceeded"
+    : execution.result ? "success" : "refused";
+  await logQueryAggregate(c.env, intent, responseFeasibility.state, execution.cacheOutcome,
+    resultOutcome, "api", "query_api").catch(() => {});
+  if (execution.overBudget) {
     return c.json(
       { error: "budget_exceeded", message: "Daily compute budget spent. Try again after midnight UTC." },
       429,
     );
   }
 
-  const result = await runQuery(c.env, intent);
+  if (!execution.result) {
+    return c.json({ artifact_key: key, intent, feasibility: responseFeasibility, rows: [] }, 200);
+  }
+
+  const result = execution.result;
   return c.json({
     artifact_key: key,
     intent,
-    feasibility,
+    feasibility: responseFeasibility,
     snapshot_id: result.snapshot_id,
     rows: result.rows,
     attribution: [feasibility.attribution_text].filter(Boolean),
@@ -691,25 +732,44 @@ ${intentPanel(proposal, locale)}
   const key = await artifactKey(proposal.intent, snapshot ?? "no-snapshot");
   const feasibility = catalog.checkFeasibility(proposal.intent, locale.code);
 
-  await logDemand(c.env, key, proposal.intent, feasibility.state).catch(() => {});
-
-  const feasible =
+  const cacheEligible =
     feasibility.state === "available" ||
-    feasibility.state === "computable_now_queued";
-  const executionIssue = feasible ? validateExecutionSupport(proposal.intent) : null;
+    feasibility.state === "computable_now_queued" ||
+    feasibility.state === "computable_but_expensive";
+  const executionIssue = cacheEligible ? validateExecutionSupport(proposal.intent) : null;
   if (executionIssue) return html(`Unsupported query field: ${executionIssue.field}.`, 422);
 
-  // Budget breaker (docs/roadmap.md M3): checked only when a query would
-  // actually run, same scope as the JSON API's check above.
-  const overBudget = feasible && !(await enforceBudget(c.env));
-  const rows = feasible && !overBudget ? (await runQuery(c.env, proposal.intent)).rows : [];
+  const routeFamily = question === null ? "query_page" : "ask_page";
+  const execution = cacheEligible
+    ? await executeWithCache(
+        c.env,
+        proposal.intent,
+        key,
+        snapshot,
+        feasibility.state !== "computable_but_expensive",
+      )
+    : { result: null, cacheOutcome: "not_applicable" as const, overBudget: false as const };
+  const responseFeasibility = execution.cacheOutcome === "hit"
+    ? catalog.checkFeasibility(proposal.intent, locale.code, true)
+    : feasibility;
+  await logQueryAggregate(
+    c.env,
+    proposal.intent,
+    responseFeasibility.state,
+    execution.cacheOutcome,
+    execution.overBudget ? "budget_exceeded" : execution.result ? "success" : "refused",
+    locale.code,
+    routeFamily,
+  ).catch(() => {});
+  const overBudget = execution.overBudget;
+  const rows = execution.result?.rows ?? [];
 
   const resultBlock = overBudget
     ? `<div class="stop">
 <p class="state">budget_exceeded</p>
 <p><strong>${esc(locale.strings.budgetExceeded)}</strong></p>
 </div>`
-    : resultPanel(proposal.intent, feasibility, rows, catalog, key, locale);
+    : resultPanel(proposal.intent, responseFeasibility, rows, catalog, key, locale);
 
   const body = `<h1>iammufc</h1>
 <div class="card">${chatForm(locale, question ?? "")}</div>
@@ -722,7 +782,7 @@ ${resultBlock}
       title: `${proposal.intent.metric} ${proposal.intent.season}`,
       locale,
       unprefixedPath,
-      attribution: [feasibility.attribution_text],
+      attribution: [responseFeasibility.attribution_text],
       snapshotId: snapshot,
     }),
   );

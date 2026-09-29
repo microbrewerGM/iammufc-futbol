@@ -46,6 +46,151 @@ export interface QueryResult {
   unit: string;
 }
 
+export type CacheOutcome = "hit" | "miss" | "unavailable" | "not_applicable";
+export type QueryLocale = "api" | "en" | "es";
+export type QueryRouteFamily = "query_api" | "query_page" | "ask_page";
+
+export interface CacheLookup {
+  result: QueryResult | null;
+  outcome: CacheOutcome;
+}
+
+const CACHE_JSON_LIMIT = 100_000;
+const CACHE_ROW_LIMIT = 50;
+const RESULT_KEYS = ["rows", "snapshot_id", "unit"] as const;
+const RESULT_ROW_KEYS = ["label", "route_key", "secondary", "value"] as const;
+
+function cachedResult(
+  raw: unknown,
+  expectedSnapshot: string,
+  intent: QueryIntent,
+): QueryResult | null {
+  if (typeof raw !== "string" || raw.length > CACHE_JSON_LIMIT) return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!plainRecord(value) || !hasExactKeys(value, RESULT_KEYS)) return null;
+  const expectedUnit = intent.entity_type === "season" ? "goals" : intent.metric;
+  if (value.snapshot_id !== expectedSnapshot || value.unit !== expectedUnit) {
+    return null;
+  }
+  const rowLimit = Math.min(Math.max(intent.limit, 1), CACHE_ROW_LIMIT);
+  if (!Array.isArray(value.rows) || value.rows.length > rowLimit) return null;
+  const rows: ResultRow[] = [];
+  for (const candidate of value.rows) {
+    if (!plainRecord(candidate)) return null;
+    const keys = Object.keys(candidate).sort();
+    if (keys.some((key) => !RESULT_ROW_KEYS.includes(key as typeof RESULT_ROW_KEYS[number]))) return null;
+    if (!keys.includes("label") || !keys.includes("value")) return null;
+    if (
+      typeof candidate.label !== "string" || candidate.label.length > 160 ||
+      (candidate.value !== null && (typeof candidate.value !== "number" || !Number.isFinite(candidate.value))) ||
+      (candidate.secondary !== undefined && (typeof candidate.secondary !== "string" || candidate.secondary.length > 160)) ||
+      (intent.entity_type === "season" && candidate.route_key !== undefined) ||
+      (intent.entity_type !== "season" &&
+        (typeof candidate.route_key !== "string" || !/^fpl:code:[1-9]\d*$/.test(candidate.route_key)))
+    ) return null;
+    rows.push(candidate as unknown as ResultRow);
+  }
+  return { rows, snapshot_id: expectedSnapshot, unit: value.unit };
+}
+
+/** Read a result only for the exact artifact/snapshot pair. Malformed rows are
+ * misses; storage failures are reported to telemetry but never fail a query. */
+export async function readQueryCache(
+  env: Env,
+  artifactKey: string,
+  snapshotId: string | null,
+  intent: QueryIntent,
+): Promise<CacheLookup> {
+  if (!snapshotId || !SNAPSHOT_RE.test(snapshotId)) return { result: null, outcome: "not_applicable" };
+  try {
+    const row = await env.DB.prepare(
+      "SELECT schema_version, result_json FROM query_result_cache WHERE artifact_key = ? AND snapshot_id = ?",
+    ).bind(artifactKey, snapshotId).first<{ schema_version: unknown; result_json: unknown }>();
+    if (!row || row.schema_version !== 1) return { result: null, outcome: "miss" };
+    const result = cachedResult(row.result_json, snapshotId, intent);
+    return result ? { result, outcome: "hit" } : { result: null, outcome: "miss" };
+  } catch {
+    return { result: null, outcome: "unavailable" };
+  }
+}
+
+/** Best-effort idempotent write. A cache outage never changes the answer. */
+export async function writeQueryCache(
+  env: Env,
+  artifactKey: string,
+  snapshotId: string | null,
+  result: QueryResult,
+  intent: QueryIntent,
+): Promise<boolean> {
+  if (!snapshotId || !SNAPSHOT_RE.test(snapshotId) || result.snapshot_id !== snapshotId) return false;
+  const encoded = JSON.stringify(result);
+  if (!cachedResult(encoded, snapshotId, intent)) return false;
+  try {
+    await env.DB.prepare(
+      `INSERT INTO query_result_cache (artifact_key, snapshot_id, schema_version, result_json)
+       VALUES (?, ?, 1, ?)
+       ON CONFLICT(artifact_key, snapshot_id) DO UPDATE SET
+         schema_version = excluded.schema_version,
+         result_json = excluded.result_json`,
+    ).bind(artifactKey, snapshotId, encoded).run();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+type QuestionFamily = "player_ranking" | "player_lookup" | "team_season" | "match" | "opponent" | "competition";
+
+function questionFamily(intent: QueryIntent): QuestionFamily {
+  if (intent.entity_type === "season") return "team_season";
+  if (intent.entity_type === "player") {
+    return intent.entity_id === ALL_PLAYERS ? "player_ranking" : "player_lookup";
+  }
+  return intent.entity_type;
+}
+
+const DEMAND_METRICS = new Set(["goals", "assists", "minutes", "points", "xg", "progressive_passes"]);
+
+function metricFamily(metric: string): "goals" | "assists" | "minutes" | "points" | "xg" | "progressive_passes" | "other" {
+  return DEMAND_METRICS.has(metric)
+    ? metric as "goals" | "assists" | "minutes" | "points" | "xg" | "progressive_passes"
+    : "other";
+}
+
+/** Aggregate-only demand signal. Every bound value comes from a finite parser,
+ * feasibility enum or route constant; no request-derived free text enters D1. */
+export async function logQueryAggregate(
+  env: Env,
+  intent: QueryIntent,
+  feasibilityState: string,
+  cacheOutcome: CacheOutcome,
+  resultOutcome: "success" | "refused" | "budget_exceeded",
+  locale: QueryLocale,
+  routeFamily: QueryRouteFamily,
+): Promise<void> {
+  await env.DB.prepare(
+    `INSERT INTO query_demand_aggregate
+       (metric, question_family, viz, feasibility_state, cache_outcome, result_outcome, locale, route_family, request_count)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+     ON CONFLICT(metric, question_family, viz, feasibility_state, cache_outcome, result_outcome, locale, route_family)
+     DO UPDATE SET request_count = request_count + 1`,
+  ).bind(
+    metricFamily(intent.metric),
+    questionFamily(intent),
+    intent.viz,
+    feasibilityState,
+    cacheOutcome,
+    resultOutcome,
+    locale,
+    routeFamily,
+  ).run();
+}
+
 const BUDGET_FAST_LIMIT = 800; // KV pre-filter -- leaves headroom under KV's 1,000 writes/day free-tier ceiling for the rest of the app
 const BUDGET_HARD_LIMIT = 1000; // D1 authoritative cap -- D1's own free tier (100k writes/day) is nowhere close to this
 
@@ -218,7 +363,11 @@ export async function currentPublication(env: Env): Promise<PublicationState | n
 /** `entity_id: "all"` means "rank every player"; anything else names one. */
 export const ALL_PLAYERS = "all";
 
-export async function runQuery(env: Env, intent: QueryIntent): Promise<QueryResult> {
+export async function runQuery(
+  env: Env,
+  intent: QueryIntent,
+  knownSnapshot?: string | null,
+): Promise<QueryResult> {
   const parsed = parseIntent(intent);
   if (!parsed.ok || validateExecutionSupport(parsed.intent)) throw new Error("unsupported_query");
   intent = parsed.intent;
@@ -229,7 +378,7 @@ export async function runQuery(env: Env, intent: QueryIntent): Promise<QueryResu
     throw new Error(`no column mapping for metric '${intent.metric}'`);
   }
 
-  const snapshot = await currentSnapshot(env);
+  const snapshot = knownSnapshot === undefined ? await currentSnapshot(env) : knownSnapshot;
 
   if (intent.entity_type === "season") {
     const stmt = env.DB.prepare(
@@ -473,22 +622,6 @@ export async function seasonRecordRow(
   )
     .bind(season, competition)
     .first<SeasonRecord>();
-}
-
-/** Demand signal. Infeasible requests are the most valuable rows in this table
- *  -- they say what to integrate next. Intent hash only: no PII, no accounts. */
-export async function logDemand(
-  env: Env,
-  intentHash: string,
-  intent: QueryIntent,
-  state: string,
-): Promise<void> {
-  await env.DB.prepare(
-    `INSERT INTO demand_log (intent_hash, metric, season, viz, state, created_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-  )
-    .bind(intentHash, intent.metric, intent.season, intent.viz, state, new Date().toISOString())
-    .run();
 }
 
 /**

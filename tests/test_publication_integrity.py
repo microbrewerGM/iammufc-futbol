@@ -126,6 +126,64 @@ def test_schema_is_idempotent_without_changing_existing_data() -> None:
     assert db.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='player_identities'"
     ).fetchone() == ("player_identities",)
+    assert db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='query_result_cache'"
+    ).fetchone() == ("query_result_cache",)
+    assert db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='query_demand_aggregate'"
+    ).fetchone() == ("query_demand_aggregate",)
+    assert db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='demand_log'"
+    ).fetchone() is None
+
+
+def test_query_aggregate_has_no_request_fingerprint_columns() -> None:
+    db = sqlite3.connect(":memory:")
+    db.executescript(SCHEMA)
+    columns = {row[1] for row in db.execute("PRAGMA table_info(query_demand_aggregate)")}
+    assert columns == {
+        "metric",
+        "question_family",
+        "viz",
+        "feasibility_state",
+        "cache_outcome",
+        "result_outcome",
+        "locale",
+        "route_family",
+        "request_count",
+    }
+    assert columns.isdisjoint(
+        {"created_at", "timestamp", "intent_hash", "artifact_key", "entity_id", "season", "question", "email", "ip_address", "user_agent"}
+    )
+
+
+def test_query_cache_and_aggregate_constraints_are_restart_safe() -> None:
+    db = sqlite3.connect(":memory:")
+    db.executescript(SCHEMA)
+    key = "a" * 64
+    snapshot = "b" * 64
+    payload = json.dumps({"rows": [], "snapshot_id": snapshot, "unit": "goals"})
+    db.execute(
+        "INSERT INTO query_result_cache VALUES (?, ?, 1, ?)",
+        (key, snapshot, payload),
+    )
+    db.execute(
+        "INSERT INTO query_demand_aggregate VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)",
+        ("goals", "player_ranking", "bar", "available", "miss", "success", "en", "query_page"),
+    )
+    db.executescript(SCHEMA)
+    assert db.execute("SELECT result_json FROM query_result_cache").fetchone() == (payload,)
+    assert db.execute("SELECT request_count FROM query_demand_aggregate").fetchone() == (1,)
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute(
+            "INSERT INTO query_result_cache VALUES (?, ?, 1, ?)",
+            ("not-a-key", snapshot, payload),
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute(
+            "INSERT INTO query_demand_aggregate VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)",
+            ("goals", "player_ranking", "bar", "available", "miss", "free-form", "en", "query_page"),
+        )
 
 
 def test_publication_insert_is_last_and_contains_no_transaction_control(
