@@ -17,7 +17,9 @@ vi.mock("jose", async (original) => ({
 vi.mock("../worker/src/core/db", async (original) => ({
   ...await original<typeof import("../worker/src/core/db")>(),
   currentSnapshot: vi.fn(async () => "synthetic"),
-  logDemand: vi.fn(async () => {}),
+  logQueryAggregate: vi.fn(async () => {}),
+  readQueryCache: vi.fn(async () => ({ result: null, outcome: "not_applicable" })),
+  writeQueryCache: vi.fn(async () => false),
   enforceBudget: vi.fn(async () => true),
   allPlayerNames: vi.fn(async () => ["Rashford", "Fernandes", "Bruno Fernandes"]),
   runQuery: vi.fn(async (_env: unknown, intent: { entity_type: string }) => ({
@@ -35,8 +37,10 @@ import {
   allPlayerNames,
   currentSnapshot,
   enforceBudget,
-  logDemand,
+  logQueryAggregate,
+  readQueryCache,
   runQuery,
+  writeQueryCache,
 } from "../worker/src/core/db";
 
 const env = {
@@ -92,7 +96,7 @@ describe("honest query contract routes", () => {
   ])("rejects malformed API shape before data access: %j", async (body) => {
     expect((await post("/api/query", body)).status).toBe(400);
     expect(currentSnapshot).not.toHaveBeenCalled();
-    expect(logDemand).not.toHaveBeenCalled();
+    expect(logQueryAggregate).not.toHaveBeenCalled();
     expect(enforceBudget).not.toHaveBeenCalled();
     expect(runQuery).not.toHaveBeenCalled();
   });
@@ -134,7 +138,98 @@ describe("honest query contract routes", () => {
     expect((await response.json() as { rows: unknown[] }).rows).toEqual([
       { label: "Synthetic", value: 2 },
     ]);
-    expect(runQuery).toHaveBeenCalledWith(env, withDefaults(input));
+    expect(runQuery).toHaveBeenCalledWith(env, withDefaults(input), "synthetic");
+  });
+
+  it("serves a valid cache hit without charging budget or executing", async () => {
+    vi.mocked(readQueryCache).mockResolvedValueOnce({
+      outcome: "hit",
+      result: { rows: [{ label: "Cached", value: 7 }], snapshot_id: "synthetic", unit: "goals" },
+    });
+    const response = await post("/api/query", base);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      feasibility: { state: "available" },
+      rows: [{ label: "Cached", value: 7 }],
+    });
+    expect(enforceBudget).not.toHaveBeenCalled();
+    expect(runQuery).not.toHaveBeenCalled();
+    expect(logQueryAggregate).toHaveBeenCalledWith(
+      env, withDefaults(base), "available", "hit", "success", "api", "query_api",
+    );
+  });
+
+  it("records only finite EN/ES route dimensions", async () => {
+    for (const locale of ["en", "es"] as const) {
+      const response = await app.request(
+        `https://site.invalid/${locale}/q?metric=goals&season=2024-25&viz=bar&entity_id=all`,
+        { headers: auth },
+        env,
+      );
+      expect(response.status).toBe(200);
+      expect(logQueryAggregate).toHaveBeenLastCalledWith(
+        env, expect.objectContaining({ metric: "goals" }),
+        "computable_now_queued", "unavailable", "success", locale, "query_page",
+      );
+    }
+  });
+
+  it("keeps telemetry failure from changing a successful result", async () => {
+    vi.mocked(logQueryAggregate).mockRejectedValueOnce(new Error("storage detail"));
+    const response = await post("/api/query", base);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ rows: [{ label: "Synthetic", value: 2 }] });
+  });
+
+  it("reuses one result identity for repeated canonical requests", async () => {
+    const snapshot = "a".repeat(64);
+    const cachedResult = {
+      rows: [{ label: "Synthetic", value: 2, route_key: "fpl:code:1" }],
+      snapshot_id: snapshot,
+      unit: "goals",
+    };
+    vi.mocked(currentSnapshot)
+      .mockResolvedValueOnce(snapshot)
+      .mockResolvedValueOnce(snapshot)
+      .mockResolvedValueOnce(snapshot);
+    vi.mocked(readQueryCache)
+      .mockResolvedValueOnce({ result: null, outcome: "miss" })
+      .mockResolvedValueOnce({ result: cachedResult, outcome: "hit" });
+    vi.mocked(runQuery).mockResolvedValueOnce(cachedResult);
+    vi.mocked(writeQueryCache).mockResolvedValueOnce(true);
+
+    const first = await post("/api/query", base);
+    const second = await post("/api/query", { ...base, filters: {}, dimensions: [], limit: 10 });
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect((await first.json() as { artifact_key: string }).artifact_key)
+      .toBe((await second.json() as { artifact_key: string }).artifact_key);
+    expect(runQuery).toHaveBeenCalledOnce();
+    expect(enforceBudget).toHaveBeenCalledOnce();
+    expect(writeQueryCache).toHaveBeenCalledOnce();
+  });
+
+  it("records budget refusal separately and never writes a result", async () => {
+    vi.mocked(enforceBudget).mockResolvedValueOnce(false);
+    const response = await post("/api/query", base);
+    expect(response.status).toBe(429);
+    expect(writeQueryCache).not.toHaveBeenCalled();
+    expect(logQueryAggregate).toHaveBeenCalledWith(
+      env, withDefaults(base), "computable_now_queued", "not_applicable",
+      "budget_exceeded", "api", "query_api",
+    );
+  });
+
+  it("refuses a result when publication changes during execution", async () => {
+    vi.mocked(currentSnapshot)
+      .mockResolvedValueOnce("snapshot-before")
+      .mockResolvedValueOnce("snapshot-after");
+    const response = await post("/api/query", base);
+    expect(response.status).toBe(503);
+    expect(await response.text()).toBe("Request unavailable.");
+    expect(runQuery).toHaveBeenCalledOnce();
+    expect(writeQueryCache).not.toHaveBeenCalled();
+    expect(logQueryAggregate).not.toHaveBeenCalled();
   });
 
   it.each([null, [], "question", 5, {}, { question: 55 }, { question: " " }])(
@@ -260,7 +355,7 @@ describe("honest query contract routes", () => {
     expect(response.status).toBe(200);
     expect(await response.text()).toContain("ambiguous and has not been run");
     expect(currentSnapshot).not.toHaveBeenCalled();
-    expect(logDemand).not.toHaveBeenCalled();
+    expect(logQueryAggregate).not.toHaveBeenCalled();
     expect(enforceBudget).not.toHaveBeenCalled();
     expect(runQuery).not.toHaveBeenCalled();
     expect(run).not.toHaveBeenCalled();
@@ -325,7 +420,7 @@ describe("honest query contract routes", () => {
       env,
     );
     expect(supported.status).toBe(200);
-    expect(runQuery).toHaveBeenCalledWith(env, withDefaults({ ...base, limit: 3 }));
+    expect(runQuery).toHaveBeenCalledWith(env, withDefaults({ ...base, limit: 3 }), "synthetic");
 
     vi.clearAllMocks();
     const unsupported = await app.request(
