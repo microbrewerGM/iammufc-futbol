@@ -48,15 +48,18 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Ingest and generate the D1 seed
+      - name: Validate catalog, ingest and generate the D1 seed
         # The seed is generated here and never committed. Hard rule: no data
         # files in a public repository. FOOTBALL_DATA_KEY absent degrades to
         # "skip Champions League", not a failure -- see run.py's own comment.
+        # The committed catalog is read-only here. During this transition the
+        # next command also requires parity with the legacy rights producer.
         env:
           FOOTBALL_DATA_KEY: ${{ secrets.FOOTBALL_DATA_KEY }}
         run: |
           uv sync --locked
-          uv run python -m pipeline.contracts.build_catalog
+          uv run python -m pipeline.contracts.validate_public_catalog
+          uv run python -m pipeline.contracts.validate_legacy_catalog
           uv run python -m pipeline.sources.run
 
       - name: Upload seed for the deploy jobs

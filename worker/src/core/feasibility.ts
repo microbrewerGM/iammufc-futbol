@@ -1,9 +1,10 @@
 /**
  * The feasibility resolver — answered BEFORE any compute.
  *
- * Mirrors pipeline/contracts/feasibility.py. Reads the compiled catalog
- * (worker/src/generated/catalog.json), which is built and invariant-checked by
- * `uv run python -m pipeline.contracts.build_catalog`.
+ * Mirrors pipeline/contracts/feasibility.py. Reads the committed public catalog
+ * (worker/src/generated/catalog.json), which is decoded at Worker startup.
+ * During the ownership transition CI also requires exact semantic parity with
+ * the legacy rights producer; private-only evolution is not enabled yet.
  *
  * This must be a LOOKUP, never an inference. An optimistic false positive
  * produces a confident wrong answer, which is the worst outcome this system

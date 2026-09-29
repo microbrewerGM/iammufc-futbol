@@ -60,22 +60,18 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Catalog invariants
-        # Every coverage cell resolves to a real source and metric; no cell
-        # claims redistributable over a source that forbids it; every source
-        # has a ToS snapshot that exists and is under 12 months old.
-        run: uv run python -m pipeline.contracts.build_catalog
+      - name: Public catalog contract
+        # Validate the committed artifact's closed consumer shape and
+        # cross-record invariants without rewriting it. The next step retains
+        # legacy semantic provenance during the ownership transition.
+        run: uv run python -m pipeline.contracts.validate_public_catalog
 
-      - name: Compiled catalog matches the YAML it derives from
-        # Pin site P16. A hand-edited catalog.json could quietly widen coverage
-        # past what the rights manifest permits, so the build must be a no-op.
+      - name: Legacy catalog rollback boundary
+        # Keep the old public producer valid, private-field-free and exactly in
+        # parity until verifiable private provenance replaces this authority.
         run: |
-          set -euo pipefail
-          if ! git diff --exit-code --stat worker/src/generated/catalog.json; then
-            echo "::error::worker/src/generated/catalog.json is stale. Run: uv run python -m pipeline.contracts.build_catalog"
-            exit 1
-          fi
-          echo "compiled catalog is current"
+          uv run python -m pipeline.contracts.validate_legacy_catalog
+          uv run pytest tests/test_public_catalog_boundary.py -q
 
       - name: Feasibility negative cases
         # Asserts refusals happen for the RIGHT reason -- NO_RIGHTS is not
