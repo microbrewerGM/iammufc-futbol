@@ -38,7 +38,7 @@ from catalog.schemas.models import EntityType, VizType
 TRANSFORM_CODE_VERSION = "2026.08.1"
 
 #: Bump when visual output changes. Pin site P7 in docs/pin-registry.md.
-RENDERER_VERSION = "vega-lite-poc-1"
+RENDERER_VERSION = "svg-v2-dot-plot"
 
 
 class QueryIntent(BaseModel):

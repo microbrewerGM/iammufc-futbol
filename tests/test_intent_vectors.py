@@ -95,6 +95,19 @@ def test_viz_change_changes_the_key():
     )["key"]
 
 
+def test_dot_plot_and_bar_have_separate_cache_identities():
+    intent = QueryIntent(
+        metric="goals",
+        entity_type=EntityType.PLAYER,
+        entity_id="all",
+        season="2024-25",
+        viz=VizType.BAR,
+    )
+    assert artifact_key(intent, "snap-a") != artifact_key(
+        intent.model_copy(update={"viz": VizType.DOT_PLOT}), "snap-a"
+    )
+
+
 def test_snapshot_change_changes_the_key():
     """Retroactive data corrections are routine in football. A snapshot bump
     must invalidate, or corrected data would never reach the site."""

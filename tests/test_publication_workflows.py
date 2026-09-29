@@ -32,3 +32,16 @@ def test_manual_publication_is_main_only() -> None:
     assert deploy["jobs"]["build-data"]["if"] == "github.ref == 'refs/heads/main'"
     assert refresh["jobs"]["refresh-dev"]["if"] == "github.ref == 'refs/heads/main'"
 
+
+def test_dot_plot_constraint_migration_precedes_seed_in_both_workflows() -> None:
+    for name in ("deploy.yml", "nightly-refresh.yml"):
+        workflow = load(name)
+        job = "deploy-dev" if name == "deploy.yml" else "refresh-dev"
+        commands = [
+            step.get("with", {}).get("command", "")
+            for step in workflow["jobs"][job]["steps"]
+        ]
+        schema = next(i for i, command in enumerate(commands) if "0001_schema.sql" in command)
+        migration = next(i for i, command in enumerate(commands) if "0003_p16_dot_plot.sql" in command)
+        seed = next(i for i, command in enumerate(commands) if "0002_seed.sql" in command)
+        assert schema < migration < seed

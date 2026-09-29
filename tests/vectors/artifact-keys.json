@@ -2,7 +2,7 @@
   "_comment": "Committed fixture shared by the Python and TypeScript test suites. Both assert read-only. If TS disagrees, fix TS -- do not regenerate.",
   "snapshot_id": "snap-test-0000000000000000000000000000000000000000000000000000000000",
   "transform_code_version": "2026.08.1",
-  "renderer_version": "vega-lite-poc-1",
+  "renderer_version": "svg-v2-dot-plot",
   "vectors": [
     {
       "name": "minimal defaults applied",
@@ -13,7 +13,7 @@
         "season": "2024-25"
       },
       "canonical": "{\"competition\":\"PL\",\"dimensions\":[],\"entity_id\":\"p1\",\"entity_type\":\"player\",\"filters\":{},\"limit\":10,\"metric\":\"goals\",\"season\":\"2024-25\",\"viz\":\"table\"}",
-      "key": "910170a9b7aa5fd598baaf1c82bff07785b53bba4205a534b39fe1602313a08d"
+      "key": "609c7086400752a594963ffae5ff199358ff1453b8fc71414bae689138cd2518"
     },
     {
       "name": "explicit defaults hash the same as omitted ones",
@@ -29,7 +29,7 @@
         "limit": 10
       },
       "canonical": "{\"competition\":\"PL\",\"dimensions\":[],\"entity_id\":\"p1\",\"entity_type\":\"player\",\"filters\":{},\"limit\":10,\"metric\":\"goals\",\"season\":\"2024-25\",\"viz\":\"table\"}",
-      "key": "910170a9b7aa5fd598baaf1c82bff07785b53bba4205a534b39fe1602313a08d"
+      "key": "609c7086400752a594963ffae5ff199358ff1453b8fc71414bae689138cd2518"
     },
     {
       "name": "dimension order is not semantic",
@@ -46,7 +46,7 @@
         "viz": "bar"
       },
       "canonical": "{\"competition\":\"PL\",\"dimensions\":[\"home_away\",\"matchday\",\"opponent\"],\"entity_id\":\"p7\",\"entity_type\":\"player\",\"filters\":{},\"limit\":10,\"metric\":\"assists\",\"season\":\"2023-24\",\"viz\":\"bar\"}",
-      "key": "2ac97cdfb5ccb1ce271413ea9b53dd8c0b23e7a641de3bd9692dc8934933c9b7"
+      "key": "77ff980d2aeaa50e12a6de4ae1496034a90db3f8537b97eda368dc28f81211d1"
     },
     {
       "name": "same dimensions, reversed input order",
@@ -63,7 +63,7 @@
         "viz": "bar"
       },
       "canonical": "{\"competition\":\"PL\",\"dimensions\":[\"home_away\",\"matchday\",\"opponent\"],\"entity_id\":\"p7\",\"entity_type\":\"player\",\"filters\":{},\"limit\":10,\"metric\":\"assists\",\"season\":\"2023-24\",\"viz\":\"bar\"}",
-      "key": "2ac97cdfb5ccb1ce271413ea9b53dd8c0b23e7a641de3bd9692dc8934933c9b7"
+      "key": "77ff980d2aeaa50e12a6de4ae1496034a90db3f8537b97eda368dc28f81211d1"
     },
     {
       "name": "filter key order is not semantic",
@@ -78,7 +78,7 @@
         }
       },
       "canonical": "{\"competition\":\"PL\",\"dimensions\":[],\"entity_id\":\"p9\",\"entity_type\":\"player\",\"filters\":{\"competition_stage\":\"group\",\"venue\":\"home\"},\"limit\":10,\"metric\":\"minutes\",\"season\":\"2025-26\",\"viz\":\"table\"}",
-      "key": "45a7ddf01b99aa797af8981687dbf0896ba1694881683971357588bcb8242c74"
+      "key": "833537a3f60ed99639b2c6c5c80727a2ad18c3bf062bebfc12bb15f4b460238a"
     },
     {
       "name": "same filters, reversed key order",
@@ -93,7 +93,7 @@
         }
       },
       "canonical": "{\"competition\":\"PL\",\"dimensions\":[],\"entity_id\":\"p9\",\"entity_type\":\"player\",\"filters\":{\"competition_stage\":\"group\",\"venue\":\"home\"},\"limit\":10,\"metric\":\"minutes\",\"season\":\"2025-26\",\"viz\":\"table\"}",
-      "key": "45a7ddf01b99aa797af8981687dbf0896ba1694881683971357588bcb8242c74"
+      "key": "833537a3f60ed99639b2c6c5c80727a2ad18c3bf062bebfc12bb15f4b460238a"
     },
     {
       "name": "non-ascii entity id survives round trip",
@@ -105,7 +105,7 @@
         "viz": "bar"
       },
       "canonical": "{\"competition\":\"PL\",\"dimensions\":[],\"entity_id\":\"garnacho-fernández\",\"entity_type\":\"player\",\"filters\":{},\"limit\":10,\"metric\":\"goals\",\"season\":\"2024-25\",\"viz\":\"bar\"}",
-      "key": "2d12db9abc59be0632ea5df594fe75eee7c8380ca8e1a99b0362f3e86598ae93"
+      "key": "3b6e2c4740d6e7b838ad2e7dd7f8d8bfa9624ea4527f389d53c41c2ee6a99c35"
     },
     {
       "name": "event-coordinate viz changes the key",
@@ -117,7 +117,7 @@
         "viz": "shot_map"
       },
       "canonical": "{\"competition\":\"PL\",\"dimensions\":[],\"entity_id\":\"p1\",\"entity_type\":\"player\",\"filters\":{},\"limit\":10,\"metric\":\"goals\",\"season\":\"2017-18\",\"viz\":\"shot_map\"}",
-      "key": "03d509f590ec2e530707e335cce145619ac26e49e25e7565b9658caa4e954c95"
+      "key": "688a87ecd1f96796f2f306215f60beb12c81d055b0fabb8ff9b8bf1a9c41ec03"
     },
     {
       "name": "season entity",
@@ -128,7 +128,7 @@
         "season": "2024-25"
       },
       "canonical": "{\"competition\":\"PL\",\"dimensions\":[],\"entity_id\":\"2024-25\",\"entity_type\":\"season\",\"filters\":{},\"limit\":10,\"metric\":\"goals\",\"season\":\"2024-25\",\"viz\":\"table\"}",
-      "key": "40badae64c24d3e1bcf09abfa12bc87035ba8c88aa57a7aa2796c131839c466b"
+      "key": "43078fa7864946d4de66966a6a5aaaebe8bd2d664cfe52a5a20fba81f3e5736e"
     }
   ]
 }

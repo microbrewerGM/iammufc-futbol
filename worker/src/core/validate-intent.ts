@@ -4,7 +4,7 @@ export interface IntentIssue { code: "invalid_intent" | "unsupported_field" | "u
 type Parsed = { ok: true; intent: QueryIntent } | { ok: false; issue: IntentIssue };
 const fields = new Set(["metric", "entity_type", "entity_id", "season", "competition", "dimensions", "filters", "viz", "limit"]);
 const entities = new Set(["player", "match", "season", "opponent", "competition"]);
-const visualizations = new Set(["table", "bar", "line", "shot_map", "pass_map", "heatmap"]);
+const visualizations = new Set(["table", "bar", "dot_plot", "line", "shot_map", "pass_map", "heatmap"]);
 function record(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   const prototype = Object.getPrototypeOf(value);
@@ -44,7 +44,7 @@ export function validateQuerySemantics(intent: QueryIntent): IntentIssue | null 
 export function validateExecutionSupport(intent: QueryIntent): IntentIssue | null {
   const issue = validateQuerySemantics(intent);
   if (issue) return issue;
-  if (intent.viz !== "table" && intent.viz !== "bar") return { code: "unsupported_execution", field: "viz" };
+  if (!["table", "bar", "dot_plot"].includes(intent.viz)) return { code: "unsupported_execution", field: "viz" };
   if (intent.entity_type === "season") return intent.metric === "goals" ? null : { code: "unsupported_execution", field: "metric" };
   if (intent.entity_type !== "player") return { code: "unsupported_execution", field: "entity_type" };
   if (!intent.entity_id.trim()) return { code: "unsupported_execution", field: "entity_id" };

@@ -77,6 +77,12 @@ jobs:
           apiToken: ${{ secrets.CF_TOKEN_DEV }}
           command: d1 execute iammufc-dev --config infra/wrangler.jsonc --env dev --remote --file infra/migrations/0001_schema.sql
 
+      - name: Apply P16 telemetry migration
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CF_TOKEN_DEV }}
+          command: d1 execute iammufc-dev --config infra/wrangler.jsonc --env dev --remote --file infra/migrations/0003_p16_dot_plot.sql
+
       - name: Load seed
         uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
         with:

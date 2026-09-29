@@ -10,6 +10,16 @@ import {
 const catalog = new Catalog(compiled as unknown as CompiledCatalog);
 
 describe("rule proposal contract", () => {
+  it.each([
+    ["Top goals 2024-25 dot plot", "goals"],
+    ["Gráfico de puntos de goles 2024-25", "goals"],
+    ["Puntos en gráfico de puntos 2024-25", "points"],
+  ])("keeps visualization words out of metric classification: %s", (question, metric) => {
+    const parsed = parseRuleBased(question, catalog).intent;
+    expect(parsed.viz).toBe("dot_plot");
+    expect(parsed.metric).toBe(metric);
+  });
+
   it("preserves a requested Champions League competition", () => {
     expect(parseRuleBased("Top goals 2024-25 Champions League", catalog).intent.competition)
       .toBe("CL");

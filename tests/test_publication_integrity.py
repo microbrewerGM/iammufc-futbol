@@ -16,6 +16,7 @@ import pytest
 from pipeline.sources import run as run_mod
 
 SCHEMA = Path("infra/migrations/0001_schema.sql").read_text(encoding="utf-8")
+P16_MIGRATION = Path("infra/migrations/0003_p16_dot_plot.sql").read_text(encoding="utf-8")
 
 
 def players(snapshot_suffix: str, goals: int) -> pd.DataFrame:
@@ -184,6 +185,43 @@ def test_query_cache_and_aggregate_constraints_are_restart_safe() -> None:
             "INSERT INTO query_demand_aggregate VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)",
             ("goals", "player_ranking", "bar", "available", "miss", "free-form", "en", "query_page"),
         )
+
+
+def test_dot_plot_migration_preserves_counters_and_is_restart_safe() -> None:
+    assert "BEGIN" not in P16_MIGRATION.upper()
+    assert "COMMIT" not in P16_MIGRATION.upper()
+    db = sqlite3.connect(":memory:")
+    old_schema = SCHEMA.replace(", 'dot_plot'", "")
+    db.executescript(old_schema)
+    row = ("goals", "player_ranking", "bar", "available", "miss", "success", "en", "query_page", 7)
+    db.execute("INSERT INTO query_demand_aggregate VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", row)
+    execute_atomic(db, P16_MIGRATION)
+    execute_atomic(db, P16_MIGRATION)
+    assert db.execute("SELECT * FROM query_demand_aggregate").fetchone() == row
+    db.execute(
+        "INSERT INTO query_demand_aggregate VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("goals", "player_ranking", "dot_plot", "available", "hit", "success", "es", "query_page", 1),
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute(
+            "INSERT INTO query_demand_aggregate VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("goals", "player_ranking", "pie", "available", "hit", "success", "en", "query_page", 1),
+        )
+
+
+def test_failed_dot_plot_migration_rolls_back_existing_table() -> None:
+    db = sqlite3.connect(":memory:")
+    db.executescript(SCHEMA.replace(", 'dot_plot'", ""))
+    row = ("goals", "player_ranking", "bar", "available", "miss", "success", "en", "query_page", 3)
+    db.execute("INSERT INTO query_demand_aggregate VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", row)
+    db.commit()
+    broken = P16_MIGRATION.replace(
+        "DROP TABLE query_demand_aggregate;",
+        "SELECT * FROM missing_p16_table;\nDROP TABLE query_demand_aggregate;",
+    )
+    with pytest.raises(sqlite3.Error):
+        execute_atomic(db, broken)
+    assert db.execute("SELECT * FROM query_demand_aggregate").fetchone() == row
 
 
 def test_publication_insert_is_last_and_contains_no_transaction_control(

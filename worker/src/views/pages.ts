@@ -1,4 +1,4 @@
-import { barChartSvg, buildAltText, formatValue as formatValueEn } from "../core/chart";
+import { barChartSvg, buildAltText, dotPlotSvg, formatValue as formatValueEn } from "../core/chart";
 import type {
   ResultRow,
   SeasonRecord,
@@ -339,14 +339,46 @@ ${alternative}
   }
 
   const title = `${label} — ${intent.season} ${intent.competition}`;
-  const altText = buildAltText(rows, { title, decimals, formatValue: fmt as typeof formatValueEn });
-  const chart =
-    intent.viz === "table"
-      ? ""
-      : barChartSvg(rows, { title, unit: intent.metric, decimals, altText, formatValue: fmt as typeof formatValueEn });
+  const altText = buildAltText(rows, {
+    title, decimals, formatValue: fmt as typeof formatValueEn, language: locale.code,
+  });
+  const chartOptions = {
+    id: `chart-${artifactKey.slice(0, 16)}`,
+    title,
+    unit: intent.metric,
+    decimals,
+    altText,
+    formatValue: fmt as typeof formatValueEn,
+    language: locale.code,
+  };
+  const chart = intent.viz === "table"
+    ? ""
+    : intent.viz === "dot_plot"
+      ? dotPlotSvg(rows, chartOptions)
+      : barChartSvg(rows, chartOptions);
+  const chartRegion = chart
+    ? `<div class="chart-region" tabindex="0" role="region" aria-label="${esc(title)}">${chart}</div>`
+    : "";
+
+  const vizLabels = locale.code === "es"
+    ? { bar: "Barras", dot_plot: "Gráfico de puntos", table: "Tabla", label: "Visualización" }
+    : { bar: "Bars", dot_plot: "Dots", table: "Table", label: "Visualization" };
+  const choices = (["bar", "dot_plot", "table"] as const).map((viz) => {
+    const params = new URLSearchParams({
+      metric: intent.metric,
+      entity_type: intent.entity_type,
+      entity_id: intent.entity_id,
+      season: intent.season,
+      competition: intent.competition,
+      viz,
+      limit: String(intent.limit),
+    });
+    return `<a href="${esc(`${base(locale)}/q?${params.toString()}`)}"${intent.viz === viz ? ' aria-current="page"' : ""}>${esc(vizLabels[viz])}</a>`;
+  }).join(" ");
 
   return `<h2>${esc(title)}</h2>
-${chart}
+<nav class="viz-choices" aria-label="${esc(vizLabels.label)}">${choices}</nav>
+${chartRegion}
 ${intent.entity_type === "season" ? seasonDataTable(rows, label, decimals, locale) : dataTable(rows, label, decimals, intent.season, locale)}
 <p class="tagline"><a href="${base(locale)}/season/${esc(intent.season)}">${esc(t.fullSquadFor(intent.season))}</a> ·
 <code>${esc(artifactKey.slice(0, 16))}</code> — ${esc(t.artifactNote)}</p>`;
