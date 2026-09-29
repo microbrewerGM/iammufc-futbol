@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { denialSmoke, runSmoke, smoke, validateChatPayload,
-  validateHealthPayload } from './dev-access-smoke.mjs';
+  validateHealthPayload, validateQueryPayload } from './dev-access-smoke.mjs';
 
 const env = { CF_ACCESS_CLIENT_ID: 'synthetic-id', CF_ACCESS_CLIENT_SECRET: 'synthetic-secret' };
 const snapshot = 'a'.repeat(64);
@@ -30,8 +30,16 @@ const validChat = {
 };
 const unsupported = { rejected: true, code: 'unsupported_semantics', reason: 'private',
   suggestion: 'private', proposed_intent: null, feasibility: null };
+const validQuery = (state = 'available') => ({
+  artifact_key: 'b'.repeat(64), snapshot_id: snapshot,
+  intent: validChat.proposed_intent,
+  feasibility: { state },
+  rows: [{ label: 'Player', value: 9, secondary: 'FW', route_key: 'fpl:code:1' }],
+  attribution: ['Source'],
+});
 test('fixed dev origin, manual redirects, private response and all checks', async () => {
   const calls = [];
+  let queryCalls = 0;
   const results = await smoke(env, async (url, init) => {
     calls.push({ url, init });
     assert.equal(new URL(url).origin, 'https://iammufc-dev.aaron-cf2.workers.dev');
@@ -41,25 +49,41 @@ test('fixed dev origin, manual redirects, private response and all checks', asyn
     const path = new URL(url).pathname;
     const health = path === '/api/health';
     const chat = path === '/api/chat';
+    const query = path === '/api/query';
     const rejected = chat && init.body.includes('per 90');
     return new Response(health
       ? JSON.stringify(validHealth)
       : chat ? JSON.stringify(rejected ? unsupported : validChat)
+      : query ? JSON.stringify(validQuery(queryCalls++ === 0 ? 'computable_now_queued' : 'available'))
       : 'Ask about Manchester United Pregunta sobre el Manchester United Data and sources Datos y fuentes League season comparison Comparación de temporadas de liga 49–35 goals 49–35 goles >1.74</td> >1,74</td> font-family Assists — 2023-24 PL',
     { status: rejected ? 422 : 200, headers: { 'cache-control': 'private, no-store',
-      ...((health || chat) ? { 'content-type': 'application/json; charset=UTF-8' } : {}) } });
+      ...((health || chat || query) ? { 'content-type': 'application/json; charset=UTF-8' } : {}) } });
   });
-  assert.equal(calls.length, 11);
+  assert.equal(calls.length, 13);
   assert.equal(calls.find((call) => new URL(call.url).pathname === '/en/ask').init.method, 'POST');
   assert.equal(calls.find((call) => new URL(call.url).pathname === '/api/health').init.method, 'GET');
   assert.ok(results.every((result) => result.pass));
-  assert.deepEqual(results.at(-2), { path: '/api/chat', status: 200, pass: true,
+  assert.deepEqual(results.at(-4), { path: '/api/chat', status: 200, pass: true,
     model_status: 'accepted' });
-  assert.deepEqual(results.at(-1), { path: '/api/chat', status: 422, pass: true,
+  assert.deepEqual(results.at(-3), { path: '/api/chat', status: 422, pass: true,
     gate_status: 'unsupported_semantics' });
+  assert.deepEqual(results.at(-2), { path: '/api/query', status: 200, pass: true,
+    query_state: 'computable_now_queued' });
+  assert.deepEqual(results.at(-1), { path: '/api/query', status: 200, pass: true,
+    query_state: 'available' });
   assert.ok(!JSON.stringify(results).includes('synthetic'));
   assert.ok(!JSON.stringify(results).includes(snapshot));
   assert.ok(!JSON.stringify(results).includes(retrieved));
+});
+
+test('query validator binds finite result shape and hides identity from output', () => {
+  assert.deepEqual(validateQueryPayload(validQuery()), {
+    artifactKey: 'b'.repeat(64), state: 'available',
+  });
+  assert.equal(validateQueryPayload({ ...validQuery(), artifact_key: 'bad' }), null);
+  assert.equal(validateQueryPayload({ ...validQuery(), rows: [{ ...validQuery().rows[0], extra: true }] }), null);
+  assert.equal(validateQueryPayload({ ...validQuery(), intent: { ...validChat.proposed_intent, season: '2023-24' } }), null);
+  assert.equal(validateQueryPayload({ ...validQuery(), feasibility: { state: 'no_rights' } }), null);
 });
 
 test('chat validator accepts finite model outcomes and rejects drift', () => {
@@ -213,19 +237,22 @@ test('only the exact trusted Access challenge passes negative probes', async () 
 });
 
 test('combined smoke requires authenticated success and denial success', async () => {
+  let queryCalls = 0;
   const results = await runSmoke(env, async (url, init) => {
     const headers = new Headers(init.headers);
     if (!headers.has('CF-Access-Client-Id')) return accessRedirect();
     const path = new URL(url).pathname;
     const health = path === '/api/health';
     const chat = path === '/api/chat';
+    const query = path === '/api/query';
     const rejected = chat && init.body.includes('per 90');
     return new Response(health ? JSON.stringify(validHealth) :
       chat ? JSON.stringify(rejected ? unsupported : validChat) :
+      query ? JSON.stringify(validQuery(queryCalls++ === 0 ? 'computable_now_queued' : 'available')) :
       'Ask about Manchester United Pregunta sobre el Manchester United Data and sources Datos y fuentes League season comparison Comparación de temporadas de liga 49–35 goals 49–35 goles >1.74</td> >1,74</td> font-family Assists — 2023-24 PL',
     { status: rejected ? 422 : 200, headers: { 'cache-control': 'private, no-store',
-      ...((health || chat) ? { 'content-type': 'application/json' } : {}) } });
+      ...((health || chat || query) ? { 'content-type': 'application/json' } : {}) } });
   });
-  assert.equal(results.length, 50);
+  assert.equal(results.length, 52);
   assert.ok(results.every((result) => result.pass));
 });

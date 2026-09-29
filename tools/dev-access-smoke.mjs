@@ -22,6 +22,8 @@ const intentKeys = ['competition', 'dimensions', 'entity_id', 'entity_type', 'fi
   'metric', 'season', 'viz'];
 const feasibilityKeys = new Set(['attribution_asset', 'attribution_text', 'cost_class',
   'nearest_alternative', 'reason', 'source_name', 'state']);
+const queryKeys = ['artifact_key', 'attribution', 'feasibility', 'intent', 'rows', 'snapshot_id'];
+const queryRowKeys = ['label', 'route_key', 'secondary', 'value'];
 const plain = (value) => value !== null && typeof value === 'object' && !Array.isArray(value) &&
   [Object.prototype, null].includes(Object.getPrototypeOf(value));
 const exactKeys = (value, expected) => {
@@ -89,6 +91,30 @@ export function validateChatPayload(value) {
   return value.model_status;
 }
 
+/** Validate the deterministic query boundary without returning rows or keys to
+ * output. The caller keeps the key in memory only to compare two requests. */
+export function validateQueryPayload(value) {
+  if (!exactKeys(value, queryKeys) || !exactKeys(value.intent, intentKeys) ||
+      !plain(value.feasibility) || Object.keys(value.feasibility).some((key) => !feasibilityKeys.has(key)) ||
+      !['available', 'computable_now_queued'].includes(value.feasibility.state) ||
+      typeof value.artifact_key !== 'string' || !/^[a-f0-9]{64}$/.test(value.artifact_key) ||
+      typeof value.snapshot_id !== 'string' || !/^[a-f0-9]{64}$/.test(value.snapshot_id) ||
+      !Array.isArray(value.attribution) || value.attribution.length !== 1 ||
+      typeof value.attribution[0] !== 'string' || value.attribution[0].length === 0 ||
+      !Array.isArray(value.rows) || value.rows.length === 0 || value.rows.length > 10) return null;
+  const intent = value.intent;
+  if (intent.metric !== 'goals' || intent.entity_type !== 'player' || intent.entity_id !== 'all' ||
+      intent.season !== '2024-25' || intent.competition !== 'PL' || intent.viz !== 'bar' ||
+      intent.limit !== 10 || !Array.isArray(intent.dimensions) || intent.dimensions.length !== 0 ||
+      !plain(intent.filters) || Object.keys(intent.filters).length !== 0) return null;
+  for (const row of value.rows) {
+    if (!exactKeys(row, queryRowKeys) || typeof row.label !== 'string' || row.label.length === 0 ||
+        (row.value !== null && (typeof row.value !== 'number' || !Number.isFinite(row.value))) ||
+        typeof row.secondary !== 'string' || !/^fpl:code:[1-9]\d*$/.test(row.route_key)) return null;
+  }
+  return { artifactKey: value.artifact_key, state: value.feasibility.state };
+}
+
 function validateUnsupportedPayload(value) {
   return exactKeys(value, ['code', 'feasibility', 'proposed_intent', 'reason', 'rejected', 'suggestion']) &&
     value.rejected === true && value.code === 'unsupported_semantics' &&
@@ -115,8 +141,17 @@ export async function smoke(env, request = fetch) {
       body: JSON.stringify({ question: 'Top goals 2024-25' }), contentType: 'application/json' },
     { path: '/api/chat', unsupported: true, method: 'POST',
       body: JSON.stringify({ question: 'Top goals per 90 2024-25' }), contentType: 'application/json' },
+    { path: '/api/query', query: 'first', method: 'POST',
+      body: JSON.stringify({ metric: 'goals', entity_type: 'player', entity_id: 'all',
+        season: '2024-25', competition: 'PL', dimensions: [], filters: {}, viz: 'bar', limit: 10 }),
+      contentType: 'application/json' },
+    { path: '/api/query', query: 'repeat', method: 'POST',
+      body: JSON.stringify({ metric: 'goals', entity_type: 'player', entity_id: 'all',
+        season: '2024-25', competition: 'PL', dimensions: [], filters: {}, viz: 'bar', limit: 10 }),
+      contentType: 'application/json' },
   ];
   const results = [];
+  let queryIdentity = null;
   for (const check of cases) {
     const response = await request(origin + check.path, {
       method: check.method ?? 'GET', redirect: 'manual', signal: AbortSignal.timeout(15000),
@@ -132,6 +167,7 @@ export async function smoke(env, request = fetch) {
     let healthState = null;
     let modelStatus = null;
     let unsupported = false;
+    let queryResult = null;
     if (check.health && /^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type') ?? '')) {
       try { healthState = validateHealthPayload(JSON.parse(body)); } catch { healthState = null; }
     }
@@ -141,16 +177,28 @@ export async function smoke(env, request = fetch) {
     if (check.unsupported && /^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type') ?? '')) {
       try { unsupported = validateUnsupportedPayload(JSON.parse(body)); } catch { unsupported = false; }
     }
+    if (check.query && /^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type') ?? '')) {
+      try { queryResult = validateQueryPayload(JSON.parse(body)); } catch { queryResult = null; }
+    }
+    const queryPass = check.query === 'first'
+      ? queryResult !== null
+      : check.query === 'repeat'
+        ? queryResult !== null && queryIdentity !== null &&
+          queryResult.artifactKey === queryIdentity && queryResult.state === 'available'
+        : false;
+    if (check.query === 'first' && queryResult) queryIdentity = queryResult.artifactKey;
     const expectedStatus = check.unsupported ? 422 : 200;
     const contentPass = check.health ? healthState !== null
       : check.chat ? modelStatus !== null
       : check.unsupported ? unsupported
+      : check.query ? queryPass
       : (check.markers ?? [check.marker]).every((marker) => body.includes(marker));
     const pass = response.status === expectedStatus && Boolean(privateResponse) && contentPass;
     results.push({ path: check.path, status: response.status, pass,
       ...(check.health ? { health_state: pass ? healthState : 'invalid' } : {}),
       ...(check.chat ? { model_status: pass ? modelStatus : 'invalid' } : {}),
       ...(check.unsupported ? { gate_status: pass ? 'unsupported_semantics' : 'invalid' } : {}) });
+    if (check.query) results.at(-1).query_state = pass ? queryResult.state : 'invalid';
   }
   return results;
 }
