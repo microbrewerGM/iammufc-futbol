@@ -4,13 +4,28 @@ from __future__ import annotations
 
 import json
 
-from pipeline.contracts.build_catalog import COMPILED_PATH, compile_for_worker, load_catalog
+import pytest
+
+from pipeline.contracts.build_catalog import compile_for_worker, load_catalog
+from pipeline.contracts.validate_legacy_catalog import (
+    main as validate_legacy_main,
+    validate_legacy_parity,
+)
+from pipeline.contracts.validate_public_catalog import (
+    COMPILED_PATH,
+    PublicCatalogError,
+    validate_public_catalog_value,
+)
 
 
-def test_worker_catalog_is_closed_and_matches_the_committed_artifact():
+def test_legacy_worker_catalog_is_closed_and_satisfies_the_consumer_contract():
     compiled = compile_for_worker(load_catalog())
 
+    validated = validate_public_catalog_value(compiled)
+
     assert set(compiled) == {"version", "metrics", "coverage"}
+    assert len(validated.metrics) == len(compiled["metrics"])
+    assert len(validated.coverage) == len(compiled["coverage"])
     assert all(
         set(metric) == {
             "metric_id", "label_en", "label_es", "description", "description_es",
@@ -26,7 +41,21 @@ def test_worker_catalog_is_closed_and_matches_the_committed_artifact():
         }
         for cell in compiled["coverage"]
     )
-    assert json.loads(COMPILED_PATH.read_text(encoding="utf-8")) == compiled
+
+
+def test_legacy_catalog_validation_is_read_only():
+    before = COMPILED_PATH.read_bytes()
+
+    assert validate_legacy_main() == 0
+    assert COMPILED_PATH.read_bytes() == before
+
+
+def test_legacy_parity_rejects_unreviewed_public_coverage():
+    candidate = json.loads(COMPILED_PATH.read_text(encoding="utf-8"))
+    candidate["coverage"][0]["season"] = "2099-00"
+
+    with pytest.raises(PublicCatalogError, match="does not match"):
+        validate_legacy_parity(candidate)
 
 
 def test_worker_catalog_omits_internal_rights_and_retrieval_rationale():

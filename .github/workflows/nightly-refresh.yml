@@ -53,12 +53,14 @@ jobs:
           uv sync --locked
           npm ci
 
-      - name: Rebuild and validate the catalog
-        # Fails the run rather than publish a catalog that disagrees with its
-        # own rights manifest -- same invariant rights-gate.yml enforces on
-        # every PR, run again here because upstream data can drift independent
-        # of any code change.
-        run: uv run python -m pipeline.contracts.build_catalog
+      - name: Validate the committed public catalog
+        # Treat the sanitized artifact as a read-only consumer input. Fail
+        # closed if its contract drifts, but never rewrite it here. Legacy
+        # semantic parity still guards provenance and the adapters used below
+        # until verifiable private attestation and D1 production move later.
+        run: |
+          uv run python -m pipeline.contracts.validate_public_catalog
+          uv run python -m pipeline.contracts.validate_legacy_catalog
 
       - name: Ingest
         # Pandera gates (pipeline/sources/schemas.py) plus the cross-frame

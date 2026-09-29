@@ -11,6 +11,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "d1:seed": "wrangler d1 execute iammufc-dev --config infra/wrangler.jsonc --env dev --local --file infra/migrations/0001_schema.sql && wrangler d1 execute iammufc-dev --config infra/wrangler.jsonc --env dev --local --file infra/migrations/0003_p16_dot_plot.sql && wrangler d1 execute iammufc-dev --config infra/wrangler.jsonc --env dev --local --file infra/migrations/0002_seed.sql",
+    "catalog:validate": "uv run python -m pipeline.contracts.validate_public_catalog",
     "catalog:build": "uv run python -m pipeline.contracts.build_catalog",
     "ingest": "uv run python -m pipeline.sources.run"
   },

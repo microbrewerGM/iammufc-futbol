@@ -37,7 +37,8 @@ import {
   type Env,
   type PublicationState,
 } from "./core/db";
-import { Catalog, columnFeasibility, hasSubstance, type CompiledCatalog } from "./core/feasibility";
+import { decodeCompiledCatalog } from "./core/catalog-contract";
+import { Catalog, columnFeasibility, hasSubstance } from "./core/feasibility";
 import { artifactKey } from "./core/intent";
 import { parseIntent, validateExecutionSupport, validateQuerySemantics } from "./core/validate-intent";
 import { LOCALES, type Locale, type LocaleCode } from "./core/locale";
@@ -69,7 +70,7 @@ import {
 /** Pin site P14. Bump deliberately -- a different model parses differently. */
 const AI_MODEL = "@cf/meta/llama-3.2-3b-instruct";
 
-const catalog = new Catalog(compiledCatalog as unknown as CompiledCatalog);
+const catalog = new Catalog(decodeCompiledCatalog(compiledCatalog));
 const app = new Hono<{ Bindings: Env }>();
 
 /** Private responses never enter browser/shared caches, even on error. */
