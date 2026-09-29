@@ -59,7 +59,7 @@ describe("runtime intent shape", () => {
 
 describe("supported execution contract", () => {
   it.each(["goals", "assists", "minutes", "points", "xg"])("permits player metric %s with supported renderers", (metric) => {
-    for (const viz of ["table", "bar"] as const) {
+    for (const viz of ["table", "bar", "dot_plot"] as const) {
       expect(validateExecutionSupport(withDefaults({ ...base, metric, viz }))).toBeNull();
     }
   });

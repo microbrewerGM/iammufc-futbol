@@ -102,6 +102,13 @@ describe("canonicalization invariants", () => {
       byName("event-coordinate viz changes the key").key,
     );
   });
+
+  it("gives a dot plot and bar chart separate cache identities", async () => {
+    const base = build({ metric: "goals", entity_type: "player", entity_id: "all", season: "2024-25", viz: "bar" });
+    expect(await artifactKey(base, "snap-a")).not.toBe(
+      await artifactKey({ ...base, viz: "dot_plot" }, "snap-a"),
+    );
+  });
 });
 
 describe("snapshot participation in the key", () => {

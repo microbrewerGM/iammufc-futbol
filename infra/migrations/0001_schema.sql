@@ -113,7 +113,7 @@ CREATE TABLE IF NOT EXISTS query_result_cache (
 CREATE TABLE IF NOT EXISTS query_demand_aggregate (
   metric            TEXT NOT NULL CHECK (metric IN ('goals', 'assists', 'minutes', 'points', 'xg', 'progressive_passes', 'other')),
   question_family   TEXT NOT NULL CHECK (question_family IN ('player_ranking', 'player_lookup', 'team_season', 'match', 'opponent', 'competition')),
-  viz               TEXT NOT NULL CHECK (viz IN ('table', 'bar', 'line', 'shot_map', 'pass_map', 'heatmap')),
+  viz               TEXT NOT NULL CHECK (viz IN ('table', 'bar', 'dot_plot', 'line', 'shot_map', 'pass_map', 'heatmap')),
   feasibility_state TEXT NOT NULL CHECK (feasibility_state IN ('available', 'computable_now_queued', 'computable_but_expensive', 'no_data', 'no_rights')),
   cache_outcome     TEXT NOT NULL CHECK (cache_outcome IN ('hit', 'miss', 'unavailable', 'not_applicable')),
   result_outcome    TEXT NOT NULL CHECK (result_outcome IN ('success', 'refused', 'budget_exceeded')),

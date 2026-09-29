@@ -55,6 +55,7 @@ const METRIC_SYNONYMS: Record<string, string[]> = {
 };
 
 const VIZ_SYNONYMS: Array<[VizType, string[]]> = [
+  ["dot_plot", ["dot plot", "dot chart", "gráfico de puntos", "grafico de puntos"]],
   ["shot_map", ["shot map", "shotmap", "shot chart", "mapa de tiros"]],
   ["pass_map", ["pass map", "passmap", "mapa de pases"]],
   ["heatmap", ["heat map", "heatmap", "mapa de calor"]],
@@ -106,6 +107,16 @@ function detectViz(text: string): VizType | null {
   return null;
 }
 
+/** Visualization names are syntax, not metric evidence. In Spanish,
+ * "gráfico de puntos" contains the metric synonym "puntos"; remove the full
+ * visualization phrase before classifying the requested statistic. A real
+ * request such as "puntos en gráfico de puntos" retains its first occurrence. */
+function withoutVizPhrases(text: string): string {
+  return VIZ_SYNONYMS.flatMap(([, words]) => words)
+    .sort((a, b) => b.length - a.length)
+    .reduce((remaining, phrase) => remaining.replaceAll(phrase, " "), text);
+}
+
 function detectCompetition(text: string): string {
   return /\b(champions league|champions|ucl|liga de campeones)\b/i.test(text) ? "CL" : "PL";
 }
@@ -155,7 +166,7 @@ export function parseRuleBased(question: string, catalog: Catalog): Proposal {
   const text = question.toLowerCase().trim();
   const notes: string[] = [];
 
-  const metric = detectMetric(text);
+  const metric = detectMetric(withoutVizPhrases(text));
   const allSeasons = [...new Set(catalog.coverage.map((c) => c.season))].sort().reverse();
   const { season, note } = parseSeason(text, allSeasons);
   if (note) notes.push(note);
@@ -208,7 +219,7 @@ function buildPrompt(question: string, catalog: Catalog): string {
     `Valid metric values: ${metrics}`,
     `Valid season values: ${seasons}`,
     "Valid competition values: PL, CL",
-    "Valid viz values: table, bar, line, shot_map, pass_map, heatmap",
+    "Valid viz values: table, bar, dot_plot, line, shot_map, pass_map, heatmap",
     'Use entity_id "all" to rank every player; otherwise give the player name.',
     'Shape: {"metric":"...","entity_type":"player","entity_id":"...","season":"YYYY-YY","competition":"PL|CL","viz":"..."}',
     // Instructions come BEFORE the data, and the data is fenced. Neither is a

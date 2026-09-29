@@ -43,6 +43,7 @@ class EntityType(str, Enum):
 class VizType(str, Enum):
     TABLE = "table"
     BAR = "bar"
+    DOT_PLOT = "dot_plot"
     LINE = "line"
     SHOT_MAP = "shot_map"
     PASS_MAP = "pass_map"
@@ -55,6 +56,7 @@ class VizType(str, Enum):
 VIZ_GRANULARITY: dict[VizType, Granularity] = {
     VizType.TABLE: Granularity.BOX_SCORE,
     VizType.BAR: Granularity.BOX_SCORE,
+    VizType.DOT_PLOT: Granularity.BOX_SCORE,
     VizType.LINE: Granularity.BOX_SCORE,
     VizType.SHOT_MAP: Granularity.EVENT_COORDS,
     VizType.PASS_MAP: Granularity.EVENT_COORDS,

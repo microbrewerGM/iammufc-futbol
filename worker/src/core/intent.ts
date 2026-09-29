@@ -14,10 +14,10 @@
  */
 
 export const TRANSFORM_CODE_VERSION = "2026.08.1";
-export const RENDERER_VERSION = "vega-lite-poc-1";
+export const RENDERER_VERSION = "svg-v2-dot-plot";
 
 export type EntityType = "player" | "match" | "season" | "opponent" | "competition";
-export type VizType = "table" | "bar" | "line" | "shot_map" | "pass_map" | "heatmap";
+export type VizType = "table" | "bar" | "dot_plot" | "line" | "shot_map" | "pass_map" | "heatmap";
 
 export interface QueryIntent {
   metric: string;

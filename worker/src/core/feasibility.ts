@@ -28,6 +28,7 @@ export type Granularity = "box_score" | "event_with_coords" | "tracking";
 export const VIZ_GRANULARITY: Record<VizType, Granularity> = {
   table: "box_score",
   bar: "box_score",
+  dot_plot: "box_score",
   line: "box_score",
   shot_map: "event_with_coords",
   pass_map: "event_with_coords",

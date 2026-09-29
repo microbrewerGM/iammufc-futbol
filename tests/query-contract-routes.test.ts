@@ -433,6 +433,28 @@ describe("honest query contract routes", () => {
     expect(runQuery).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["en", "Dots", "Bars", "Table"],
+    ["es", "Gráfico de puntos", "Barras", "Tabla"],
+  ])("renders an accessible %s dot plot with a complete table fallback", async (locale, dots, bars, table) => {
+    const response = await app.request(
+      `https://site.invalid/${locale}/q?metric=goals&entity_type=player&entity_id=all&season=2024-25&competition=PL&viz=dot_plot&limit=3`,
+      { headers: auth },
+      env,
+    );
+    expect(response.status).toBe(200);
+    const markup = await response.text();
+    expect(markup).toContain('class="chart-region" tabindex="0" role="region"');
+    expect(markup).toContain(`aria-label="${locale === "es" ? "Goles" : "Goals"} — 2024-25 PL"`);
+    expect(markup).toContain('class="dot"');
+    expect(markup).toContain("<table>");
+    expect(markup).toContain(`aria-current="page">${dots}</a>`);
+    expect(markup).toContain(`>${bars}</a>`);
+    expect(markup).toContain(`>${table}</a>`);
+    expect(markup).toContain(`/${locale}/q?metric=goals&amp;entity_type=player&amp;entity_id=all&amp;season=2024-25&amp;competition=PL&amp;viz=table&amp;limit=3`);
+    expect(runQuery).toHaveBeenCalledWith(env, withDefaults({ ...base, viz: "dot_plot", limit: 3 }), "synthetic");
+  });
+
   it("renders supported season results as seasons in both locales", async () => {
     for (const locale of ["en", "es"]) {
       const response = await app.request(
