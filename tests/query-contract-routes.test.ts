@@ -47,7 +47,6 @@ const env = {
   ACCESS_ISSUER: "https://example.cloudflareaccess.com",
   ACCESS_AUD: "a".repeat(64),
   ACCESS_OWNER_EMAILS: "owner@example.invalid",
-  ACCESS_SERVICE_CLIENT_IDS: "synthetic-service.access",
 } as Env;
 const auth = { "cf-access-jwt-assertion": "synthetic", Origin: "https://site.invalid" };
 const base = {
@@ -276,7 +275,7 @@ describe("honest query contract routes", () => {
       "https://site.invalid/api/chat",
       {
         method: "POST",
-        headers: { ...auth, "content-type": "application/json" },
+        headers: { ...auth, "content-type": "application/json", "x-iammufc-p17-canary": "v1" },
         body: JSON.stringify({ question: "Top goals 2024-25" }),
       },
       { ...env, AI: { run } } as unknown as Env,
@@ -289,44 +288,6 @@ describe("honest query contract routes", () => {
       confidence: "high",
       notes: ["AI proposal unavailable (disabled); using rules."],
     });
-    expect(run).not.toHaveBeenCalled();
-  });
-
-  it("allows only the verified service identity to invoke the bounded P17 canary", async () => {
-    const jwtVerify = vi.mocked((await import("jose")).jwtVerify);
-    jwtVerify.mockImplementationOnce(async () => ({
-      payload: { sub: "", type: "app", common_name: "synthetic-service.access" },
-    }) as never);
-    const run = vi.fn(async () => ({ choices: [{ message: { content: JSON.stringify(base) } }] }));
-    const serviceResponse = await app.request(
-      "https://site.invalid/api/chat",
-      {
-        method: "POST",
-        headers: {
-          "cf-access-jwt-assertion": "synthetic-service",
-          Origin: "https://site.invalid",
-          "content-type": "application/json",
-          "x-iammufc-p17-canary": "v1",
-        },
-        body: JSON.stringify({ question: "Top goals 2024-25" }),
-      },
-      { ...env, AI: { run } } as unknown as Env,
-    );
-    expect(serviceResponse.status).toBe(200);
-    expect(await serviceResponse.json()).toMatchObject({ source: "ai", model_status: "accepted" });
-    expect(run).toHaveBeenCalledOnce();
-
-    run.mockClear();
-    const ownerResponse = await app.request(
-      "https://site.invalid/api/chat",
-      {
-        method: "POST",
-        headers: { ...auth, "content-type": "application/json", "x-iammufc-p17-canary": "v1" },
-        body: JSON.stringify({ question: "Top goals 2024-25" }),
-      },
-      { ...env, AI: { run } } as unknown as Env,
-    );
-    expect(await ownerResponse.json()).toMatchObject({ source: "rules", model_status: "disabled" });
     expect(run).not.toHaveBeenCalled();
   });
 

@@ -51,7 +51,7 @@ import {
 import { executeComparison, parseComparison } from "./core/comparison";
 import { buildSeasonComparison, eligibleLeagueSeasons } from "./core/season-comparison";
 import { withSecurityHeaders } from "./security/headers";
-import { accessGate, type AccessVariables } from "./security/auth";
+import { accessGate } from "./security/auth";
 import { gateQuestion, type GateRejected } from "./security/askguard";
 import { esc, html, page } from "./views/layout";
 import { comparisonPage } from "./views/comparison";
@@ -71,7 +71,7 @@ import {
 const AI_MODEL = "@cf/zai-org/glm-4.7-flash";
 
 const catalog = new Catalog(decodeCompiledCatalog(compiledCatalog));
-const app = new Hono<{ Bindings: Env; Variables: AccessVariables }>();
+const app = new Hono<{ Bindings: Env }>();
 
 /** Private responses never enter browser/shared caches, even on error. */
 const CACHE_CONTROL = "private, no-store";
@@ -136,10 +136,7 @@ app.post("/api/chat", async (c) => {
   const verdict = gateQuestion(question, "en", playerNames);
   if (!verdict.allowed) return c.json(rejectionBody(verdict), 422);
 
-  const identity = c.get("accessIdentity");
-  const serviceCanary = "serviceClientId" in identity
-    && c.req.header("x-iammufc-p17-canary") === "v1";
-  const proposal = await propose(verdict.question, c.env, playerNames, serviceCanary);
+  const proposal = await propose(verdict.question, c.env, playerNames);
   const feasibility = catalog.checkFeasibility(proposal.intent);
 
   return c.json({
@@ -633,7 +630,6 @@ async function propose(
   question: string,
   env: Env,
   knownPlayerNames: readonly string[] = [],
-  serviceCanary = false,
 ): Promise<Proposal> {
   // Rule-based always runs: it is the floor, and it makes the site fully usable
   // with no account, no network call, and no inference cost.
@@ -650,7 +646,7 @@ async function propose(
       : rules;
   }
 
-  if (env.AI_PROPOSALS_ENABLED !== "true" && !serviceCanary) {
+  if (env.AI_PROPOSALS_ENABLED !== "true") {
     return {
       ...rules,
       confidence: identityAmbiguous ? "low" : rules.confidence,

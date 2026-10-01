@@ -2,12 +2,6 @@ name: Dev Access smoke
 
 on:
   workflow_dispatch:
-    inputs:
-      p17_canary:
-        description: Run the bounded Workers AI canary after the baseline smoke
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: read
@@ -26,15 +20,9 @@ jobs:
         with:
           node-version: '22'
       - name: Validate smoke client without credentials
-        run: node --test tools/test_dev_access_smoke.mjs tools/test_p17_canary_smoke.mjs
+        run: node --test tools/test_dev_access_smoke.mjs
       - name: Test protected dev site
         env:
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: node tools/dev-access-smoke.mjs
-      - name: Run bounded P17 Workers AI canary
-        if: inputs.p17_canary
-        env:
-          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
-          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
-        run: node tools/p17-canary-smoke.mjs
