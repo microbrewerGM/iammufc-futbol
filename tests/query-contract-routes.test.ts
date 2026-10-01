@@ -274,44 +274,11 @@ describe("honest query contract routes", () => {
     expect(JSON.stringify(body)).not.toContain("synthetic-provider-detail");
   });
 
-  it("invokes Gemma only for the allowlisted service identity and exact canary marker", async () => {
-    const run = vi.fn(async () => ({ response: JSON.stringify(base) }));
-    const response = await app.request(
-      "https://site.invalid/api/chat",
-      {
-        method: "POST",
-        headers: {
-          ...serviceAuth,
-          "content-type": "application/json",
-          "x-iammufc-p17-canary": "gemma4-v1",
-        },
-        body: JSON.stringify({ question: "Top goals 2024-25" }),
-      },
-      { ...env, AI: { run } } as unknown as Env,
-    );
-
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
-      source: "ai",
-      model_status: "accepted",
-      confidence: "high",
-      notes: [],
-    });
-    expect(run).toHaveBeenCalledOnce();
-    expect(run).toHaveBeenCalledWith(
-      "@cf/google/gemma-4-26b-a4b-it",
-      expect.objectContaining({
-        max_completion_tokens: 200,
-        temperature: 0,
-        chat_template_kwargs: { enable_thinking: false },
-      }),
-    );
-  });
-
   it.each([
     ["human with exact marker", auth, "gemma4-v1"],
     ["service without marker", serviceAuth, undefined],
     ["service with stale marker", serviceAuth, "v1"],
+    ["service with retired Gemma marker", serviceAuth, "gemma4-v1"],
   ])("keeps %s on the rules-only path", async (_case, identityHeaders, marker) => {
     const run = vi.fn(async () => ({ response: JSON.stringify(base) }));
     const headers: Record<string, string> = { ...identityHeaders, "content-type": "application/json" };
