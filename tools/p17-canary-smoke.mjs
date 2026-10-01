@@ -97,11 +97,18 @@ export async function runP17Canary(env, request = fetch) {
   return aggregates;
 }
 
+export function safeFailureMessage(error) {
+  const message = error instanceof Error ? error.message : '';
+  return /^P17 canary stopped at [a-z_]+ trial [1-3]$/.test(message)
+    ? message
+    : 'P17 canary failed before a case result';
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     console.log(JSON.stringify(await runP17Canary(process.env)));
-  } catch {
-    console.error('P17 canary failed; provider and response details suppressed.');
+  } catch (error) {
+    console.error(`${safeFailureMessage(error)}; provider and response details suppressed.`);
     process.exitCode = 1;
   }
 }
