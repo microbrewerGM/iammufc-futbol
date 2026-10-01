@@ -66,17 +66,11 @@ Current sources:
 - [OpenRouter pricing](https://openrouter.ai/pricing)
 - [TypeSafe documentation index](https://docs.typesafe.ai/llms.txt)
 
-## Next execution step
+## GLM 4.7 Flash canary result
 
-Run the 4–6-case fail-fast canary from the execution plan three times per case.
-Stop at the first malformed output, unsupported acceptance, or deterministic
-field mutation. Only a passing canary earns the 48-question evaluation. Keep
-`AI_PROPOSALS_ENABLED` unset throughout evaluation and enable nothing on dev
-until a candidate clears every gate in this document.
-
-The canary path is narrower than ordinary authenticated access: the Access JWT
-must resolve to the allowlisted automation service identity and the request must
-carry the exact non-secret canary marker. Human sessions remain rules-only even
-if they copy that marker. Current Workers AI chat responses are normalized from
-the documented `choices[0].message.content` shape, then the complete canonical
-intent must equal the deterministic proposal before it can be accepted.
+The service-scoped canary stopped at `en_supported`, trial 1, on 2026-10-01.
+That is a failed candidate under the frozen gate, so the 48-question evaluation
+did not run and the temporary activation route and workflow input were removed.
+`AI_PROPOSALS_ENABLED` remains unset and every ordinary dev request remains
+rules-only. The current response normalizer and complete deterministic-intent
+equality check stay in place as hardening for any future candidate.
