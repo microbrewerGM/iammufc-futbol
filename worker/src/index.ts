@@ -39,7 +39,7 @@ import {
 } from "./core/db";
 import { decodeCompiledCatalog } from "./core/catalog-contract";
 import { Catalog, columnFeasibility, hasSubstance } from "./core/feasibility";
-import { artifactKey } from "./core/intent";
+import { artifactKey, canonicalize } from "./core/intent";
 import { parseIntent, validateExecutionSupport, validateQuerySemantics } from "./core/validate-intent";
 import { LOCALES, type Locale, type LocaleCode } from "./core/locale";
 import {
@@ -51,7 +51,7 @@ import {
 import { executeComparison, parseComparison } from "./core/comparison";
 import { buildSeasonComparison, eligibleLeagueSeasons } from "./core/season-comparison";
 import { withSecurityHeaders } from "./security/headers";
-import { accessGate } from "./security/auth";
+import { accessGate, type AccessVariables } from "./security/auth";
 import { gateQuestion, type GateRejected } from "./security/askguard";
 import { esc, html, page } from "./views/layout";
 import { comparisonPage } from "./views/comparison";
@@ -68,10 +68,10 @@ import {
 } from "./views/pages";
 
 /** Pin site P14. Bump deliberately -- a different model parses differently. */
-const AI_MODEL = "@cf/meta/llama-3.2-3b-instruct";
+const AI_MODEL = "@cf/zai-org/glm-4.7-flash";
 
 const catalog = new Catalog(decodeCompiledCatalog(compiledCatalog));
-const app = new Hono<{ Bindings: Env }>();
+const app = new Hono<{ Bindings: Env; Variables: AccessVariables }>();
 
 /** Private responses never enter browser/shared caches, even on error. */
 const CACHE_CONTROL = "private, no-store";
@@ -136,7 +136,10 @@ app.post("/api/chat", async (c) => {
   const verdict = gateQuestion(question, "en", playerNames);
   if (!verdict.allowed) return c.json(rejectionBody(verdict), 422);
 
-  const proposal = await propose(verdict.question, c.env, playerNames);
+  const identity = c.get("accessIdentity");
+  const serviceCanary = "serviceClientId" in identity
+    && c.req.header("x-iammufc-p17-canary") === "v1";
+  const proposal = await propose(verdict.question, c.env, playerNames, serviceCanary);
   const feasibility = catalog.checkFeasibility(proposal.intent);
 
   return c.json({
@@ -630,6 +633,7 @@ async function propose(
   question: string,
   env: Env,
   knownPlayerNames: readonly string[] = [],
+  serviceCanary = false,
 ): Promise<Proposal> {
   // Rule-based always runs: it is the floor, and it makes the site fully usable
   // with no account, no network call, and no inference cost.
@@ -646,7 +650,7 @@ async function propose(
       : rules;
   }
 
-  if (env.AI_PROPOSALS_ENABLED !== "true") {
+  if (env.AI_PROPOSALS_ENABLED !== "true" && !serviceCanary) {
     return {
       ...rules,
       confidence: identityAmbiguous ? "low" : rules.confidence,
@@ -683,14 +687,8 @@ async function propose(
 
   // Whatever the model returned is still only a proposal, and the catalog is
   // what decides whether it means anything.
-  const quotedIdentity = /"([^"]+)"|'([^']+)'/.exec(question);
-  const preservesDeterministicFields =
-    ai.proposal.intent.metric === rules.intent.metric
-    && ai.proposal.intent.season === rules.intent.season
-    && ai.proposal.intent.competition === rules.intent.competition
-    && ai.proposal.intent.viz === rules.intent.viz
-    && (!quotedIdentity || ai.proposal.intent.entity_id === rules.intent.entity_id);
-  return catalog.metric(ai.proposal.intent.metric) && preservesDeterministicFields
+  const preservesDeterministicIntent = canonicalize(ai.proposal.intent) === canonicalize(rules.intent);
+  return catalog.metric(ai.proposal.intent.metric) && preservesDeterministicIntent
     ? ai.proposal
     : {
         ...rules,

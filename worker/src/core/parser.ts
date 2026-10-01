@@ -245,10 +245,10 @@ export async function proposeWithAI(
       ],
       max_tokens: 200,
       temperature: 0,
-    })) as { response?: string };
+    })) as unknown;
 
-    const text = raw?.response;
-    if (typeof text !== "string") return { proposal: null, failure: "invalid_output" };
+    const text = modelText(raw);
+    if (text === null) return { proposal: null, failure: "invalid_output" };
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) return { proposal: null, failure: "invalid_output" };
 
@@ -279,4 +279,21 @@ export async function proposeWithAI(
     // on an inference call succeeding.
     return { proposal: null, failure: "provider_error" };
   }
+}
+
+/** Workers AI model families expose either the legacy `response` string or
+ * OpenAI-compatible `choices[0].message.content`. Accept only those two exact
+ * finite shapes; provider metadata and alternate fields never cross the
+ * proposal boundary. */
+function modelText(raw: unknown): string | null {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const record = raw as Record<string, unknown>;
+  if (typeof record.response === "string") return record.response;
+  if (!Array.isArray(record.choices) || record.choices.length !== 1) return null;
+  const choice = record.choices[0];
+  if (choice === null || typeof choice !== "object" || Array.isArray(choice)) return null;
+  const message = (choice as Record<string, unknown>).message;
+  if (message === null || typeof message !== "object" || Array.isArray(message)) return null;
+  const content = (message as Record<string, unknown>).content;
+  return typeof content === "string" ? content : null;
 }
