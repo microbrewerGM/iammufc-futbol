@@ -73,3 +73,10 @@ Stop at the first malformed output, unsupported acceptance, or deterministic
 field mutation. Only a passing canary earns the 48-question evaluation. Keep
 `AI_PROPOSALS_ENABLED` unset throughout evaluation and enable nothing on dev
 until a candidate clears every gate in this document.
+
+The canary path is narrower than ordinary authenticated access: the Access JWT
+must resolve to the allowlisted automation service identity and the request must
+carry the exact non-secret canary marker. Human sessions remain rules-only even
+if they copy that marker. Current Workers AI chat responses are normalized from
+the documented `choices[0].message.content` shape, then the complete canonical
+intent must equal the deterministic proposal before it can be accepted.
