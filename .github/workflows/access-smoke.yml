@@ -2,12 +2,6 @@ name: Dev Access smoke
 
 on:
   workflow_dispatch:
-    inputs:
-      p17_gemma_canary:
-        description: Run the bounded Gemma 4 intent canary after the baseline smoke
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -32,9 +26,3 @@ jobs:
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: node tools/dev-access-smoke.mjs
-      - name: Run bounded Gemma 4 intent canary
-        if: inputs.p17_gemma_canary
-        env:
-          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
-          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
-        run: node tools/p17-canary-smoke.mjs
