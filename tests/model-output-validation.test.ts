@@ -42,7 +42,8 @@ it("requests deterministic bounded output", async () => {
     } }, "synthetic-model");
   expect(input).toMatchObject({
     temperature: 0,
-    max_tokens: 200,
+    max_completion_tokens: 200,
+    chat_template_kwargs: { enable_thinking: false },
   });
   expect(input).not.toHaveProperty("response_format");
 });

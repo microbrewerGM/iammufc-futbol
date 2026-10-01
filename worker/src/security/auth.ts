@@ -4,6 +4,7 @@ import type { Env } from "../core/db";
 
 interface AccessConfig { issuer: string; audience: string; owners: string[]; serviceClientIds?: string[] }
 export type AccessIdentity = { sub: string; email: string } | { sub: ""; serviceClientId: string };
+export type AccessVariables = { accessIdentity: AccessIdentity };
 type AccessVerifier = (token: string, config: AccessConfig) => Promise<AccessIdentity>;
 const resolvers = new Map<string, JWTVerifyGetKey>();
 
@@ -47,10 +48,12 @@ function configuration(env: Env): AccessConfig | null {
 
 /** Always mounted before every route; no local/preview/health auth bypass. */
 export function accessGate(verifier: AccessVerifier = verifyAccess) {
-  return createMiddleware<{ Bindings: Env }>(async (c, next) => {
+  return createMiddleware<{ Bindings: Env; Variables: AccessVariables }>(async (c, next) => {
     const config = configuration(c.env);
     if (!config) return c.text("Site access is not configured.", 503);
-    try { await verifier(c.req.header("cf-access-jwt-assertion") ?? "", config); }
+    try {
+      c.set("accessIdentity", await verifier(c.req.header("cf-access-jwt-assertion") ?? "", config));
+    }
     catch { return c.text("Access denied.", 403); }
     // Access is cookie-backed in browsers. Authorization alone is not CSRF
     // protection. /q also writes demand and consumes budget despite using GET.

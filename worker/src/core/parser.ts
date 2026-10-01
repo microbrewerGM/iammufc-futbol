@@ -243,7 +243,8 @@ export async function proposeWithAI(
         { role: "system", content: "You output only JSON. Never prose, never SQL." },
         { role: "user", content: buildPrompt(question, catalog) },
       ],
-      max_tokens: 200,
+      max_completion_tokens: 200,
+      chat_template_kwargs: { enable_thinking: false },
       temperature: 0,
     })) as unknown;
 

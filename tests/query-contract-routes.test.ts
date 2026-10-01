@@ -9,6 +9,9 @@ import compiled from "../worker/src/generated/catalog.json";
 vi.mock("jose", async (original) => ({
   ...await original<typeof import("jose")>(),
   jwtVerify: vi.fn(async (token: string) => {
+    if (token === "synthetic-service") {
+      return { payload: { sub: "", type: "app", common_name: "synthetic-service.access" } };
+    }
     if (token !== "synthetic") throw new Error("denied");
     return { payload: { sub: "owner", email: "owner@example.invalid" } };
   }),
@@ -47,8 +50,10 @@ const env = {
   ACCESS_ISSUER: "https://example.cloudflareaccess.com",
   ACCESS_AUD: "a".repeat(64),
   ACCESS_OWNER_EMAILS: "owner@example.invalid",
+  ACCESS_SERVICE_CLIENT_IDS: "synthetic-service.access",
 } as Env;
 const auth = { "cf-access-jwt-assertion": "synthetic", Origin: "https://site.invalid" };
+const serviceAuth = { "cf-access-jwt-assertion": "synthetic-service", Origin: "https://site.invalid" };
 const base = {
   metric: "goals",
   season: "2024-25",
@@ -269,13 +274,53 @@ describe("honest query contract routes", () => {
     expect(JSON.stringify(body)).not.toContain("synthetic-provider-detail");
   });
 
-  it("keeps live inference disabled after the candidate fails its release gate", async () => {
+  it("invokes Gemma only for the allowlisted service identity and exact canary marker", async () => {
     const run = vi.fn(async () => ({ response: JSON.stringify(base) }));
     const response = await app.request(
       "https://site.invalid/api/chat",
       {
         method: "POST",
-        headers: { ...auth, "content-type": "application/json", "x-iammufc-p17-canary": "v1" },
+        headers: {
+          ...serviceAuth,
+          "content-type": "application/json",
+          "x-iammufc-p17-canary": "gemma4-v1",
+        },
+        body: JSON.stringify({ question: "Top goals 2024-25" }),
+      },
+      { ...env, AI: { run } } as unknown as Env,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      source: "ai",
+      model_status: "accepted",
+      confidence: "high",
+      notes: [],
+    });
+    expect(run).toHaveBeenCalledOnce();
+    expect(run).toHaveBeenCalledWith(
+      "@cf/google/gemma-4-26b-a4b-it",
+      expect.objectContaining({
+        max_completion_tokens: 200,
+        temperature: 0,
+        chat_template_kwargs: { enable_thinking: false },
+      }),
+    );
+  });
+
+  it.each([
+    ["human with exact marker", auth, "gemma4-v1"],
+    ["service without marker", serviceAuth, undefined],
+    ["service with stale marker", serviceAuth, "v1"],
+  ])("keeps %s on the rules-only path", async (_case, identityHeaders, marker) => {
+    const run = vi.fn(async () => ({ response: JSON.stringify(base) }));
+    const headers: Record<string, string> = { ...identityHeaders, "content-type": "application/json" };
+    if (marker) headers["x-iammufc-p17-canary"] = marker;
+    const response = await app.request(
+      "https://site.invalid/api/chat",
+      {
+        method: "POST",
+        headers,
         body: JSON.stringify({ question: "Top goals 2024-25" }),
       },
       { ...env, AI: { run } } as unknown as Env,
@@ -286,7 +331,6 @@ describe("honest query contract routes", () => {
       source: "rules",
       model_status: "disabled",
       confidence: "high",
-      notes: ["AI proposal unavailable (disabled); using rules."],
     });
     expect(run).not.toHaveBeenCalled();
   });
