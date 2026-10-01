@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { runP17Canary } from './p17-canary-smoke.mjs';
+import { runP17Canary, safeFailureMessage } from './p17-canary-smoke.mjs';
 
 const env = { CF_ACCESS_CLIENT_ID: 'synthetic-id', CF_ACCESS_CLIENT_SECRET: 'synthetic-secret' };
 const intent = (metric, season, entityId = 'all', viz = 'bar') => ({
@@ -93,4 +93,12 @@ test('stops on the first invalid result and never prints provider content', asyn
 
 test('missing credentials makes no request', async () => {
   await assert.rejects(runP17Canary({}, () => { throw new Error('must not request'); }), /Missing dev/);
+});
+
+test('diagnostics expose only finite case and trial identifiers', () => {
+  assert.equal(safeFailureMessage(new Error('P17 canary stopped at en_supported trial 1')),
+    'P17 canary stopped at en_supported trial 1');
+  assert.equal(safeFailureMessage(new Error('provider body with private content')),
+    'P17 canary failed before a case result');
+  assert.equal(safeFailureMessage('unexpected'), 'P17 canary failed before a case result');
 });
