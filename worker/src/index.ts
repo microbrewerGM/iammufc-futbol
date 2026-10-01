@@ -51,7 +51,7 @@ import {
 import { executeComparison, parseComparison } from "./core/comparison";
 import { buildSeasonComparison, eligibleLeagueSeasons } from "./core/season-comparison";
 import { withSecurityHeaders } from "./security/headers";
-import { accessGate } from "./security/auth";
+import { accessGate, type AccessVariables } from "./security/auth";
 import { gateQuestion, type GateRejected } from "./security/askguard";
 import { esc, html, page } from "./views/layout";
 import { comparisonPage } from "./views/comparison";
@@ -68,10 +68,12 @@ import {
 } from "./views/pages";
 
 /** Pin site P14. Bump deliberately -- a different model parses differently. */
-const AI_MODEL = "@cf/zai-org/glm-4.7-flash";
+const AI_MODEL = "@cf/google/gemma-4-26b-a4b-it";
+/** Temporary, candidate-specific dev canary marker. Not an authentication secret. */
+const P17_GEMMA_CANARY_MARKER = "gemma4-v1";
 
 const catalog = new Catalog(decodeCompiledCatalog(compiledCatalog));
-const app = new Hono<{ Bindings: Env }>();
+const app = new Hono<{ Bindings: Env; Variables: AccessVariables }>();
 
 /** Private responses never enter browser/shared caches, even on error. */
 const CACHE_CONTROL = "private, no-store";
@@ -136,7 +138,10 @@ app.post("/api/chat", async (c) => {
   const verdict = gateQuestion(question, "en", playerNames);
   if (!verdict.allowed) return c.json(rejectionBody(verdict), 422);
 
-  const proposal = await propose(verdict.question, c.env, playerNames);
+  const identity = c.get("accessIdentity");
+  const serviceCanary = "serviceClientId" in identity &&
+    c.req.header("x-iammufc-p17-canary") === P17_GEMMA_CANARY_MARKER;
+  const proposal = await propose(verdict.question, c.env, playerNames, serviceCanary);
   const feasibility = catalog.checkFeasibility(proposal.intent);
 
   return c.json({
@@ -630,6 +635,7 @@ async function propose(
   question: string,
   env: Env,
   knownPlayerNames: readonly string[] = [],
+  serviceCanary = false,
 ): Promise<Proposal> {
   // Rule-based always runs: it is the floor, and it makes the site fully usable
   // with no account, no network call, and no inference cost.
@@ -646,7 +652,7 @@ async function propose(
       : rules;
   }
 
-  if (env.AI_PROPOSALS_ENABLED !== "true") {
+  if (env.AI_PROPOSALS_ENABLED !== "true" && !serviceCanary) {
     return {
       ...rules,
       confidence: identityAmbiguous ? "low" : rules.confidence,

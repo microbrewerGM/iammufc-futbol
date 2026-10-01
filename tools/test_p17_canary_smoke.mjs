@@ -38,7 +38,7 @@ test('runs six cases three times and emits aggregate-only results', async () => 
     });
   });
   assert.equal(calls.length, 18);
-  assert.ok(calls.every(({ init }) => init.headers['X-IAMMUFC-P17-Canary'] === 'v1'));
+  assert.ok(calls.every(({ init }) => init.headers['X-IAMMUFC-P17-Canary'] === 'gemma4-v1'));
   assert.equal(results.length, 6);
   assert.ok(results.every((result) => result.trials === 3 && result.passed));
   const serialized = JSON.stringify(results);
@@ -59,7 +59,7 @@ test('stops when a clarification mutates its deterministic intent', async () => 
       status: value.rejected ? 422 : 200,
       headers: { 'content-type': 'application/json', 'cache-control': 'private, no-store' },
     });
-  }), /stopped at ambiguous_identity trial 1/);
+  }), /stopped at ambiguous_identity trial 1: shape_mismatch/);
 });
 
 test('stops when a clarification mutates a nested filter', async () => {
@@ -77,7 +77,7 @@ test('stops when a clarification mutates a nested filter', async () => {
       status: value.rejected ? 422 : 200,
       headers: { 'content-type': 'application/json', 'cache-control': 'private, no-store' },
     });
-  }), /stopped at ambiguous_identity trial 1/);
+  }), /stopped at ambiguous_identity trial 1: shape_mismatch/);
 });
 
 test('stops on the first invalid result and never prints provider content', async () => {
@@ -87,7 +87,7 @@ test('stops on the first invalid result and never prints provider content', asyn
     return new Response(JSON.stringify({ private_provider_output: 'do not print' }), {
       headers: { 'content-type': 'application/json', 'cache-control': 'private, no-store' },
     });
-  }), /stopped at en_supported trial 1/);
+  }), /stopped at en_supported trial 1: shape_mismatch/);
   assert.equal(calls, 1);
 });
 
@@ -95,9 +95,13 @@ test('missing credentials makes no request', async () => {
   await assert.rejects(runP17Canary({}, () => { throw new Error('must not request'); }), /Missing dev/);
 });
 
-test('diagnostics expose only finite case and trial identifiers', () => {
-  assert.equal(safeFailureMessage(new Error('P17 canary stopped at en_supported trial 1')),
-    'P17 canary stopped at en_supported trial 1');
+test('diagnostics expose only finite case, trial, and failure identifiers', () => {
+  assert.equal(safeFailureMessage(new Error('P17 canary stopped at en_supported trial 1: provider_error')),
+    'P17 canary stopped at en_supported trial 1: provider_error');
+  assert.equal(safeFailureMessage(new Error('P17 canary stopped at unknown trial 1: provider_error')),
+    'P17 canary failed before a case result');
+  assert.equal(safeFailureMessage(new Error('P17 canary stopped at en_supported trial 1: private')),
+    'P17 canary failed before a case result');
   assert.equal(safeFailureMessage(new Error('provider body with private content')),
     'P17 canary failed before a case result');
   assert.equal(safeFailureMessage('unexpected'), 'P17 canary failed before a case result');

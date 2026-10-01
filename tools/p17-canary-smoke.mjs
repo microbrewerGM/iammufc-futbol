@@ -5,6 +5,7 @@ const intentKeys = ['competition', 'dimensions', 'entity_id', 'entity_type', 'fi
   'metric', 'season', 'viz'];
 const chatKeys = ['confidence', 'feasibility', 'model_status', 'next', 'notes',
   'proposed_intent', 'source'];
+const failureStatuses = new Set(['provider_error', 'invalid_output', 'unsupported_intent', 'disabled']);
 const plain = (value) => value !== null && typeof value === 'object' && !Array.isArray(value) &&
   [Object.prototype, null].includes(Object.getPrototypeOf(value));
 const exactKeys = (value, expected) => plain(value) &&
@@ -55,6 +56,12 @@ function validateRejection(value, code) {
     value.feasibility === null && typeof value.reason === 'string' && typeof value.suggestion === 'string';
 }
 
+function failureCategory(value) {
+  return plain(value) && failureStatuses.has(value.model_status)
+    ? value.model_status
+    : 'shape_mismatch';
+}
+
 export async function runP17Canary(env, request = fetch) {
   const id = env.CF_ACCESS_CLIENT_ID;
   const secret = env.CF_ACCESS_CLIENT_SECRET;
@@ -62,7 +69,7 @@ export async function runP17Canary(env, request = fetch) {
   const headers = {
     'CF-Access-Client-Id': id,
     'CF-Access-Client-Secret': secret,
-    'X-IAMMUFC-P17-Canary': 'v1',
+    'X-IAMMUFC-P17-Canary': 'gemma4-v1',
     Origin: origin,
     'Content-Type': 'application/json',
   };
@@ -88,7 +95,9 @@ export async function runP17Canary(env, request = fetch) {
           ? response.status === 200 && validateClarification(value, testCase.expected)
           : response.status === 200 && validateAccepted(value, testCase.expected);
       if (!privateResponse || !valid) {
-        throw new Error(`P17 canary stopped at ${testCase.id} trial ${trial}`);
+        throw new Error(
+          `P17 canary stopped at ${testCase.id} trial ${trial}: ${failureCategory(value)}`,
+        );
       }
     }
     aggregates.push({ id: testCase.id, trials: 3, passed: true,
@@ -99,7 +108,7 @@ export async function runP17Canary(env, request = fetch) {
 
 export function safeFailureMessage(error) {
   const message = error instanceof Error ? error.message : '';
-  return /^P17 canary stopped at [a-z_]+ trial [1-3]$/.test(message)
+  return /^P17 canary stopped at (?:en_supported|es_supported|quoted_identity|unsupported_rate|ambiguous_identity|missing_season) trial [1-3]: (?:provider_error|invalid_output|unsupported_intent|disabled|shape_mismatch)$/.test(message)
     ? message
     : 'P17 canary failed before a case result';
 }

@@ -1,6 +1,6 @@
 # P17 low-cost intent-model evaluation
 
-Status: evaluation gate ready; no model is approved or enabled.
+Status: Gemma 4 bounded dev canary prepared; no model is approved for ordinary traffic.
 
 The natural-language layer may propose a `QueryIntent`. It never decides
 rights or feasibility, executes SQL, or selects data. The existing deterministic
@@ -74,3 +74,27 @@ did not run and the temporary activation route and workflow input were removed.
 `AI_PROPOSALS_ENABLED` remains unset and every ordinary dev request remains
 rules-only. The current response normalizer and complete deterministic-intent
 equality check stay in place as hardening for any future candidate.
+
+## Gemma 4 bounded canary declaration
+
+The second candidate is pinned to `@cf/google/gemma-4-26b-a4b-it`. Its request
+uses `max_completion_tokens: 200`, `temperature: 0`, and
+`chat_template_kwargs: { enable_thinking: false }`. The response is accepted
+only through the existing strict output decoder, schema validator, catalog
+boundary, and complete canonical equality check against the rule result.
+
+The temporary `gemma4-v1` marker activates inference only for the already
+verified allowlisted Access service identity. Human sessions, missing or stale
+markers, and ordinary service requests remain rules-only. The manually invoked
+dev workflow always completes the baseline Access smoke before attempting the
+six-case, three-trial canary. The canary stops at the first failure, emits only
+aggregate pass/latency facts or finite case/trial/failure identifiers, and makes
+at most 18 inference calls. Runtime provider responses and request bodies are
+not emitted or persisted; the fixed evaluation prompts remain source-controlled.
+
+At current published rates, Gemma 4 costs $0.10 per million input tokens and
+$0.30 per million output tokens. This bounded run must stay within the Workers
+AI free daily allocation; paid inference is not authorized. Whether the canary
+passes or fails, the marker route and workflow input are removed immediately
+after the run. A pass would still require aggregate usage metering and the
+frozen held-out evaluation before ordinary inference could be considered.
