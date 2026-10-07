@@ -514,6 +514,20 @@
       "granularity": "box_score",
       "metric": "goals",
       "redistributable": true,
+      "season": "2014-15",
+      "source_id": "football_data_couk",
+      "source_name": "Football-Data.co.uk (via datahub / openfootball mirrors)"
+    },
+    {
+      "attribution_asset": null,
+      "attribution_text": null,
+      "attribution_text_es": null,
+      "competition": "PL",
+      "cost_class": "cheap",
+      "entity_type": "season",
+      "granularity": "box_score",
+      "metric": "goals",
+      "redistributable": true,
       "season": "2015-16",
       "source_id": "football_data_couk",
       "source_name": "Football-Data.co.uk (via datahub / openfootball mirrors)"

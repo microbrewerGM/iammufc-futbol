@@ -31,6 +31,47 @@ def results_csv() -> bytes:
     return pd.DataFrame(rows).to_csv(index=False).encode()
 
 
+def results_2014_15_csv() -> bytes:
+    rows = []
+    rows.extend({"HomeTeam": "Man United", "AwayTeam": f"Win {index}", "FTHG": 2, "FTAG": 0}
+                for index in range(15))
+    rows.extend({"HomeTeam": "Manchester United", "AwayTeam": f"Win {index}", "FTHG": 3, "FTAG": 1}
+                for index in range(4))
+    rows.append({"HomeTeam": "Man Utd", "AwayTeam": "Win final", "FTHG": 5, "FTAG": 1})
+    rows.extend({"HomeTeam": "Man United", "AwayTeam": f"Draw {index}", "FTHG": 1, "FTAG": 1}
+                for index in range(7))
+    rows.extend({"HomeTeam": "Manchester United", "AwayTeam": f"Draw {index}", "FTHG": 0, "FTAG": 0}
+                for index in range(3))
+    rows.extend({"HomeTeam": f"Loss {index}", "AwayTeam": "Manchester United", "FTHG": 2, "FTAG": 1}
+                for index in range(5))
+    rows.extend({"HomeTeam": f"Loss {index}", "AwayTeam": "Man Utd", "FTHG": 5, "FTAG": 1}
+                for index in range(3))
+    return pd.DataFrame(rows).to_csv(index=False).encode()
+
+
+def test_2014_15_results_reconcile_to_complete_historic_record_with_stable_lineage():
+    payload = results_2014_15_csv()
+    expected_url = f"{run.RESULTS_BASE}/season-1415.csv"
+
+    with patch.object(run, "fetch", return_value=payload) as fetch:
+        first, first_hash = run.load_results("2014-15")
+        second, second_hash = run.load_results("2014-15")
+
+    fetch.assert_called_with(expected_url)
+    assert first.to_dict("records") == [{
+        "season": "2014-15",
+        "competition": "PL",
+        "played": 38,
+        "won": 20,
+        "drawn": 10,
+        "lost": 8,
+        "goals": 62,
+        "goals_against": 37,
+    }]
+    assert second.equals(first)
+    assert first_hash == second_hash == hashlib.sha256(payload).hexdigest()
+
+
 def test_2015_16_results_are_aggregated_with_stable_lineage():
     payload = results_csv()
     expected_url = f"{run.RESULTS_BASE}/season-1516.csv"
@@ -54,11 +95,15 @@ def test_2015_16_results_are_aggregated_with_stable_lineage():
     assert first_hash == second_hash == hashlib.sha256(payload).hexdigest()
 
 
-def test_closed_season_refuses_a_plausible_partial_source():
-    partial = pd.read_csv(io.BytesIO(results_csv())).iloc[:-2]
+@pytest.mark.parametrize(
+    ("season", "payload"),
+    [("2014-15", results_2014_15_csv), ("2015-16", results_csv)],
+)
+def test_closed_season_refuses_a_plausible_partial_source(season, payload):
+    partial = pd.read_csv(io.BytesIO(payload())).iloc[:-2]
     with patch.object(run, "fetch", return_value=partial.to_csv(index=False).encode()):
         with pytest.raises(run.IngestError, match="expected 38 completed"):
-            run.load_results("2015-16")
+            run.load_results(season)
 
 
 def test_missing_core_results_fail_before_publication(monkeypatch):

@@ -55,11 +55,11 @@ test('fixed dev origin, manual redirects, private response and all checks', asyn
       ? JSON.stringify(validHealth)
       : chat ? JSON.stringify(rejected ? unsupported : validChat)
       : query ? JSON.stringify(validQuery(queryCalls++ === 0 ? 'computable_now_queued' : 'available'))
-      : 'Ask about Manchester United Pregunta sobre el Manchester United Data and sources Datos y fuentes League season comparison Comparación de temporadas de liga 49–35 goals 49–35 goles >1.74</td> >1,74</td> font-family Assists — 2023-24 PL class="dot" aria-current="page">Dots</a> aria-current="page">Gráfico de puntos</a> <table>',
+      : 'Ask about Manchester United Pregunta sobre el Manchester United Data and sources Datos y fuentes League season comparison Comparación de temporadas de liga 62–37 goals 62–37 goles >1.84</td> >1,84</td> 49–35 goals 49–35 goles >1.74</td> >1,74</td> font-family Assists — 2023-24 PL class="dot" aria-current="page">Dots</a> aria-current="page">Gráfico de puntos</a> <table>',
     { status: rejected ? 422 : 200, headers: { 'cache-control': 'private, no-store',
       ...((health || chat || query) ? { 'content-type': 'application/json; charset=UTF-8' } : {}) } });
   });
-  assert.equal(calls.length, 15);
+  assert.equal(calls.length, 17);
   assert.equal(calls.find((call) => new URL(call.url).pathname === '/en/ask').init.method, 'POST');
   assert.equal(calls.find((call) => new URL(call.url).pathname === '/api/health').init.method, 'GET');
   assert.ok(results.every((result) => result.pass), JSON.stringify(results.filter((result) => !result.pass)));
@@ -162,7 +162,7 @@ test('health response requires JSON content type and never emits raw metadata', 
   const results = await smoke(env, async (url) => {
     const health = new URL(url).pathname === '/api/health';
     return new Response(health ? JSON.stringify(validHealth) :
-      'Ask about Manchester United Pregunta sobre el Manchester United Data and sources Datos y fuentes League season comparison Comparación de temporadas de liga 49–35 goals 49–35 goles >1.74</td> >1,74</td> font-family Assists — 2023-24 PL class="dot" aria-current="page">Dots</a> aria-current="page">Gráfico de puntos</a> <table>',
+      'Ask about Manchester United Pregunta sobre el Manchester United Data and sources Datos y fuentes League season comparison Comparación de temporadas de liga 62–37 goals 62–37 goles >1.84</td> >1,84</td> 49–35 goals 49–35 goles >1.74</td> >1,74</td> font-family Assists — 2023-24 PL class="dot" aria-current="page">Dots</a> aria-current="page">Gráfico de puntos</a> <table>',
     { headers: { 'cache-control': 'private, no-store' } });
   });
   const health = results.find((result) => result.path === '/api/health');
@@ -176,7 +176,7 @@ test('malformed JSON and misleading JSON content type fail without leaking detai
     const results = await smoke(env, async (url) => {
       const health = new URL(url).pathname === '/api/health';
       return new Response(health ? body :
-        'Ask about Manchester United Pregunta sobre el Manchester United Data and sources Datos y fuentes League season comparison Comparación de temporadas de liga 49–35 goals 49–35 goles >1.74</td> >1,74</td> font-family Assists — 2023-24 PL',
+        'Ask about Manchester United Pregunta sobre el Manchester United Data and sources Datos y fuentes League season comparison Comparación de temporadas de liga 62–37 goals 62–37 goles >1.84</td> >1,84</td> 49–35 goals 49–35 goles >1.74</td> >1,74</td> font-family Assists — 2023-24 PL',
       { headers: { 'cache-control': 'private, no-store',
         ...(health ? { 'content-type': contentType } : {}) } });
     });
@@ -203,8 +203,8 @@ test('anonymous and forged probes are fixed-origin, credential-free and do not f
     assert.equal(headers.has('Authorization'), false);
     return accessRedirect();
   });
-  assert.equal(calls.length, 39);
-  assert.equal(calls.filter(({ init }) => init.method === 'HEAD').length, 18);
+  assert.equal(calls.length, 43);
+  assert.equal(calls.filter(({ init }) => init.method === 'HEAD').length, 20);
   assert.equal(calls.filter(({ init }) => new Headers(init.headers).has('CF-Access-Jwt-Assertion')).length, 3);
   assert.ok(results.every((result) => result.pass));
   assert.ok(!JSON.stringify(results).includes('private=value'));
@@ -249,10 +249,10 @@ test('combined smoke requires authenticated success and denial success', async (
     return new Response(health ? JSON.stringify(validHealth) :
       chat ? JSON.stringify(rejected ? unsupported : validChat) :
       query ? JSON.stringify(validQuery(queryCalls++ === 0 ? 'computable_now_queued' : 'available')) :
-      'Ask about Manchester United Pregunta sobre el Manchester United Data and sources Datos y fuentes League season comparison Comparación de temporadas de liga 49–35 goals 49–35 goles >1.74</td> >1,74</td> font-family Assists — 2023-24 PL class="dot" aria-current="page">Dots</a> aria-current="page">Gráfico de puntos</a> <table>',
+      'Ask about Manchester United Pregunta sobre el Manchester United Data and sources Datos y fuentes League season comparison Comparación de temporadas de liga 62–37 goals 62–37 goles >1.84</td> >1,84</td> 49–35 goals 49–35 goles >1.74</td> >1,74</td> font-family Assists — 2023-24 PL class="dot" aria-current="page">Dots</a> aria-current="page">Gráfico de puntos</a> <table>',
     { status: rejected ? 422 : 200, headers: { 'cache-control': 'private, no-store',
       ...((health || chat || query) ? { 'content-type': 'application/json' } : {}) } });
   });
-  assert.equal(results.length, 54);
+  assert.equal(results.length, 60);
   assert.ok(results.every((result) => result.pass), JSON.stringify(results.filter((result) => !result.pass)));
 });

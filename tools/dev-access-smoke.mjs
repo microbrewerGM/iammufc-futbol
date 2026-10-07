@@ -5,7 +5,8 @@ const origin = 'https://iammufc-dev.aaron-cf2.workers.dev';
 const accessHost = 'odd-fog-375d.cloudflareaccess.com';
 const denialCases = [
   '/en', '/es', '/en/compare', '/es/compare', '/en/data', '/es/data',
-  '/en/season/2015-16', '/es/season/2015-16', '/api/catalog', '/api/health',
+  '/en/season/2014-15', '/es/season/2014-15', '/en/season/2015-16', '/es/season/2015-16',
+  '/api/catalog', '/api/health',
   '/style.css', '/robots.txt', '/sitemap.xml', '/', '/q', '/player/access-probe',
   '/season/access-probe', '/__access_probe_not_found__',
 ];
@@ -134,6 +135,8 @@ export async function smoke(env, request = fetch) {
     { path: '/es/data', marker: 'Datos y fuentes' },
     { path: '/en/season/2015-16', markers: ['League season comparison', '49–35 goals', '>1.74</td>'] },
     { path: '/es/season/2015-16', markers: ['Comparación de temporadas de liga', '49–35 goles', '>1,74</td>'] },
+    { path: '/en/season/2014-15', markers: ['League season comparison', '62–37 goals', '>1.84</td>'] },
+    { path: '/es/season/2014-15', markers: ['Comparación de temporadas de liga', '62–37 goles', '>1,84</td>'] },
     { path: '/en/q?metric=goals&entity_type=player&entity_id=all&season=2024-25&competition=PL&viz=dot_plot&limit=10',
       markers: ['class="dot"', 'aria-current="page">Dots</a>', '<table>'] },
     { path: '/es/q?metric=goals&entity_type=player&entity_id=all&season=2024-25&competition=PL&viz=dot_plot&limit=10',

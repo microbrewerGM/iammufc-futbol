@@ -65,6 +65,7 @@ coverage:
   - { metric: xg, entity_type: player, granularity: box_score, season: "2025-26", competition: PL, source_id: fpl, redistributable: true, cost_class: cheap }
 
   # --- season-level record, from PDDL match results -------------------
+  - { metric: goals, entity_type: season, granularity: box_score, season: "2014-15", competition: PL, source_id: football_data_couk, redistributable: true, cost_class: cheap }
   - { metric: goals, entity_type: season, granularity: box_score, season: "2015-16", competition: PL, source_id: football_data_couk, redistributable: true, cost_class: cheap }
   - { metric: goals, entity_type: season, granularity: box_score, season: "2016-17", competition: PL, source_id: football_data_couk, redistributable: true, cost_class: cheap }
   - { metric: goals, entity_type: season, granularity: box_score, season: "2017-18", competition: PL, source_id: football_data_couk, redistributable: true, cost_class: cheap }
