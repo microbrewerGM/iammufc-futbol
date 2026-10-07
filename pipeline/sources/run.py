@@ -33,6 +33,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SEED_PATH = REPO_ROOT / "infra" / "migrations" / "0002_seed.sql"
 
 SEASONS = [
+    "2014-15",
     "2015-16",
     "2016-17",
     "2017-18",

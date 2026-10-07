@@ -14,14 +14,21 @@ vi.mock("../worker/src/core/db", async (original) => ({
   currentSnapshot: vi.fn(async () => "snapshot-a"),
   seasonSquadRows: vi.fn(async () => []),
   seasonRecordRow: vi.fn(async (_env: unknown, season: string, competition = "PL") =>
-    competition === "PL" && ["2024-25", "2015-16"].includes(season)
-      ? season === "2015-16"
+    competition === "PL" && ["2024-25", "2015-16", "2014-15"].includes(season)
+      ? season === "2014-15"
+        ? { season, played: 38, won: 20, drawn: 10, lost: 8, goals: 62, goals_against: 37 }
+        : season === "2015-16"
         ? { season, played: 38, won: 19, drawn: 9, lost: 10, goals: 49, goals_against: 35 }
         : { season, played: 38, won: 11, drawn: 9, lost: 18, goals: 44, goals_against: 54 }
       : null,
   ),
   seasonHistoryRows: vi.fn(async (_env: unknown, seasons: string[]) =>
-    seasons.map((season, index) => season === "2015-16"
+    seasons.map((season, index) => season === "2014-15"
+      ? {
+          season, played: 38, won: 20, drawn: 10, lost: 8,
+          goals: 62, goals_against: 37, snapshot_id: "snapshot-a",
+        }
+      : season === "2015-16"
       ? {
           season, played: 38, won: 19, drawn: 9, lost: 10,
           goals: 49, goals_against: 35, snapshot_id: "snapshot-a",
@@ -91,5 +98,20 @@ describe("authenticated team-season comparison", () => {
     expect(body).toContain(locale === "en"
       ? "No squad data integrated for 2015-16."
       : "No hay datos de plantilla integrados para 2015-16.");
+  });
+
+  it.each([
+    ["en", "1.84", "1.63"],
+    ["es", "1,84", "1,63"],
+  ] as const)("serves the exact authenticated 2014-15 %s page", async (locale, ppg, gpg) => {
+    const response = await app.request(`https://site.invalid/${locale}/season/2014-15`, { headers }, env);
+    const body = await response.text();
+    expect(response.status).toBe(200);
+    expect(body).toContain(`>${ppg}</td>`);
+    expect(body).toContain(`>${gpg}</td>`);
+    expect(body).toContain("Football-Data.co.uk");
+    expect(body).toContain(locale === "en"
+      ? "No squad data integrated for 2014-15."
+      : "No hay datos de plantilla integrados para 2014-15.");
   });
 });
