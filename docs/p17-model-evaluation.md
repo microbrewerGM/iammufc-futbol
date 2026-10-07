@@ -1,6 +1,6 @@
 # P17 low-cost intent-model evaluation
 
-Status: evaluation gate ready; no model is approved or enabled.
+Status: no model is approved or enabled; dev remains rules-only.
 
 The natural-language layer may propose a `QueryIntent`. It never decides
 rights or feasibility, executes SQL, or selects data. The existing deterministic
@@ -66,10 +66,33 @@ Current sources:
 - [OpenRouter pricing](https://openrouter.ai/pricing)
 - [TypeSafe documentation index](https://docs.typesafe.ai/llms.txt)
 
-## Next execution step
+## GLM 4.7 Flash canary result
 
-Run the 4–6-case fail-fast canary from the execution plan three times per case.
-Stop at the first malformed output, unsupported acceptance, or deterministic
-field mutation. Only a passing canary earns the 48-question evaluation. Keep
-`AI_PROPOSALS_ENABLED` unset throughout evaluation and enable nothing on dev
-until a candidate clears every gate in this document.
+The service-scoped canary stopped at `en_supported`, trial 1, on 2026-10-01.
+That is a failed candidate under the frozen gate, so the 48-question evaluation
+did not run and the temporary activation route and workflow input were removed.
+`AI_PROPOSALS_ENABLED` remains unset and every ordinary dev request remains
+rules-only. The current response normalizer and complete deterministic-intent
+equality check stay in place as hardening for any future candidate.
+
+## Gemma 4 canary result
+
+The second candidate is pinned to `@cf/google/gemma-4-26b-a4b-it`. Its request
+uses `max_completion_tokens: 200`, `temperature: 0`, and
+`chat_template_kwargs: { enable_thinking: false }`. The response is accepted
+only through the existing strict output decoder, schema validator, catalog
+boundary, and complete canonical equality check against the rule result.
+
+The baseline authenticated Access smoke passed. The service-scoped canary then
+stopped at `en_supported`, trial 1, with the finite category `invalid_output` on
+2026-10-01. Runtime provider responses and request bodies were not emitted or
+persisted; the fixed evaluation prompts remain source-controlled. The candidate
+therefore failed before the held-out evaluation and made one inference call.
+
+At current published rates, Gemma 4 costs $0.10 per million input tokens and
+$0.30 per million output tokens. Paid inference was not authorized; the run was
+bounded to one attempted call, but it did not expose measured neuron or token
+usage. The temporary marker route and workflow input have been removed. The
+dormant model pin and strict request/output handling remain as evaluation
+evidence. Ordinary traffic cannot invoke the model while
+`AI_PROPOSALS_ENABLED` remains unset.

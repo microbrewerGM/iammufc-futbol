@@ -20,7 +20,7 @@ jobs:
         with:
           node-version: '22'
       - name: Validate smoke client without credentials
-        run: node --test tools/test_dev_access_smoke.mjs
+        run: node --test tools/test_dev_access_smoke.mjs tools/test_p17_canary_smoke.mjs
       - name: Test protected dev site
         env:
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}

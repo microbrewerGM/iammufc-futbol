@@ -9,6 +9,9 @@ import compiled from "../worker/src/generated/catalog.json";
 vi.mock("jose", async (original) => ({
   ...await original<typeof import("jose")>(),
   jwtVerify: vi.fn(async (token: string) => {
+    if (token === "synthetic-service") {
+      return { payload: { sub: "", type: "app", common_name: "synthetic-service.access" } };
+    }
     if (token !== "synthetic") throw new Error("denied");
     return { payload: { sub: "owner", email: "owner@example.invalid" } };
   }),
@@ -47,8 +50,10 @@ const env = {
   ACCESS_ISSUER: "https://example.cloudflareaccess.com",
   ACCESS_AUD: "a".repeat(64),
   ACCESS_OWNER_EMAILS: "owner@example.invalid",
+  ACCESS_SERVICE_CLIENT_IDS: "synthetic-service.access",
 } as Env;
 const auth = { "cf-access-jwt-assertion": "synthetic", Origin: "https://site.invalid" };
+const serviceAuth = { "cf-access-jwt-assertion": "synthetic-service", Origin: "https://site.invalid" };
 const base = {
   metric: "goals",
   season: "2024-25",
@@ -269,13 +274,20 @@ describe("honest query contract routes", () => {
     expect(JSON.stringify(body)).not.toContain("synthetic-provider-detail");
   });
 
-  it("keeps live inference disabled after the candidate fails its release gate", async () => {
+  it.each([
+    ["human with exact marker", auth, "gemma4-v1"],
+    ["service without marker", serviceAuth, undefined],
+    ["service with stale marker", serviceAuth, "v1"],
+    ["service with retired Gemma marker", serviceAuth, "gemma4-v1"],
+  ])("keeps %s on the rules-only path", async (_case, identityHeaders, marker) => {
     const run = vi.fn(async () => ({ response: JSON.stringify(base) }));
+    const headers: Record<string, string> = { ...identityHeaders, "content-type": "application/json" };
+    if (marker) headers["x-iammufc-p17-canary"] = marker;
     const response = await app.request(
       "https://site.invalid/api/chat",
       {
         method: "POST",
-        headers: { ...auth, "content-type": "application/json" },
+        headers,
         body: JSON.stringify({ question: "Top goals 2024-25" }),
       },
       { ...env, AI: { run } } as unknown as Env,
@@ -286,9 +298,35 @@ describe("honest query contract routes", () => {
       source: "rules",
       model_status: "disabled",
       confidence: "high",
-      notes: ["AI proposal unavailable (disabled); using rules."],
     });
     expect(run).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["entity_type", "season"],
+    ["entity_id", "Provider text"],
+    ["limit", 50],
+    ["dimensions", ["position"]],
+    ["filters", { position: "GK" }],
+  ] as const)("refuses a current-shape model mutation of %s", async (field, value) => {
+    const response = await app.request(
+      "https://site.invalid/api/chat",
+      {
+        method: "POST",
+        headers: { ...auth, "content-type": "application/json" },
+        body: JSON.stringify({ question: "Top goals 2024-25" }),
+      },
+      {
+        ...env,
+        AI_PROPOSALS_ENABLED: "true",
+        AI: { run: async () => ({ choices: [{ message: { content: JSON.stringify({ ...base, [field]: value }) } }] }) },
+      } as unknown as Env,
+    );
+    expect(await response.json()).toMatchObject({
+      source: "rules",
+      model_status: "unsupported_intent",
+      proposed_intent: base,
+    });
   });
 
   it("does not let AI change a deterministically requested competition", async () => {

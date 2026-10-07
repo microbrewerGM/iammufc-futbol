@@ -24,6 +24,15 @@ it("preserves a supported complete proposal and canonical defaults", async () =>
   expect(preserved.proposal?.intent).toEqual(season);
 });
 
+it("accepts the OpenAI-compatible response shape used by current Workers AI models", async () => {
+  const intent = withDefaults({ metric: "assists", season: "2023-24", entity_id: "all", viz: "table" });
+  const result = await proposeWithAI("Synthetic football question", catalog, {
+    run: async () => ({ choices: [{ message: { content: JSON.stringify(intent) } }] }),
+  }, "synthetic-current-model");
+  expect(result.proposal?.intent).toEqual(intent);
+  expect(result.proposal?.model_status).toBe("accepted");
+});
+
 it("requests deterministic bounded output", async () => {
   let input: Record<string, unknown> | null = null;
   await proposeWithAI("Synthetic football question", catalog,
@@ -33,7 +42,8 @@ it("requests deterministic bounded output", async () => {
     } }, "synthetic-model");
   expect(input).toMatchObject({
     temperature: 0,
-    max_tokens: 200,
+    max_completion_tokens: 200,
+    chat_template_kwargs: { enable_thinking: false },
   });
   expect(input).not.toHaveProperty("response_format");
 });
@@ -70,6 +80,12 @@ it("returns finite failure codes without provider output", async () => {
     .toEqual({ proposal: null, failure: "invalid_output" });
   expect(await proposeWithAI("Synthetic football question", catalog,
     { run: async () => ({ response: 42 }) }, "synthetic-model"))
+    .toEqual({ proposal: null, failure: "invalid_output" });
+  expect(await proposeWithAI("Synthetic football question", catalog,
+    { run: async () => ({ choices: [] }) }, "synthetic-model"))
+    .toEqual({ proposal: null, failure: "invalid_output" });
+  expect(await proposeWithAI("Synthetic football question", catalog,
+    { run: async () => ({ choices: [{ message: { content: 42 } }] }) }, "synthetic-model"))
     .toEqual({ proposal: null, failure: "invalid_output" });
   expect(await proposeWithAI("Synthetic football question", catalog,
     { run: async () => ({ response: JSON.stringify({ ...base, filters: { position: "GK" } }) }) }, "synthetic-model"))
