@@ -1,0 +1,11 @@
+{
+  "artifact_sha256": "6b6e629d1b915de6a22af636eb1509ed77b3758b7c4c1b41765a2c16a09136cd",
+  "builder": "iammufc-private-public-catalog",
+  "builder_version": 1,
+  "catalog_contract_version": 1,
+  "coverage_count": 59,
+  "metric_count": 6,
+  "source_revision": "7f2ec08fd5804ee41579bec0764d4e8bf9d60da4",
+  "statement_version": 1,
+  "validation_passed": true
+}
