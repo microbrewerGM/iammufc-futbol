@@ -203,12 +203,19 @@ test('anonymous and forged probes are fixed-origin, credential-free and do not f
     assert.equal(headers.has('Authorization'), false);
     return accessRedirect();
   });
-  assert.equal(calls.length, 43);
-  assert.equal(calls.filter(({ init }) => init.method === 'HEAD').length, 20);
+  assert.equal(calls.length, 59);
+  assert.equal(calls.filter(({ init }) => init.method === 'HEAD').length, 26);
+  const postCalls = calls.filter(({ init }) => init.method === 'POST');
+  assert.deepEqual(postCalls.map(({ url }) => new URL(url).pathname), [
+    '/en/ask', '/es/ask', '/api/chat', '/api/query',
+  ]);
+  assert.ok(postCalls.every(({ init }) => typeof init.body === 'string'));
   assert.equal(calls.filter(({ init }) => new Headers(init.headers).has('CF-Access-Jwt-Assertion')).length, 3);
   assert.ok(results.every((result) => result.pass));
   assert.ok(!JSON.stringify(results).includes('private=value'));
   assert.ok(!JSON.stringify(results).includes('synthetic-invalid-assertion'));
+  assert.ok(!JSON.stringify(results).includes('Top+assists'));
+  assert.ok(!JSON.stringify(results).includes('Top goals 2024-25'));
 });
 
 test('only the exact trusted Access challenge passes negative probes', async () => {
@@ -253,6 +260,6 @@ test('combined smoke requires authenticated success and denial success', async (
     { status: rejected ? 422 : 200, headers: { 'cache-control': 'private, no-store',
       ...((health || chat || query) ? { 'content-type': 'application/json' } : {}) } });
   });
-  assert.equal(results.length, 60);
+  assert.equal(results.length, 76);
   assert.ok(results.every((result) => result.pass), JSON.stringify(results.filter((result) => !result.pass)));
 });
