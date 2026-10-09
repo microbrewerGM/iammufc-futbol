@@ -6,9 +6,15 @@ const accessHost = 'odd-fog-375d.cloudflareaccess.com';
 const denialCases = [
   '/en', '/es', '/en/compare', '/es/compare', '/en/data', '/es/data',
   '/en/season/2014-15', '/es/season/2014-15', '/en/season/2015-16', '/es/season/2015-16',
-  '/api/catalog', '/api/health',
-  '/style.css', '/robots.txt', '/sitemap.xml', '/', '/q', '/player/access-probe',
-  '/season/access-probe', '/__access_probe_not_found__',
+  '/api/catalog', '/api/health', '/api/chat', '/api/query', '/en/ask', '/es/ask',
+  '/style.css', '/robots.txt', '/sitemap.xml', '/', '/q', '/data', '/player/access-probe',
+  '/season/access-probe', '/season/2015-16', '/__access_probe_not_found__',
+];
+const denialPostCases = [
+  { path: '/en/ask', contentType: 'application/x-www-form-urlencoded', body: 'q=Top+assists+2023-24' },
+  { path: '/es/ask', contentType: 'application/x-www-form-urlencoded', body: 'q=Top+asistencias+2023-24' },
+  { path: '/api/chat', contentType: 'application/json', body: JSON.stringify({ question: 'Top goals 2024-25' }) },
+  { path: '/api/query', contentType: 'application/json', body: '{}' },
 ];
 
 const topKeys = ['ai_bound', 'coverage_cells', 'coverage_through', 'data_state',
@@ -237,6 +243,14 @@ export async function denialSmoke(request = fetch) {
       results.push({ mode: 'anonymous', method, path, status: response.status,
         pass: denied(response) });
     }
+  }
+  for (const check of denialPostCases) {
+    const response = await request(origin + check.path, {
+      method: 'POST', redirect: 'manual', signal: AbortSignal.timeout(15000),
+      headers: { 'Content-Type': check.contentType }, body: check.body,
+    });
+    results.push({ mode: 'anonymous', method: 'POST', path: check.path,
+      status: response.status, pass: denied(response) });
   }
   for (const path of ['/en', '/api/health', '/style.css']) {
     const response = await request(origin + path, {
