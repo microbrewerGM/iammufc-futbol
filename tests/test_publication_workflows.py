@@ -41,6 +41,23 @@ def test_manual_publication_is_main_only() -> None:
     assert refresh["jobs"]["refresh-dev"]["if"] == "github.ref == 'refs/heads/main'"
 
 
+def test_private_artifact_reader_uses_separate_read_only_app() -> None:
+    deploy = load("deploy.yml")
+    consumer = deploy["jobs"]["consume-private-seed"]
+    token_step = next(
+        step for step in consumer["steps"] if step.get("id") == "private-read"
+    )
+    token = token_step["with"]
+
+    assert consumer["environment"] == "dev"
+    assert token["client-id"] == "${{ vars.IAMMUFC_PRIVATE_ARTIFACT_APP_CLIENT_ID }}"
+    assert token["private-key"] == "${{ secrets.IAMMUFC_PRIVATE_ARTIFACT_APP_PRIVATE_KEY }}"
+    assert token["repositories"] == "iammufc-platform"
+    assert token["permission-actions"] == "read"
+    assert "permission-contents" not in token
+    assert "permission-pull-requests" not in token
+
+
 def test_dot_plot_constraint_migration_precedes_seed_in_both_workflows() -> None:
     for name in ("deploy.yml", "nightly-refresh.yml"):
         workflow = load(name)
