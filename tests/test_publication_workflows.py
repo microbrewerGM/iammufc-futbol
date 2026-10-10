@@ -29,7 +29,15 @@ def test_deploy_and_refresh_share_a_queued_workflow_lock() -> None:
 def test_manual_publication_is_main_only() -> None:
     deploy = load("deploy.yml")
     refresh = load("nightly-refresh.yml")
-    assert deploy["jobs"]["build-data"]["if"] == "github.ref == 'refs/heads/main'"
+    assert deploy["jobs"]["build-data"]["if"] == (
+        "github.ref == 'refs/heads/main' && github.event_name != 'repository_dispatch'"
+    )
+    assert deploy["jobs"]["deploy-dev"]["if"] == "github.event_name != 'repository_dispatch'"
+    assert deploy["jobs"]["consume-private-seed"]["if"] == (
+        "github.event_name == 'repository_dispatch' && "
+        "github.event.action == 'p13-private-seed-ready' && "
+        "github.ref == 'refs/heads/main'"
+    )
     assert refresh["jobs"]["refresh-dev"]["if"] == "github.ref == 'refs/heads/main'"
 
 
