@@ -20,6 +20,8 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  repository_dispatch:
+    types: [p13-private-seed-ready]
 
 permissions:
   contents: read
@@ -35,7 +37,7 @@ concurrency:
 jobs:
   build-data:
     name: build-data
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && github.event_name != 'repository_dispatch'
     runs-on: ubuntu-latest
     # Needed for FOOTBALL_DATA_KEY (Champions League ingest, ADR-0005) --
     # environment secrets are scoped strictly by declared environment name,
@@ -72,6 +74,7 @@ jobs:
   deploy-dev:
     name: deploy-dev
     needs: build-data
+    if: github.event_name != 'repository_dispatch'
     runs-on: ubuntu-latest
     environment: dev # no required reviewer; dev is disposable
     permissions:
@@ -121,6 +124,94 @@ jobs:
           apiToken: ${{ secrets.CF_TOKEN_DEV }}
           accountId: ${{ secrets.CF_ACCOUNT }}
           command: d1 execute iammufc-dev --config infra/wrangler.jsonc --env dev --remote --file infra/migrations/0002_seed.sql
+
+      - name: Deploy Worker (dev)
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CF_TOKEN_DEV }}
+          accountId: ${{ secrets.CF_ACCOUNT }}
+          command: deploy --config infra/wrangler.jsonc --env dev
+
+  consume-private-seed:
+    name: consume-private-seed
+    if: github.event_name == 'repository_dispatch' && github.event.action == 'p13-private-seed-ready' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: dev
+    permissions:
+      contents: read
+    steps:
+      - name: Check out public consumer main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Create a short-lived read-only token for the private producer
+        id: private-read
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.IAMMUFC_CATALOG_APP_CLIENT_ID }}
+          private-key: ${{ secrets.IAMMUFC_CATALOG_APP_PRIVATE_KEY }}
+          owner: microbrewerGM
+          repositories: iammufc-platform
+          permission-actions: read
+
+      - name: Verify the referenced private producer run
+        env:
+          GH_TOKEN: ${{ steps.private-read.outputs.token }}
+          PRIVATE_RUN_ID: ${{ github.event.client_payload.private_run_id }}
+          PRIVATE_RUN_ATTEMPT: ${{ github.event.client_payload.private_run_attempt }}
+          PRIVATE_COMMIT: ${{ github.event.client_payload.private_commit }}
+          PRIVATE_ARTIFACT_ID: ${{ github.event.client_payload.private_artifact_id }}
+        run: |
+          set -euo pipefail
+          [[ "$PRIVATE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$PRIVATE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          [[ "$PRIVATE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          workflow_id="$(gh api repos/microbrewerGM/iammufc-platform/actions/workflows/p13-private-seed.yml --jq .id)"
+          export PRIVATE_WORKFLOW_ID="$workflow_id"
+          gh api "repos/microbrewerGM/iammufc-platform/actions/runs/$PRIVATE_RUN_ID" \
+            | python3 .github/scripts/verify_private_seed_run.py
+
+      - name: Download only the referenced private artifact
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          github-token: ${{ steps.private-read.outputs.token }}
+          repository: microbrewerGM/iammufc-platform
+          run-id: ${{ github.event.client_payload.private_run_id }}
+          artifact-ids: ${{ github.event.client_payload.private_artifact_id }}
+          path: private-seed
+          digest-mismatch: error
+
+      - name: Verify the seed checksum without printing its contents
+        run: python3 .github/scripts/verify_private_seed_checksum.py
+
+      - name: Set up Node for the dev Worker
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Apply schema (dev)
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CF_TOKEN_DEV }}
+          accountId: ${{ secrets.CF_ACCOUNT }}
+          command: d1 execute iammufc-dev --config infra/wrangler.jsonc --env dev --remote --file infra/migrations/0001_schema.sql
+
+      - name: Apply P16 telemetry migration (dev)
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CF_TOKEN_DEV }}
+          accountId: ${{ secrets.CF_ACCOUNT }}
+          command: d1 execute iammufc-dev --config infra/wrangler.jsonc --env dev --remote --file infra/migrations/0003_p16_dot_plot.sql
+
+      - name: Load verified private seed into dev D1
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CF_TOKEN_DEV }}
+          accountId: ${{ secrets.CF_ACCOUNT }}
+          command: d1 execute iammufc-dev --config infra/wrangler.jsonc --env dev --remote --file private-seed/0002_seed.sql
 
       - name: Deploy Worker (dev)
         uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
