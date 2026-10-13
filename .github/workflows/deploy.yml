@@ -90,19 +90,7 @@ jobs:
       - name: Read catalog provenance version
         id: catalog-provenance
         shell: bash
-        run: |
-          node - <<'NODE' >> "$GITHUB_OUTPUT"
-          const statement = require('./worker/src/generated/catalog-release.json');
-          for (const [key, value] of Object.entries({
-            version: statement.statement_version,
-            run_id: statement.producer_run_id,
-            run_attempt: statement.producer_run_attempt,
-            artifact_id: statement.producer_artifact_id,
-            source_revision: statement.source_revision,
-          })) {
-            if (value !== undefined) console.log(`${key}=${value}`);
-          }
-          NODE
+        run: python3 .github/scripts/verify_public_catalog_producer.py outputs >> "$GITHUB_OUTPUT"
 
       - name: Create short-lived read token for the private catalog producer
         if: steps.catalog-provenance.outputs.version == '2'
@@ -130,7 +118,21 @@ jobs:
           workflow_id="$(gh api repos/microbrewerGM/iammufc-platform/actions/workflows/publish-public-catalog.yml --jq .id)"
           export PRODUCER_WORKFLOW_ID="$workflow_id"
           gh api "repos/microbrewerGM/iammufc-platform/actions/runs/$PRODUCER_RUN_ID" \
-            | python3 .github/scripts/verify_public_catalog_producer.py metadata
+            | python3 .github/scripts/verify_public_catalog_producer.py run
+
+      - name: Verify referenced artifact belongs to the exact producer run attempt
+        if: steps.catalog-provenance.outputs.version == '2'
+        env:
+          GH_TOKEN: ${{ steps.catalog-read.outputs.token }}
+          PRODUCER_RUN_ID: ${{ steps.catalog-provenance.outputs.run_id }}
+          PRODUCER_RUN_ATTEMPT: ${{ steps.catalog-provenance.outputs.run_attempt }}
+          PRODUCER_ARTIFACT_ID: ${{ steps.catalog-provenance.outputs.artifact_id }}
+          PRODUCER_SOURCE_REVISION: ${{ steps.catalog-provenance.outputs.source_revision }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/microbrewerGM/iammufc-platform/actions/artifacts/$PRODUCER_ARTIFACT_ID" \
+            | python3 .github/scripts/verify_public_catalog_producer.py artifact-metadata
 
       - name: Download exact sanitized catalog artifact
         if: steps.catalog-provenance.outputs.version == '2'

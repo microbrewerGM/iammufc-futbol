@@ -48,6 +48,32 @@ class PublicCatalogProducerTests(unittest.TestCase):
             "producer_run_attempt": 2,
             "producer_artifact_id": 7624,
         }
+        self.artifact = {
+            "id": 7624,
+            "name": "iammufc-public-catalog-1234-2",
+            "expired": False,
+            "workflow_run": {"id": 1234, "head_branch": "main", "head_sha": "a" * 40},
+        }
+
+    def test_outputs_accepts_exact_v2_and_legacy_v1_statements(self):
+        self.assertEqual(VERIFY.parse_statement_outputs(self.statement)["version"], "2")
+        legacy = {
+            key: value for key, value in self.statement.items()
+            if key not in {"producer_run_id", "producer_run_attempt", "producer_artifact_id"}
+        }
+        legacy["statement_version"] = legacy["builder_version"] = 1
+        self.assertEqual(VERIFY.parse_statement_outputs(legacy), {"version": "1"})
+
+    def test_outputs_rejects_unknown_or_injectable_values(self):
+        for mutation in (
+            {"statement_version": 3},
+            {"source_revision": "a" * 40 + "\nversion=1"},
+            {"producer_run_id": "1234\nversion=1"},
+            {"private_field": "unexpected"},
+        ):
+            with self.subTest(mutation=mutation):
+                with self.assertRaises(ValueError):
+                    VERIFY.parse_statement_outputs({**self.statement, **mutation})
 
     def test_accepts_successful_fixed_main_workflow(self):
         VERIFY.verify_run(self.run, self.env)
@@ -68,6 +94,23 @@ class PublicCatalogProducerTests(unittest.TestCase):
                 run = {**self.run, key: value}
                 with self.assertRaises(ValueError):
                     VERIFY.verify_run(run, self.env)
+
+    def test_accepts_exact_artifact_bound_to_current_run_attempt(self):
+        VERIFY.verify_artifact_metadata(self.artifact, self.env)
+
+    def test_rejects_artifact_from_another_run_attempt_or_commit(self):
+        for key, value in (
+            ("id", 8),
+            ("name", "iammufc-public-catalog-1234-1"),
+            ("expired", True),
+            ("workflow_run", {"id": 8, "head_branch": "main", "head_sha": "a" * 40}),
+            ("workflow_run", {"id": 1234, "head_branch": "feature", "head_sha": "a" * 40}),
+            ("workflow_run", {"id": 1234, "head_branch": "main", "head_sha": "b" * 40}),
+        ):
+            with self.subTest(key=key, value=value):
+                artifact = {**self.artifact, key: value}
+                with self.assertRaises(ValueError):
+                    VERIFY.verify_artifact_metadata(artifact, self.env)
 
     def test_accepts_exact_catalog_and_statement(self):
         VERIFY.verify_catalog(self.statement, self.catalog, self.catalog, "7624")
