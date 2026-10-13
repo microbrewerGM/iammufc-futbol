@@ -62,10 +62,10 @@ def verify_run(run: dict[str, Any], env: dict[str, str]) -> None:
     source_revision = env["PRODUCER_SOURCE_REVISION"]
     expected_path = env["PRODUCER_WORKFLOW"]
     require(bool(re.fullmatch(r"[0-9a-f]{40}", source_revision)), "invalid source revision")
-    require(run.get("id") == run_id, "producer run id mismatch")
-    require(run.get("run_attempt") == attempt, "producer run attempt mismatch")
+    require(type(run.get("id")) is int and run["id"] == run_id, "producer run id mismatch")
+    require(type(run.get("run_attempt")) is int and run["run_attempt"] == attempt, "producer run attempt mismatch")
     require(run.get("head_sha") == source_revision, "producer source revision mismatch")
-    require(run.get("workflow_id") == workflow_id, "producer workflow id mismatch")
+    require(type(run.get("workflow_id")) is int and run["workflow_id"] == workflow_id, "producer workflow id mismatch")
     require(run.get("path", "").split("@", 1)[0] == expected_path, "producer workflow path mismatch")
     require(run.get("head_branch") == "main", "producer branch is not main")
     require(run.get("event") in {"push", "workflow_dispatch"}, "producer event is not trusted")
@@ -79,10 +79,10 @@ def verify_artifact_metadata(artifact: dict[str, Any], env: dict[str, str]) -> N
     artifact_id = positive_int(env["PRODUCER_ARTIFACT_ID"], "artifact id")
     source_revision = env["PRODUCER_SOURCE_REVISION"]
     run = artifact.get("workflow_run")
-    require(artifact.get("id") == artifact_id, "producer artifact id mismatch")
+    require(type(artifact.get("id")) is int and artifact["id"] == artifact_id, "producer artifact id mismatch")
     require(artifact.get("name") == f"iammufc-public-catalog-{run_id}-{attempt}", "producer artifact attempt/name mismatch")
     require(artifact.get("expired") is False, "producer artifact is expired")
-    require(type(run) is dict and run.get("id") == run_id, "artifact belongs to a different producer run")
+    require(type(run) is dict and type(run.get("id")) is int and run["id"] == run_id, "artifact belongs to a different producer run")
     require(run.get("head_branch") == "main", "artifact producer branch is not main")
     require(run.get("head_sha") == source_revision, "artifact producer revision mismatch")
 
