@@ -179,7 +179,6 @@ jobs:
           run-id: ${{ github.event.client_payload.private_run_id }}
           artifact-ids: ${{ github.event.client_payload.private_artifact_id }}
           path: private-seed
-          digest-mismatch: error
 
       - name: Verify the seed checksum without printing its contents
         run: python3 .github/scripts/verify_private_seed_checksum.py
