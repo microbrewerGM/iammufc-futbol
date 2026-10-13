@@ -1,4 +1,4 @@
-"""Publication workflows must serialize every dev D1 mutation."""
+"""The website consumes private data and deploys code without rebuilding data."""
 
 from pathlib import Path
 
@@ -12,33 +12,27 @@ def load(name: str) -> dict:
     )
 
 
-def test_deploy_and_refresh_share_a_queued_workflow_lock() -> None:
+def test_website_deployment_is_serialized_and_does_not_build_a_public_seed() -> None:
     deploy = load("deploy.yml")
-    refresh = load("nightly-refresh.yml")
     expected = {
         "group": "iammufc-dev-publication",
         "cancel-in-progress": "false",
         "queue": "max",
     }
     assert deploy["concurrency"] == expected
-    assert refresh["concurrency"] == expected
-    assert "concurrency" not in deploy["jobs"]["build-data"]
+    assert "build-data" not in deploy["jobs"]
     assert "concurrency" not in deploy["jobs"]["deploy-dev"]
+    assert not Path(".github/workflows/nightly-refresh.yml").exists()
 
 
 def test_manual_publication_is_main_only() -> None:
     deploy = load("deploy.yml")
-    refresh = load("nightly-refresh.yml")
-    assert deploy["jobs"]["build-data"]["if"] == (
-        "github.ref == 'refs/heads/main' && github.event_name != 'repository_dispatch'"
-    )
     assert deploy["jobs"]["deploy-dev"]["if"] == "github.event_name != 'repository_dispatch'"
     assert deploy["jobs"]["consume-private-seed"]["if"] == (
         "github.event_name == 'repository_dispatch' && "
         "github.event.action == 'p13-private-seed-ready' && "
         "github.ref == 'refs/heads/main'"
     )
-    assert refresh["jobs"]["refresh-dev"]["if"] == "github.ref == 'refs/heads/main'"
 
 
 def test_private_artifact_reader_uses_separate_read_only_app() -> None:
@@ -58,15 +52,17 @@ def test_private_artifact_reader_uses_separate_read_only_app() -> None:
     assert "permission-pull-requests" not in token
 
 
-def test_dot_plot_constraint_migration_precedes_seed_in_both_workflows() -> None:
-    for name in ("deploy.yml", "nightly-refresh.yml"):
-        workflow = load(name)
-        job = "deploy-dev" if name == "deploy.yml" else "refresh-dev"
-        commands = [
-            step.get("with", {}).get("command", "")
-            for step in workflow["jobs"][job]["steps"]
-        ]
-        schema = next(i for i, command in enumerate(commands) if "0001_schema.sql" in command)
-        migration = next(i for i, command in enumerate(commands) if "0003_p16_dot_plot.sql" in command)
-        seed = next(i for i, command in enumerate(commands) if "0002_seed.sql" in command)
-        assert schema < migration < seed
+def test_private_seed_consumer_applies_schema_and_migration_before_private_seed() -> None:
+    deploy = load("deploy.yml")
+    steps = deploy["jobs"]["consume-private-seed"]["steps"]
+    commands = [step.get("with", {}).get("command", "") for step in steps]
+    schema = next(i for i, command in enumerate(commands) if "0001_schema.sql" in command)
+    migration = next(i for i, command in enumerate(commands) if "0003_p16_dot_plot.sql" in command)
+    seed = next(i for i, command in enumerate(commands) if "private-seed/0002_seed.sql" in command)
+    assert schema < migration < seed
+
+    deploy_commands = [
+        step.get("with", {}).get("command", "")
+        for step in deploy["jobs"]["deploy-dev"]["steps"]
+    ]
+    assert not any("0002_seed.sql" in command for command in deploy_commands)

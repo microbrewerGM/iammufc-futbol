@@ -62,16 +62,9 @@ jobs:
 
       - name: Public catalog contract
         # Validate the committed artifact's closed consumer shape and
-        # cross-record invariants without rewriting it. The next step retains
-        # legacy semantic provenance during the ownership transition.
+        # cross-record invariants without rewriting it. Producer authenticity
+        # is verified by the deploy workflow against the private run artifact.
         run: uv run python -m pipeline.contracts.validate_public_catalog
-
-      - name: Legacy catalog rollback boundary
-        # Keep the old public producer valid, private-field-free and exactly in
-        # parity until verifiable private provenance replaces this authority.
-        run: |
-          uv run python -m pipeline.contracts.validate_legacy_catalog
-          uv run pytest tests/test_public_catalog_boundary.py -q
 
       - name: Feasibility negative cases
         # Asserts refusals happen for the RIGHT reason -- NO_RIGHTS is not
