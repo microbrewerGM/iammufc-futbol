@@ -1,10 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { denialSmoke, runSmoke, smoke, validateChatPayload,
-  validateHealthPayload, validateQueryPayload } from './dev-access-smoke.mjs';
+  snapshotContinuitySmoke, validateHealthPayload, validateQueryPayload,
+  validateSnapshotMatch } from './dev-access-smoke.mjs';
 
 const env = { CF_ACCESS_CLIENT_ID: 'synthetic-id', CF_ACCESS_CLIENT_SECRET: 'synthetic-secret' };
 const snapshot = 'a'.repeat(64);
+const expectedSnapshot = 'b'.repeat(64);
 const retrieved = '2026-09-23T12:00:00.000Z';
 const observed = (id, coverage = '2025-26') => ({
   id, status: 'observed', coverage_through: coverage, source_as_of: null, retrieved_at: retrieved,
@@ -156,6 +158,47 @@ test('health validator rejects extra, missing, duplicate and malformed data', ()
     snapshot_prepared_at: '2026-09-23T13:00:00.000Z' }), null);
   assert.equal(validateHealthPayload(null), null);
   assert.equal(validateHealthPayload([]), null);
+});
+
+test('snapshot continuity check compares the protected health ID without returning it', async () => {
+  const requests = [];
+  const result = await snapshotContinuitySmoke({ ...env, EXPECTED_PRIVATE_SNAPSHOT_ID: snapshot },
+    async (url, init) => {
+      requests.push({ url, init });
+      return new Response(JSON.stringify(validHealth), { status: 200, headers: {
+        'cache-control': 'private, no-store', 'content-type': 'application/json; charset=UTF-8',
+      } });
+    });
+  assert.equal(result, true);
+  assert.equal(requests.length, 1);
+  assert.equal(new URL(requests[0].url).pathname, '/api/health');
+  assert.equal(requests[0].init.redirect, 'manual');
+  assert.equal(requests[0].init.headers['CF-Access-Client-Id'], env.CF_ACCESS_CLIENT_ID);
+  assert.equal(validateSnapshotMatch(validHealth, snapshot), true);
+  assert.equal(validateSnapshotMatch(validHealth, expectedSnapshot), false);
+  assert.equal(JSON.stringify(result).includes(snapshot), false);
+});
+
+test('snapshot continuity rejects mismatches, malformed payloads and unsafe responses', async () => {
+  const expected = { ...env, EXPECTED_PRIVATE_SNAPSHOT_ID: expectedSnapshot };
+  const response = (body, init = {}) => new Response(body, { status: 200, headers: {
+    'cache-control': 'private, no-store', 'content-type': 'application/json', ...init.headers,
+  } });
+  const cases = [
+    response(JSON.stringify(validHealth)),
+    response('{malformed'),
+    response(JSON.stringify(validHealth), { headers: { 'cache-control': 'public' } }),
+    response(JSON.stringify(validHealth), { headers: { 'content-type': 'text/html' } }),
+    new Response(JSON.stringify(validHealth), { status: 302, headers: {
+      'cache-control': 'private, no-store', 'content-type': 'application/json',
+    } }),
+  ];
+  for (const mockedResponse of cases) {
+    assert.equal(await snapshotContinuitySmoke(expected, async () => mockedResponse), false);
+  }
+  assert.equal(await snapshotContinuitySmoke({ ...env, EXPECTED_PRIVATE_SNAPSHOT_ID: 'bad' },
+    () => { throw new Error('invalid expectation must not issue a request'); }), false);
+  await assert.rejects(snapshotContinuitySmoke({}, () => { throw new Error('must not request'); }), /Missing dev/);
 });
 
 test('health response requires JSON content type and never emits raw metadata', async () => {

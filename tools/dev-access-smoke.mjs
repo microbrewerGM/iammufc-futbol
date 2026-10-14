@@ -76,6 +76,40 @@ export function validateHealthPayload(value) {
   return value.data_state;
 }
 
+/** Compare a protected health payload to a producer expectation in memory.
+ * Only the finite match verdict may leave the caller. */
+export function validateSnapshotMatch(value, expectedSnapshotId) {
+  return typeof expectedSnapshotId === 'string' && /^[a-f0-9]{64}$/.test(expectedSnapshotId) &&
+    validateHealthPayload(value) !== null && value.snapshot_id === expectedSnapshotId;
+}
+
+/** Read the protected deployment health endpoint and return no publication IDs. */
+export async function snapshotContinuitySmoke(env, request = fetch) {
+  const id = env.CF_ACCESS_CLIENT_ID;
+  const secret = env.CF_ACCESS_CLIENT_SECRET;
+  const expectedSnapshotId = env.EXPECTED_PRIVATE_SNAPSHOT_ID;
+  if (!id || !secret) throw new Error('Missing dev Access service credentials.');
+  if (typeof expectedSnapshotId !== 'string' || !/^[a-f0-9]{64}$/.test(expectedSnapshotId)) {
+    return false;
+  }
+  const response = await request(origin + '/api/health', {
+    method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(15000),
+    headers: {
+      'CF-Access-Client-Id': id,
+      'CF-Access-Client-Secret': secret,
+      Origin: origin,
+    },
+  });
+  const privateResponse = response.headers.get('cache-control')?.includes('no-store');
+  const isJson = /^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type') ?? '');
+  let payload = null;
+  if (response.status === 200 && privateResponse && isJson) {
+    try { payload = JSON.parse(await response.text()); } catch { payload = null; }
+  }
+  return response.status === 200 && Boolean(privateResponse) && isJson &&
+    validateSnapshotMatch(payload, expectedSnapshotId);
+}
+
 /** Validate only the stable proposal boundary and return a finite model status.
  * Provider text, notes, response bodies and proposed values never leave memory. */
 export function validateChatPayload(value) {
@@ -271,12 +305,23 @@ export async function runSmoke(env, request = fetch) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  try {
-    const results = await runSmoke(process.env);
-    console.log(JSON.stringify(results));
-    if (results.some((result) => !result.pass)) process.exitCode = 1;
-  } catch {
-    console.error('Dev Access smoke failed; check credential provisioning and connectivity. Details suppressed.');
-    process.exitCode = 1;
+  if (process.argv[2] === 'snapshot') {
+    try {
+      const matched = await snapshotContinuitySmoke(process.env);
+      console.log(`snapshot_match=${matched}`);
+      if (!matched) process.exitCode = 1;
+    } catch {
+      console.error('snapshot_match=false');
+      process.exitCode = 1;
+    }
+  } else {
+    try {
+      const results = await runSmoke(process.env);
+      console.log(JSON.stringify(results));
+      if (results.some((result) => !result.pass)) process.exitCode = 1;
+    } catch {
+      console.error('Dev Access smoke failed; check credential provisioning and connectivity. Details suppressed.');
+      process.exitCode = 1;
+    }
   }
 }

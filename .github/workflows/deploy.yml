@@ -99,7 +99,7 @@ jobs:
 
       - name: Download exact sanitized catalog artifact
         if: steps.catalog-provenance.outputs.version == '2'
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           github-token: ${{ steps.catalog-read.outputs.token }}
           repository: microbrewerGM/iammufc-platform
@@ -189,7 +189,7 @@ jobs:
             | python3 .github/scripts/verify_private_seed_run.py
 
       - name: Download only the referenced private artifact
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           github-token: ${{ steps.private-read.outputs.token }}
           repository: microbrewerGM/iammufc-platform
@@ -197,7 +197,8 @@ jobs:
           artifact-ids: ${{ github.event.client_payload.private_artifact_id }}
           path: private-seed
 
-      - name: Verify the seed checksum without printing its contents
+      - name: Verify the seed checksum and snapshot manifest
+        id: private-seed-verify
         run: python3 .github/scripts/verify_private_seed_checksum.py
 
       - name: Set up Node for the dev Worker
@@ -242,3 +243,10 @@ jobs:
           apiToken: ${{ secrets.CF_TOKEN_DEV }}
           accountId: ${{ secrets.CF_ACCOUNT }}
           command: deploy --config infra/wrangler.jsonc --env dev
+
+      - name: Verify protected health reports the loaded snapshot
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          EXPECTED_PRIVATE_SNAPSHOT_ID: ${{ steps.private-seed-verify.outputs.snapshot_id }}
+        run: node tools/dev-access-smoke.mjs snapshot
