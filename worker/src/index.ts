@@ -329,7 +329,38 @@ function registerLocaleRoutes(code: LocaleCode) {
   });
 
   app.get(`${p}/compare`, async (c) => {
-    const seasons = catalog.seasonsFor("goals", "player", "box_score");
+    const comparisonHasCoverage = (metric: "goals" | "assists", season: string) =>
+      ([metric, "minutes"] as const).every((coveredMetric) => {
+        const cell = catalog.coverage.find(
+          (candidate) =>
+            candidate.metric === coveredMetric &&
+            candidate.entity_type === "player" &&
+            candidate.granularity === "box_score" &&
+            candidate.season === season &&
+            candidate.competition === "PL",
+        );
+        if (cell?.source_id !== "fpl" || !cell.redistributable) return false;
+        const feasibility = catalog.checkFeasibility(
+          {
+            metric: coveredMetric,
+            entity_type: "player",
+            entity_id: "all",
+            season,
+            competition: "PL",
+            dimensions: [],
+            filters: {},
+            viz: "table",
+            limit: 50,
+          },
+          locale.code,
+        );
+        return feasibility.state === "available" || feasibility.state === "computable_now_queued";
+      });
+    const comparisonSeasons = (metric: "goals" | "assists") =>
+      catalog
+        .seasonsFor(metric, "player", "box_score")
+        .filter((season) => comparisonHasCoverage(metric, season));
+    const seasons = comparisonSeasons("goals");
     const request = parseComparison(
       new URL(c.req.url).searchParams,
       seasons[0] ?? "2025-26",
@@ -340,11 +371,22 @@ function registerLocaleRoutes(code: LocaleCode) {
         400,
       );
     }
+    const availableMetrics = (["goals", "assists"] as const).filter((metric) =>
+      comparisonHasCoverage(metric, request.season),
+    );
+    const availableSeasons = comparisonSeasons(request.metric);
+    if (!availableMetrics.includes(request.metric) || !availableSeasons.includes(request.season)) {
+      return c.text(
+        locale.code === "es" ? "Parámetros de comparación no válidos." : "Invalid comparison parameters.",
+        400,
+      );
+    }
     return comparisonPage(
       request,
       await executeComparison(c.env, catalog, request, locale.code),
-      seasons,
+      availableSeasons,
       locale,
+      availableMetrics,
     );
   });
 

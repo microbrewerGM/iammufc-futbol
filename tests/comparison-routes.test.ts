@@ -12,8 +12,8 @@ vi.mock("jose", async (original) => ({
 import app from "../worker/src/index";
 
 const rows = [
-  { player_id: "fpl:1:2024-25", label: "Synthetic Alpha", total: 5, minutes: 450, snapshot_id: "synthetic" },
-  { player_id: "fpl:2:2024-25", label: "Synthetic Beta", total: 4, minutes: 500, snapshot_id: "synthetic" },
+  { player_id: "fpl:1:2024-25", label: "Synthetic Alpha", total: 2, minutes: 180, snapshot_id: "synthetic" },
+  { player_id: "fpl:2:2024-25", label: "Synthetic Beta", total: 4, minutes: 90, snapshot_id: "synthetic" },
 ];
 
 function setup() {
@@ -50,22 +50,43 @@ describe("authenticated comparison routes", () => {
 
   it("renders EN/ES controls, preserves language-switch parameters, and uses localized attribution", async () => {
     const { env } = setup();
-    const query = "season=2024-25&metric=goals&min_minutes=450";
+    const query = "season=2024-25&metric=goals&min_minutes=100";
     const en = await app.request(`https://site.invalid/en/compare?${query}`, { headers }, env);
     const enBody = await en.text();
     expect(en.status).toBe(200);
     expect(enBody).toContain("Output per 90 minutes");
     expect(enBody).toContain('role="region"');
     expect(enBody).toContain('tabindex="0"');
+    expect(enBody).toContain('<option value="2024-25" selected>');
+    expect(enBody).toContain('<option value="goals" selected>');
+    expect(enBody).toContain('id="min_minutes" min="0" max="20000" step="1" value="100"');
+    expect(enBody).toContain("Synthetic Alpha");
+    expect(enBody).toContain("180</td><td>2</td><td>1.00</td>");
+    expect(enBody).not.toContain("Synthetic Beta");
     expect(enBody).toContain(
-      'href="/es/compare?season=2024-25&amp;metric=goals&amp;min_minutes=450"',
+      'href="/es/compare?season=2024-25&amp;metric=goals&amp;min_minutes=100"',
     );
 
-    const es = await app.request(`https://site.invalid/es/compare?${query}`, { headers }, env);
+    const switchUrl = enBody.match(/href="(\/es\/compare\?[^\"]+)"/)![1]!.replaceAll("&amp;", "&");
+    const es = await app.request(`https://site.invalid${switchUrl}`, { headers }, env);
     const esBody = await es.text();
     expect(es.status).toBe(200);
     expect(esBody).toContain("Producción por 90 minutos");
     expect(esBody).toContain("Datos de jugadores derivados");
+    expect(esBody).toContain("Synthetic Alpha");
+    expect(esBody).toContain("180</td><td>2</td><td>1,00</td>");
+    expect(esBody).not.toContain("Synthetic Beta");
+    const enSnapshot = enBody.match(/Data snapshot ([\w-]+)/)?.[1];
+    const esSnapshot = esBody.match(/Instantánea de datos ([\w-]+)/)?.[1];
+    expect(enSnapshot).toBe("synthetic");
+    expect(esSnapshot).toBe(enSnapshot);
+    for (const [locale, snapshotLabel] of [["en", "Data snapshot"], ["es", "Instantánea de datos"]]) {
+      const revisited = await app.request(`https://site.invalid/${locale}/compare?${query}`, { headers }, env);
+      const revisitedBody = await revisited.text();
+      expect(revisitedBody).toContain("Synthetic Alpha");
+      expect(revisitedBody).not.toContain("Synthetic Beta");
+      expect(revisitedBody).toContain(`${snapshotLabel} ${enSnapshot}`);
+    }
   });
 
   it("selects assists safely and rejects duplicate or unsupported controls before SQL", async () => {
@@ -80,7 +101,7 @@ describe("authenticated comparison routes", () => {
     expect(prepare.mock.calls[0]![0]).toContain("s.assists AS total");
 
     prepare.mockClear();
-    for (const query of ["metric=xg", "metric=goals&metric=assists", "extra=1"]) {
+    for (const query of ["metric=xg", "metric=goals&metric=assists", "extra=1", "season=1900-01&metric=goals"]) {
       const response = await app.request(`https://site.invalid/en/compare?${query}`, { headers }, env);
       expect(response.status).toBe(400);
     }
