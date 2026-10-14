@@ -24,7 +24,7 @@ describe("committed public catalog contract", () => {
   it("decodes the committed artifact", () => {
     const decoded = decodeCompiledCatalog(compiled);
     expect(decoded.metrics).toHaveLength(6);
-    expect(decoded.coverage).toHaveLength(62);
+    expect(decoded.coverage).toHaveLength(63);
   });
 
   it("rejects extra private fields and wrong primitive or enum types", () => {
