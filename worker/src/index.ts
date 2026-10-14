@@ -90,7 +90,12 @@ async function executeWithCache(
   allowCompute: boolean,
 ): Promise<CachedExecution> {
   const cached = await readQueryCache(env, key, snapshot, intent);
-  if (cached.result) return { result: cached.result, cacheOutcome: "hit", overBudget: false };
+  if (cached.result) {
+    // Publication can change after the route's initial snapshot read even
+    // when the result comes from cache rather than a new data SELECT.
+    if (await currentSnapshot(env) !== snapshot) throw new Error("snapshot_changed_during_query");
+    return { result: cached.result, cacheOutcome: "hit", overBudget: false };
+  }
   if (!allowCompute) return { result: null, cacheOutcome: cached.outcome, overBudget: false };
   if (!(await enforceBudget(env))) {
     return { result: null, cacheOutcome: cached.outcome, overBudget: true };

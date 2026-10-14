@@ -164,6 +164,32 @@ describe("honest query contract routes", () => {
     );
   });
 
+  it.each(["api", "en", "es"])(
+    "refuses a cached result if publication changes before the %s response",
+    async (route) => {
+      const before = "a".repeat(64);
+      vi.mocked(currentSnapshot)
+        .mockResolvedValueOnce(before)
+        .mockResolvedValueOnce("b".repeat(64));
+      vi.mocked(readQueryCache).mockResolvedValueOnce({
+        outcome: "hit",
+        result: { rows: [{ label: "Cached", value: 7 }], snapshot_id: before, unit: "goals" },
+      });
+      const response = route === "api"
+        ? await post("/api/query", base)
+        : await app.request(
+          `https://site.invalid/${route}/q?metric=goals&season=2024-25&viz=bar&entity_id=all`,
+          { headers: auth }, env,
+        );
+      expect(response.status).toBe(503);
+      expect(await response.text()).toBe("Request unavailable.");
+      expect(enforceBudget).not.toHaveBeenCalled();
+      expect(runQuery).not.toHaveBeenCalled();
+      expect(writeQueryCache).not.toHaveBeenCalled();
+      expect(logQueryAggregate).not.toHaveBeenCalled();
+    },
+  );
+
   it("records only finite EN/ES route dimensions", async () => {
     for (const locale of ["en", "es"] as const) {
       const response = await app.request(
@@ -194,6 +220,7 @@ describe("honest query contract routes", () => {
       unit: "goals",
     };
     vi.mocked(currentSnapshot)
+      .mockResolvedValueOnce(snapshot)
       .mockResolvedValueOnce(snapshot)
       .mockResolvedValueOnce(snapshot)
       .mockResolvedValueOnce(snapshot);
