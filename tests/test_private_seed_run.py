@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import unittest
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
@@ -74,21 +75,62 @@ class PrivateSeedRunTests(unittest.TestCase):
 
     def test_accepts_matching_seed_checksum(self):
         seed = b"synthetic seed contents"
-        sidecar = f"{hashlib.sha256(seed).hexdigest()}  0002_seed.sql\n".encode()
-        CHECKSUM.verify_checksum(seed, sidecar)
+        digest = hashlib.sha256(seed).hexdigest()
+        sidecar = f"{digest}  0002_seed.sql\n".encode()
+        manifest = json.dumps({"schema_version": 1, "snapshot_id": "b" * 64,
+                               "seed_sha256": digest}).encode()
+        self.assertEqual(CHECKSUM.verify_checksum(seed, sidecar, manifest), "b" * 64)
 
     def test_rejects_seed_checksum_mismatch(self):
         seed = b"changed synthetic seed contents"
         sidecar = f"{'a' * 64}  0002_seed.sql\n".encode()
+        manifest = json.dumps({"schema_version": 1, "snapshot_id": "b" * 64,
+                               "seed_sha256": hashlib.sha256(seed).hexdigest()}).encode()
         with self.assertRaisesRegex(ValueError, "checksum verification failed"):
-            CHECKSUM.verify_checksum(seed, sidecar)
+            CHECKSUM.verify_checksum(seed, sidecar, manifest)
+
+    def test_rejects_manifest_digest_that_differs_from_seed_and_sidecar(self):
+        seed = b"synthetic seed contents"
+        digest = hashlib.sha256(seed).hexdigest()
+        sidecar = f"{digest}  0002_seed.sql\n".encode()
+        manifest = json.dumps({"schema_version": 1, "snapshot_id": "b" * 64,
+                               "seed_sha256": "a" * 64}).encode()
+        with self.assertRaisesRegex(ValueError, "checksum verification failed"):
+            CHECKSUM.verify_checksum(seed, sidecar, manifest)
+
+    def test_rejects_manifest_with_extra_key_or_duplicate_key(self):
+        seed = b"synthetic seed contents"
+        digest = hashlib.sha256(seed).hexdigest()
+        sidecar = f"{digest}  0002_seed.sql\n".encode()
+        valid = {"schema_version": 1, "snapshot_id": "b" * 64, "seed_sha256": digest}
+        for manifest in (
+            json.dumps({**valid, "extra": "closed schema"}).encode(),
+            (json.dumps(valid)[:-1] + ',"schema_version":1}').encode(),
+        ):
+            with self.subTest(manifest=manifest), self.assertRaisesRegex(ValueError, "manifest is invalid"):
+                CHECKSUM.verify_checksum(seed, sidecar, manifest)
+
+    def test_rejects_invalid_manifest_schema_and_identifiers(self):
+        seed = b"synthetic seed contents"
+        digest = hashlib.sha256(seed).hexdigest()
+        sidecar = f"{digest}  0002_seed.sql\n".encode()
+        for manifest_value in (
+            {"schema_version": True, "snapshot_id": "b" * 64, "seed_sha256": digest},
+            {"schema_version": 2, "snapshot_id": "b" * 64, "seed_sha256": digest},
+            {"schema_version": 1, "snapshot_id": "B" * 64, "seed_sha256": digest},
+            {"schema_version": 1, "snapshot_id": "b" * 64, "seed_sha256": "not-a-digest"},
+        ):
+            with self.subTest(manifest=manifest_value), self.assertRaisesRegex(ValueError, "manifest is invalid"):
+                CHECKSUM.verify_checksum(seed, sidecar, json.dumps(manifest_value).encode())
 
     def test_rejects_sidecar_path_injection(self):
         seed = b"synthetic seed contents"
         digest = hashlib.sha256(seed).hexdigest()
         sidecar = f"{digest}  ../../public.sql\n".encode()
+        manifest = json.dumps({"schema_version": 1, "snapshot_id": "b" * 64,
+                               "seed_sha256": digest}).encode()
         with self.assertRaisesRegex(ValueError, "checksum verification failed"):
-            CHECKSUM.verify_checksum(seed, sidecar)
+            CHECKSUM.verify_checksum(seed, sidecar, manifest)
 
 
 if __name__ == "__main__":
