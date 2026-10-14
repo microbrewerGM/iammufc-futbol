@@ -33,12 +33,25 @@ const corpus = corpusJson as CorpusCase[];
 const catalog = new Catalog(decodeCompiledCatalog(compiled));
 const knownPlayers = ["Rashford", "Fernandes", "Bruno Fernandes"];
 
-async function exactOutcome(testCase: CorpusCase): Promise<{ exact: boolean; acceptedUnsupported: boolean }> {
+async function outcomeSignature(outcome: unknown): Promise<string> {
+  const encoded = new TextEncoder().encode(JSON.stringify(outcome) ?? "");
+  const runtimeCrypto = (globalThis as unknown as {
+    crypto: { subtle: { digest(algorithm: string, data: Uint8Array): Promise<ArrayBuffer> } };
+  }).crypto;
+  const digest = new Uint8Array(await runtimeCrypto.subtle.digest("SHA-256", encoded));
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function exactOutcome(testCase: CorpusCase): Promise<{ exact: boolean; acceptedUnsupported: boolean; outcomeSignature: string }> {
   if (testCase.kind === "question") {
     const verdict = gateQuestion(testCase.question!, testCase.locale, knownPlayers);
     if (!verdict.allowed) {
       const exact = testCase.expected.outcome === "rejected" && verdict.code === testCase.expected.code;
-      return { exact, acceptedUnsupported: false };
+      return {
+        exact,
+        acceptedUnsupported: false,
+        outcomeSignature: await outcomeSignature({ outcome: "rejected", code: verdict.code }),
+      };
     }
     const proposal = parseRuleBased(verdict.question, catalog);
     const ambiguous = hasAmbiguousPlayerReference(verdict.question, knownPlayers);
@@ -46,14 +59,16 @@ async function exactOutcome(testCase: CorpusCase): Promise<{ exact: boolean; acc
       return {
         exact: testCase.expected.outcome === "clarification",
         acceptedUnsupported: testCase.expected.outcome === "rejected",
+        outcomeSignature: await outcomeSignature({ outcome: "clarification" }),
       };
     }
-    const exact = testCase.expected.outcome === "accepted"
-      && testCase.expected.intent !== undefined
-      && canonicalize(proposal.intent) === canonicalize(testCase.expected.intent);
+    const expectedIntent = testCase.expected.outcome === "accepted" ? testCase.expected.intent : undefined;
+    const exact = expectedIntent !== undefined
+      && canonicalize(proposal.intent) === canonicalize(expectedIntent);
     return {
       exact,
       acceptedUnsupported: testCase.expected.outcome === "rejected",
+      outcomeSignature: await outcomeSignature({ outcome: "accepted", canonicalIntent: canonicalize(proposal.intent) }),
     };
   }
 
@@ -72,11 +87,13 @@ async function exactOutcome(testCase: CorpusCase): Promise<{ exact: boolean; acc
       exact: expectedIntent !== undefined
         && canonicalize(result.proposal.intent) === canonicalize(expectedIntent),
       acceptedUnsupported: testCase.expected.outcome === "refused",
+      outcomeSignature: await outcomeSignature({ outcome: "accepted", canonicalIntent: canonicalize(result.proposal.intent) }),
     };
   }
   return {
     exact: testCase.expected.outcome === "refused" && result.failure === testCase.expected.failure,
     acceptedUnsupported: false,
+    outcomeSignature: await outcomeSignature({ outcome: "refused", failure: result.failure }),
   };
 }
 
@@ -109,7 +126,11 @@ describe("P17 evaluation gate v2", () => {
     for (const testCase of corpus) {
       const outcome = await exactOutcome(testCase);
       if (!outcome.exact || outcome.acceptedUnsupported) {
-        failures.push({ id: testCase.id, ...outcome });
+        failures.push({
+          id: testCase.id,
+          exact: outcome.exact,
+          acceptedUnsupported: outcome.acceptedUnsupported,
+        });
       }
     }
     expect(failures).toEqual([]);
@@ -118,8 +139,8 @@ describe("P17 evaluation gate v2", () => {
   it("scores three trials per case without retaining questions or provider output", async () => {
     const trials: EvaluationTrial[] = [];
     for (const testCase of corpus) {
-      const outcome = await exactOutcome(testCase);
       for (let sample = 0; sample < 3; sample += 1) {
+        const outcome = await exactOutcome(testCase);
         trials.push({
           caseId: testCase.id,
           caseKind: testCase.kind,
@@ -129,6 +150,7 @@ describe("P17 evaluation gate v2", () => {
           acceptedUnsupported: outcome.acceptedUnsupported,
           latencyMs: 10 + sample,
           costUsd: 0,
+          outcomeSignature: outcome.outcomeSignature,
           fieldMatches: testCase.expected.outcome === "accepted"
             ? Object.fromEntries(["metric", "entity_type", "entity_id", "season", "competition", "dimensions", "filters", "viz", "limit"].map((field) => [field, outcome.exact]))
             : undefined,
@@ -145,6 +167,7 @@ describe("P17 evaluation gate v2", () => {
       heldOutQuestionCases: 24,
       trials: 180,
       heldOutExactAgreement: 1,
+      withinCaseStability: 1,
       acceptedUnsupported: 0,
       meanLatencyMs: 11,
       measuredCostUsd: 0,
@@ -164,6 +187,7 @@ describe("P17 evaluation gate v2", () => {
       acceptedUnsupported: false,
       latencyMs: 1,
       costUsd: 0,
+      outcomeSignature: "a".repeat(64),
     }], { fallbackVerified: true, withinPredeclaredCostGate: true })).toThrow("exactly three trials");
 
     const trials = corpus.flatMap((testCase) => Array.from({ length: 3 }, () => ({
@@ -175,6 +199,7 @@ describe("P17 evaluation gate v2", () => {
       acceptedUnsupported: testCase.id === "m-en-04",
       latencyMs: 1,
       costUsd: 0,
+      outcomeSignature: "a".repeat(64),
     })));
     expect(scoreEvaluation(trials, {
       fallbackVerified: true,
@@ -184,5 +209,54 @@ describe("P17 evaluation gate v2", () => {
       fallbackVerified: false,
       withinPredeclaredCostGate: true,
     }).passesReleaseGate).toBe(false);
+  });
+
+  it("measures divergent canonical outcomes even when exact-match booleans agree", () => {
+    const trials: EvaluationTrial[] = corpus.flatMap((testCase) => Array.from({ length: 3 }, (_, index) => ({
+      caseId: testCase.id,
+      caseKind: testCase.kind,
+      split: testCase.split,
+      category: testCase.category,
+      exact: true,
+      acceptedUnsupported: false,
+      latencyMs: 1,
+      costUsd: 0,
+      outcomeSignature: index === 2 && testCase.id === "m-en-04" ? "b".repeat(64) : "a".repeat(64),
+    })));
+    const report = scoreEvaluation(trials, {
+      fallbackVerified: true,
+      withinPredeclaredCostGate: true,
+    });
+    expect(report.withinCaseStability).toBe(59 / 60);
+    expect(report.passesReleaseGate).toBe(false);
+    expect(JSON.stringify(report)).not.toMatch(/[ab]{64}/);
+  });
+
+  it("rejects inconsistent metadata and malformed or missing outcome signatures", () => {
+    const trials: EvaluationTrial[] = corpus.flatMap((testCase) => Array.from({ length: 3 }, () => ({
+      caseId: testCase.id,
+      caseKind: testCase.kind,
+      split: testCase.split,
+      category: testCase.category,
+      exact: true,
+      acceptedUnsupported: false,
+      latencyMs: 1,
+      costUsd: 0,
+      outcomeSignature: "a".repeat(64),
+    })));
+    expect(() => scoreEvaluation([
+      ...trials,
+      { ...trials[0]!, caseId: "m-en-01", category: "changed-category" },
+      { ...trials[1]!, caseId: "m-en-01" },
+    ], { fallbackVerified: true, withinPredeclaredCostGate: true })).toThrow("mismatched metadata");
+    expect(() => scoreEvaluation(trials.map((trial, index) => index === 0
+      ? { ...trial, outcomeSignature: "not-a-digest" }
+      : trial), { fallbackVerified: true, withinPredeclaredCostGate: true })).toThrow("valid sanitized outcome signature");
+    expect(() => scoreEvaluation(trials.map(({ outcomeSignature: _signature, ...trial }, index) => index === 0
+      ? trial as unknown as EvaluationTrial
+      : { ...trial, outcomeSignature: "a".repeat(64) }), {
+      fallbackVerified: true,
+      withinPredeclaredCostGate: true,
+    })).toThrow("valid sanitized outcome signature");
   });
 });

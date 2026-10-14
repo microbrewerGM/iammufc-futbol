@@ -9,6 +9,8 @@ export interface EvaluationTrial {
   acceptedUnsupported: boolean;
   latencyMs: number;
   costUsd: number;
+  /** Ephemeral SHA-256 of a canonical outcome. Never copied into reports. */
+  outcomeSignature: string;
   fieldMatches?: Partial<Record<QueryIntentField, boolean>>;
 }
 
@@ -25,6 +27,7 @@ export interface EvaluationReport {
   heldOutQuestionCases: number;
   trials: number;
   heldOutExactAgreement: number;
+  withinCaseStability: number;
   acceptedUnsupported: number;
   meanLatencyMs: number;
   measuredCostUsd: number;
@@ -42,12 +45,31 @@ export function scoreEvaluation(
   trials: readonly EvaluationTrial[],
   evidence: EvaluationGateEvidence,
 ): EvaluationReport {
-  const caseIds = new Set(trials.map((trial) => trial.caseId));
-  for (const caseId of caseIds) {
-    const count = trials.filter((trial) => trial.caseId === caseId).length;
-    if (count !== 3) throw new Error(`case ${caseId} must have exactly three trials`);
+  const cases = new Map<string, EvaluationTrial[]>();
+  for (const trial of trials) {
+    if (!/^[a-f0-9]{64}$/.test(trial.outcomeSignature)) {
+      throw new Error("every trial must have a valid sanitized outcome signature");
+    }
+    const group = cases.get(trial.caseId) ?? [];
+    if (group.length > 0) {
+      const first = group[0];
+      if (first && (trial.caseKind !== first.caseKind || trial.split !== first.split || trial.category !== first.category)) {
+        throw new Error(`case ${trial.caseId} has mismatched metadata`);
+      }
+    }
+    group.push(trial);
+    cases.set(trial.caseId, group);
+  }
+  for (const [caseId, group] of cases) {
+    if (group.length !== 3) throw new Error(`case ${caseId} must have exactly three trials`);
   }
 
+  const caseIds = new Set(cases.keys());
+  const stableCases = [...cases.values()].filter((group) => {
+    const first = group[0];
+    return first !== undefined && group.every((trial) => trial.outcomeSignature === first.outcomeSignature);
+  }).length;
+  const withinCaseStability = stableCases / cases.size;
   const heldOut = trials.filter((trial) => trial.split === "held_out");
   if (!heldOut.length) throw new Error("held-out trials are required");
   const heldOutExactAgreement = heldOut.filter((trial) => trial.exact).length / heldOut.length;
@@ -76,6 +98,7 @@ export function scoreEvaluation(
     heldOutQuestionCases,
     trials: trials.length,
     heldOutExactAgreement,
+    withinCaseStability,
     acceptedUnsupported,
     meanLatencyMs: trials.reduce((sum, trial) => sum + trial.latencyMs, 0) / trials.length,
     measuredCostUsd: trials.reduce((sum, trial) => sum + trial.costUsd, 0),
@@ -87,6 +110,7 @@ export function scoreEvaluation(
       questionCases >= 40
       && heldOutQuestionCases >= 20
       && heldOutExactAgreement >= 0.95
+      && withinCaseStability === 1
       && acceptedUnsupported === 0
       && evidence.fallbackVerified
       && evidence.withinPredeclaredCostGate,
