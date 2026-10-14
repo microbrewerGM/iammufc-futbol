@@ -52,6 +52,51 @@ def test_private_artifact_reader_uses_separate_read_only_app() -> None:
     assert "permission-pull-requests" not in token
 
 
+def test_artifact_downloads_are_pinned_and_private_seed_is_verified() -> None:
+    deploy = load("deploy.yml")
+    download_action = (
+        "actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131"
+    )
+    downloads = [
+        step
+        for job in deploy["jobs"].values()
+        for step in job.get("steps", [])
+        if step.get("uses", "").startswith("actions/download-artifact@")
+    ]
+
+    assert len(downloads) == 2
+    assert all(step["uses"] == download_action for step in downloads)
+
+    consumer_steps = deploy["jobs"]["consume-private-seed"]["steps"]
+    private_download_index = next(
+        index
+        for index, step in enumerate(consumer_steps)
+        if step.get("name") == "Download only the referenced private artifact"
+    )
+    private_download = consumer_steps[private_download_index]
+    assert private_download["with"]["github-token"] == (
+        "${{ steps.private-read.outputs.token }}"
+    )
+    assert private_download["with"]["repository"] == (
+        "microbrewerGM/iammufc-platform"
+    )
+    assert private_download["with"]["run-id"] == (
+        "${{ github.event.client_payload.private_run_id }}"
+    )
+    assert private_download["with"]["artifact-ids"] == (
+        "${{ github.event.client_payload.private_artifact_id }}"
+    )
+    assert private_download["with"]["path"] == "private-seed"
+
+    checksum_step = consumer_steps[private_download_index + 1]
+    assert checksum_step.get("name") == (
+        "Verify the seed checksum and snapshot manifest"
+    )
+    assert checksum_step.get("run") == (
+        "python3 .github/scripts/verify_private_seed_checksum.py"
+    )
+
+
 def test_private_seed_consumer_applies_schema_and_migration_before_private_seed() -> None:
     deploy = load("deploy.yml")
     steps = deploy["jobs"]["consume-private-seed"]["steps"]
