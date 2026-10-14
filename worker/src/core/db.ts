@@ -57,8 +57,16 @@ export interface CacheLookup {
 
 const CACHE_JSON_LIMIT = 100_000;
 const CACHE_ROW_LIMIT = 50;
+export const QUERY_CACHE_SLOT_COUNT = 512;
 const RESULT_KEYS = ["rows", "snapshot_id", "unit"] as const;
 const RESULT_ROW_KEYS = ["label", "route_key", "secondary", "value"] as const;
+
+/** Use the first 32 bits of the already-computed SHA-256 artifact key to pick
+ * one of a fixed number of slots. Collisions only evict cache entries. */
+export function queryCacheSlot(artifactKey: string): number | null {
+  if (!/^[a-f0-9]{64}$/.test(artifactKey)) return null;
+  return Number.parseInt(artifactKey.slice(0, 8), 16) % QUERY_CACHE_SLOT_COUNT;
+}
 
 function cachedResult(
   raw: unknown,
@@ -106,12 +114,15 @@ export async function readQueryCache(
   snapshotId: string | null,
   intent: QueryIntent,
 ): Promise<CacheLookup> {
-  if (!snapshotId || !SNAPSHOT_RE.test(snapshotId)) return { result: null, outcome: "not_applicable" };
+  const slot = queryCacheSlot(artifactKey);
+  if (slot === null || !snapshotId || !SNAPSHOT_RE.test(snapshotId)) return { result: null, outcome: "not_applicable" };
   try {
     const row = await env.DB.prepare(
-      "SELECT schema_version, result_json FROM query_result_cache WHERE artifact_key = ? AND snapshot_id = ?",
-    ).bind(artifactKey, snapshotId).first<{ schema_version: unknown; result_json: unknown }>();
-    if (!row || row.schema_version !== 1) return { result: null, outcome: "miss" };
+      "SELECT artifact_key, snapshot_id, schema_version, result_json FROM query_result_cache_slots WHERE slot = ?",
+    ).bind(slot).first<{ artifact_key: unknown; snapshot_id: unknown; schema_version: unknown; result_json: unknown }>();
+    if (!row || row.artifact_key !== artifactKey || row.snapshot_id !== snapshotId || row.schema_version !== 1) {
+      return { result: null, outcome: "miss" };
+    }
     const result = cachedResult(row.result_json, snapshotId, intent);
     return result ? { result, outcome: "hit" } : { result: null, outcome: "miss" };
   } catch {
@@ -127,18 +138,21 @@ export async function writeQueryCache(
   result: QueryResult,
   intent: QueryIntent,
 ): Promise<boolean> {
-  if (!snapshotId || !SNAPSHOT_RE.test(snapshotId) || result.snapshot_id !== snapshotId) return false;
+  const slot = queryCacheSlot(artifactKey);
+  if (slot === null || !snapshotId || !SNAPSHOT_RE.test(snapshotId) || result.snapshot_id !== snapshotId) return false;
   const encoded = JSON.stringify(result);
   if (!cachedResult(encoded, snapshotId, intent)) return false;
   try {
     const stored = await env.DB.prepare(
-      `INSERT INTO query_result_cache (artifact_key, snapshot_id, schema_version, result_json)
-       SELECT ?, ?, 1, ?
+      `INSERT INTO query_result_cache_slots (slot, artifact_key, snapshot_id, schema_version, result_json)
+       SELECT ?, ?, ?, 1, ?
        WHERE ? = (SELECT snapshot_id FROM snapshots ORDER BY created_at DESC LIMIT 1)
-       ON CONFLICT(artifact_key, snapshot_id) DO UPDATE SET
+       ON CONFLICT(slot) DO UPDATE SET
+         artifact_key = excluded.artifact_key,
+         snapshot_id = excluded.snapshot_id,
          schema_version = excluded.schema_version,
          result_json = excluded.result_json`,
-    ).bind(artifactKey, snapshotId, encoded, snapshotId).run();
+    ).bind(slot, artifactKey, snapshotId, encoded, snapshotId).run();
     return stored.success && stored.meta.changes > 0;
   } catch {
     return false;
