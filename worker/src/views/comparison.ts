@@ -6,8 +6,8 @@ export function comparisonPage(
   request: ComparisonRequest,
   result: Awaited<ReturnType<typeof executeComparison>>,
   seasons: string[],
+  metrics: Array<ComparisonRequest["metric"]>,
   locale: Locale,
-  metrics: Array<ComparisonRequest["metric"]> = ["goals", "assists"],
 ): Response {
   const es = locale.code === "es";
   const title = es ? "Producción por 90 minutos" : "Output per 90 minutes";

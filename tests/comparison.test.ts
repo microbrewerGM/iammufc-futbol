@@ -11,6 +11,7 @@ import { Catalog, type CompiledCatalog, type FeasibilityState } from "../worker/
 import { validateQuerySemantics } from "../worker/src/core/validate-intent";
 import { comparisonPage } from "../worker/src/views/comparison";
 import { LOCALES } from "../worker/src/core/locale";
+import { selectComparisonDefaults } from "../worker/src/index";
 import type { Env } from "../worker/src/core/db";
 import compiled from "../worker/src/generated/catalog.json";
 
@@ -27,6 +28,18 @@ const request = { season: "2024-25", metric: "goals" as const, minMinutes: 450 }
 afterEach(() => vi.restoreAllMocks());
 
 describe("per-90 comparison", () => {
+  it("defaults from available metric/season pairs and fails closed without coverage", () => {
+    expect(selectComparisonDefaults({ goals: [], assists: ["2024-25", "2023-24"] })).toEqual({
+      metric: "assists",
+      season: "2024-25",
+    });
+    expect(selectComparisonDefaults({ goals: ["2024-25"], assists: ["2023-24"] }, "2023-24")).toEqual({
+      metric: "assists",
+      season: "2023-24",
+    });
+    expect(selectComparisonDefaults({ goals: [], assists: [] })).toBeNull();
+  });
+
   it("uses the denominator and threshold without turning missingness into zero", () => {
     const rows = [
       row("two", 2, 180),
@@ -132,7 +145,7 @@ describe("per-90 comparison", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.attribution).toContain("Datos de jugadores derivados");
-    const body = await comparisonPage(request, result, ["2024-25"], LOCALES.es).text();
+    const body = await comparisonPage(request, result, ["2024-25"], ["goals", "assists"], LOCALES.es).text();
     expect(body).toContain("<table>");
     expect(body).toContain("Synthetic Alpha");
     expect(body).toContain('name="min_minutes"');
