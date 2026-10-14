@@ -12,26 +12,9 @@ import type { QueryIntent } from "../core/intent";
 import { formatNumber, metricLabel, positionLabel, type Locale } from "../core/locale";
 import type { Proposal } from "../core/parser";
 import { per90 } from "../core/rates";
-import type { SeasonComparison } from "../core/season-comparison";
+import { eligibleLeagueSeasons, type SeasonComparison } from "../core/season-comparison";
 import type { GateRejected } from "../security/askguard";
 import { esc } from "./layout";
-
-const EXAMPLES: Record<Locale["code"], string[]> = {
-  en: [
-    "Who scored the most for United in 2024-25?",
-    "Top assists 2023-24",
-    "Expected goals 2025-26",
-    "Show me a shot map for 2024-25",
-    "Progressive passes 2024-25",
-  ],
-  es: [
-    "¿Quién anotó más para el United en 2024-25?",
-    "Máximas asistencias 2023-24",
-    "Goles esperados 2025-26",
-    "Muéstrame un mapa de tiros de 2024-25",
-    "Pases progresivos 2024-25",
-  ],
-};
 
 export type FreshnessState = "current" | "degraded" | "inconsistent" | "unavailable";
 export interface FreshnessSourceView {
@@ -658,15 +641,63 @@ export function homeBody(
   catalog: Catalog,
   locale: Locale,
   freshness: FreshnessView = { state: "unavailable" },
+  career: { personId: string; season: string } | null = null,
 ): string {
   const t = locale.strings;
+  const availableForComparison = (metric: "goals", season: string): boolean => {
+    const feasible = (candidate: string) => {
+      const source = catalog.coverage.find((cell) =>
+        cell.metric === candidate && cell.entity_type === "player" &&
+        cell.granularity === "box_score" && cell.season === season &&
+        cell.competition === "PL",
+      );
+      if (source?.source_id !== "fpl") return false;
+      const result = catalog.checkFeasibility({
+        metric: candidate,
+        entity_type: "player",
+        entity_id: "all",
+        season,
+        competition: "PL",
+        dimensions: [],
+        filters: {},
+        viz: "table",
+        limit: 50,
+      });
+      return result.state === "available" || result.state === "computable_now_queued";
+    };
+    return feasible(metric) && feasible("minutes");
+  };
+  const comparisonSeason = catalog.seasonsFor("goals", "player", "box_score")
+    .find((candidate) => availableForComparison("goals", candidate));
+  const comparisonLinks = comparisonSeason
+    ? [`<li><a href="${base(locale)}/compare?season=${esc(comparisonSeason)}&amp;metric=goals">${esc(locale.code === "es"
+      ? `Comparar goles de jugadores por 90 · ${comparisonSeason}`
+      : `Compare player goals per 90 · ${comparisonSeason}`)}</a></li>`]
+    : [];
+  if (career?.personId.trim() && /^\d{4}-\d{2}$/.test(career.season)) {
+    const label = locale.code === "es" ? "Ver carrera de un jugador" : "View a player career";
+    comparisonLinks.push(`<li><a href="${base(locale)}/player/${esc(encodeURIComponent(career.personId))}/${esc(career.season)}">${label}</a></li>`);
+  }
+  const teamSeason = [...new Set(catalog.coverage.filter((cell) =>
+    cell.metric === "goals" && cell.entity_type === "season" &&
+    cell.granularity === "box_score" && cell.competition === "PL",
+  ).map((cell) => cell.season))]
+    .sort()
+    .reverse()
+    .find((season) => eligibleLeagueSeasons(catalog, season).length > 0);
+  if (teamSeason) {
+    const label = locale.code === "es"
+      ? `Comparar temporadas de liga · ${teamSeason}`
+      : `Compare league seasons · ${teamSeason}`;
+    comparisonLinks.push(`<li><a href="${base(locale)}/season/${esc(teamSeason)}#team-seasons">${esc(label)}</a></li>`);
+  }
   return `<h1>iammufc</h1>
 <p class="tagline">${esc(t.siteTagline)}</p>
 <div class="card">
 ${chatForm(locale)}
 <h3>${esc(t.examplesHeading)}</h3>
 <ul class="examples">
-${EXAMPLES[locale.code].map((e) => `<li>${esc(e)}</li>`).join("\n")}
+${comparisonLinks.join("\n")}
 </ul>
 </div>
 ${freshnessPanel(freshness, locale)}

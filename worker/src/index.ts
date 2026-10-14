@@ -349,13 +349,51 @@ function registerLocaleRoutes(code: LocaleCode) {
   });
 
   app.get(p, async (c) => {
-    const [snapshot, publication] = await Promise.all([
+    const careerSeason = catalog.seasonsFor("goals", "player", "box_score").find((season) =>
+      (["goals", "minutes"] as const).every((metric) => {
+        const source = catalog.coverage.find((cell) =>
+          cell.metric === metric && cell.entity_type === "player" &&
+          cell.granularity === "box_score" && cell.season === season &&
+          cell.competition === "PL",
+        );
+        if (source?.source_id !== "fpl") return false;
+        const result = catalog.checkFeasibility({
+          metric,
+          entity_type: "player",
+          entity_id: "all",
+          season,
+          competition: "PL",
+          dimensions: [],
+          filters: {},
+          viz: "table",
+          limit: 50,
+        });
+        return result.state === "available" || result.state === "computable_now_queued";
+      }),
+    );
+    const [snapshot, publication, career] = await Promise.all([
       currentSnapshot(c.env).catch(() => null),
       currentPublication(c.env),
+      (async () => {
+        if (!careerSeason) return null;
+        try {
+          const squad = await seasonSquadRows(c.env, careerSeason);
+          const personId = squad.find((row) => row.route_key?.trim())?.route_key.trim();
+          if (!personId) return null;
+          const rows = await playerCareerRows(c.env, personId);
+          if (rows.some((candidate) => candidate.season === careerSeason)) {
+            return { personId, season: careerSeason };
+          }
+        } catch {
+          // A homepage suggestion is optional; a database hiccup must not take
+          // down the localized coverage landing page.
+        }
+        return null;
+      })(),
     ]);
     // Always indexable -- the coverage matrix hub, never a thin permutation.
     const res = html(
-      page(homeBody(catalog, locale, freshnessView(snapshot, publication)), {
+      page(homeBody(catalog, locale, freshnessView(snapshot, publication), career), {
         title: code === "es" ? "Estadísticas del Manchester United" : "Manchester United statistics",
         locale,
         unprefixedPath: "/",
@@ -499,6 +537,17 @@ function registerLocaleRoutes(code: LocaleCode) {
 
 registerLocaleRoutes("en");
 registerLocaleRoutes("es");
+
+// Keep the locale landing pages on their canonical slashless URLs. Hono's
+// default strict routing leaves /en/ and /es/ distinct from /en and /es; a
+// fixed local destination also prevents query parameters from becoming an
+// open redirect. GET handlers also service HEAD requests with an empty body.
+for (const code of ["en", "es"] as const) {
+  app.get(`/${code}/`, (c) => {
+    const url = new URL(c.req.url);
+    return c.redirect(`/${code}${url.search}`, 301);
+  });
+}
 
 app.get("/robots.txt", () => {
   const body = `User-agent: *\nDisallow: /\n`;
