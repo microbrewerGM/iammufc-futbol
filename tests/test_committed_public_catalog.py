@@ -24,7 +24,7 @@ def test_committed_artifact_satisfies_the_closed_public_contract():
     catalog = load_public_catalog()
 
     assert len(catalog.metrics) == 6
-    assert len(catalog.coverage) == 62
+    assert len(catalog.coverage) == 63
 
 
 @pytest.mark.parametrize(
