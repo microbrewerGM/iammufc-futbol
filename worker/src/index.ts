@@ -48,7 +48,7 @@ import {
   proposeWithAI,
   type Proposal,
 } from "./core/parser";
-import { executeComparison, parseComparison } from "./core/comparison";
+import { executeComparison, parseComparison, type ComparisonRequest } from "./core/comparison";
 import { buildSeasonComparison, eligibleLeagueSeasons } from "./core/season-comparison";
 import { withSecurityHeaders } from "./security/headers";
 import { accessGate } from "./security/auth";
@@ -72,6 +72,25 @@ const AI_MODEL = "@cf/google/gemma-4-26b-a4b-it";
 
 const catalog = new Catalog(decodeCompiledCatalog(compiledCatalog));
 const app = new Hono<{ Bindings: Env }>();
+
+/** Choose a default only from metric/season pairs with executable catalog coverage. */
+export function selectComparisonDefaults(
+  seasonsByMetric: Readonly<Record<ComparisonRequest["metric"], readonly string[]>>,
+  requestedSeason?: string,
+  preferredMetric?: ComparisonRequest["metric"],
+): { metric: ComparisonRequest["metric"]; season: string } | null {
+  const metrics = preferredMetric ? [preferredMetric, "goals", "assists"] as const : ["goals", "assists"] as const;
+  const orderedMetrics = [...new Set(metrics)];
+  const matchingMetric = requestedSeason
+    ? orderedMetrics.find((metric) => seasonsByMetric[metric].includes(requestedSeason))
+    : undefined;
+  const metric = matchingMetric ?? orderedMetrics.find((candidate) => seasonsByMetric[candidate].length > 0);
+  if (!metric) return null;
+  const season = requestedSeason && seasonsByMetric[metric].includes(requestedSeason)
+    ? requestedSeason
+    : seasonsByMetric[metric][0];
+  return season ? { metric, season } : null;
+}
 
 /** Private responses never enter browser/shared caches, even on error. */
 const CACHE_CONTROL = "private, no-store";
@@ -329,12 +348,68 @@ function registerLocaleRoutes(code: LocaleCode) {
   });
 
   app.get(`${p}/compare`, async (c) => {
-    const seasons = catalog.seasonsFor("goals", "player", "box_score");
-    const request = parseComparison(
-      new URL(c.req.url).searchParams,
-      seasons[0] ?? "2025-26",
+    const comparisonHasCoverage = (metric: "goals" | "assists", season: string) =>
+      ([metric, "minutes"] as const).every((coveredMetric) => {
+        const cell = catalog.coverage.find(
+          (candidate) =>
+            candidate.metric === coveredMetric &&
+            candidate.entity_type === "player" &&
+            candidate.granularity === "box_score" &&
+            candidate.season === season &&
+            candidate.competition === "PL",
+        );
+        if (cell?.source_id !== "fpl" || !cell.redistributable) return false;
+        const feasibility = catalog.checkFeasibility(
+          {
+            metric: coveredMetric,
+            entity_type: "player",
+            entity_id: "all",
+            season,
+            competition: "PL",
+            dimensions: [],
+            filters: {},
+            viz: "table",
+            limit: 50,
+          },
+          locale.code,
+        );
+        return feasibility.state === "available" || feasibility.state === "computable_now_queued";
+      });
+    const comparisonSeasons = (metric: "goals" | "assists") =>
+      catalog
+        .seasonsFor(metric, "player", "box_score")
+        .filter((season) => comparisonHasCoverage(metric, season));
+    const params = new URL(c.req.url).searchParams;
+    const seasonsByMetric = {
+      goals: comparisonSeasons("goals"),
+      assists: comparisonSeasons("assists"),
+    };
+    const requestedMetric = params.get("metric");
+    const defaults = selectComparisonDefaults(
+      seasonsByMetric,
+      params.get("season") ?? undefined,
+      requestedMetric === "goals" || requestedMetric === "assists" ? requestedMetric : undefined,
     );
+    if (!defaults) {
+      return c.text(
+        locale.code === "es" ? "Parámetros de comparación no válidos." : "Invalid comparison parameters.",
+        400,
+      );
+    }
+    if (!params.has("season")) params.set("season", defaults.season);
+    if (!params.has("metric")) params.set("metric", defaults.metric);
+    const request = parseComparison(params, defaults.season);
     if (!request) {
+      return c.text(
+        locale.code === "es" ? "Parámetros de comparación no válidos." : "Invalid comparison parameters.",
+        400,
+      );
+    }
+    const availableMetrics = (["goals", "assists"] as const).filter((metric) =>
+      comparisonHasCoverage(metric, request.season),
+    );
+    const availableSeasons = comparisonSeasons(request.metric);
+    if (!availableMetrics.includes(request.metric) || !availableSeasons.includes(request.season)) {
       return c.text(
         locale.code === "es" ? "Parámetros de comparación no válidos." : "Invalid comparison parameters.",
         400,
@@ -343,19 +418,58 @@ function registerLocaleRoutes(code: LocaleCode) {
     return comparisonPage(
       request,
       await executeComparison(c.env, catalog, request, locale.code),
-      seasons,
+      availableSeasons,
+      availableMetrics,
       locale,
     );
   });
 
   app.get(p, async (c) => {
-    const [snapshot, publication] = await Promise.all([
+    const careerSeason = catalog.seasonsFor("goals", "player", "box_score").find((season) =>
+      (["goals", "minutes"] as const).every((metric) => {
+        const source = catalog.coverage.find((cell) =>
+          cell.metric === metric && cell.entity_type === "player" &&
+          cell.granularity === "box_score" && cell.season === season &&
+          cell.competition === "PL",
+        );
+        if (source?.source_id !== "fpl") return false;
+        const result = catalog.checkFeasibility({
+          metric,
+          entity_type: "player",
+          entity_id: "all",
+          season,
+          competition: "PL",
+          dimensions: [],
+          filters: {},
+          viz: "table",
+          limit: 50,
+        });
+        return result.state === "available" || result.state === "computable_now_queued";
+      }),
+    );
+    const [snapshot, publication, career] = await Promise.all([
       currentSnapshot(c.env).catch(() => null),
       currentPublication(c.env),
+      (async () => {
+        if (!careerSeason) return null;
+        try {
+          const squad = await seasonSquadRows(c.env, careerSeason);
+          const personId = squad.find((row) => row.route_key?.trim())?.route_key.trim();
+          if (!personId) return null;
+          const rows = await playerCareerRows(c.env, personId);
+          if (rows.some((candidate) => candidate.season === careerSeason)) {
+            return { personId, season: careerSeason };
+          }
+        } catch {
+          // A homepage suggestion is optional; a database hiccup must not take
+          // down the localized coverage landing page.
+        }
+        return null;
+      })(),
     ]);
     // Always indexable -- the coverage matrix hub, never a thin permutation.
     const res = html(
-      page(homeBody(catalog, locale, freshnessView(snapshot, publication)), {
+      page(homeBody(catalog, locale, freshnessView(snapshot, publication), career), {
         title: code === "es" ? "Estadísticas del Manchester United" : "Manchester United statistics",
         locale,
         unprefixedPath: "/",
@@ -499,6 +613,17 @@ function registerLocaleRoutes(code: LocaleCode) {
 
 registerLocaleRoutes("en");
 registerLocaleRoutes("es");
+
+// Keep the locale landing pages on their canonical slashless URLs. Hono's
+// default strict routing leaves /en/ and /es/ distinct from /en and /es; a
+// fixed local destination also prevents query parameters from becoming an
+// open redirect. GET handlers also service HEAD requests with an empty body.
+for (const code of ["en", "es"] as const) {
+  app.get(`/${code}/`, (c) => {
+    const url = new URL(c.req.url);
+    return c.redirect(`/${code}${url.search}`, 301);
+  });
+}
 
 app.get("/robots.txt", () => {
   const body = `User-agent: *\nDisallow: /\n`;

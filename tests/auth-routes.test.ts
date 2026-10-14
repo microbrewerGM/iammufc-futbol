@@ -24,6 +24,44 @@ function setup() {
 const assertion = { "cf-access-jwt-assertion": "route-test-assertion" };
 
 describe("authorization on real application routes", () => {
+  it("canonicalizes locale landing slashes while retaining the query on a local URL", async () => {
+    const { env } = setup();
+    for (const code of ["en", "es"] as const) {
+      const query = "metric=goals&next=https%3A%2F%2Fevil.invalid%2Fpath";
+      const response = await app.request(`https://site.invalid/${code}/?${query}`, { headers: assertion }, env);
+      expect(response.status).toBe(301);
+      expect(response.headers.get("location")).toBe(`/${code}?${query}`);
+
+      const head = await app.request(`https://site.invalid/${code}/?${query}`, { method: "HEAD", headers: assertion }, env);
+      expect(head.status).toBe(301);
+      expect(head.headers.get("location")).toBe(`/${code}?${query}`);
+      expect(head.body).toBeNull();
+    }
+  });
+
+  it("serves canonical locale landings and denies anonymous or forged slash requests", async () => {
+    const { env } = setup();
+    for (const [code, phrase] of [["en", "Manchester United statistics"], ["es", "Estadísticas del Manchester United"]] as const) {
+      const response = await app.request(`https://site.invalid/${code}`, { headers: assertion }, env);
+      expect(response.status).toBe(200);
+      expect(await response.text()).toContain(phrase);
+
+      const head = await app.request(`https://site.invalid/${code}`, { method: "HEAD", headers: assertion }, env);
+      expect(head.status).toBe(200);
+      expect(head.body).toBeNull();
+
+      for (const token of ["", "forged"]) {
+        for (const method of ["GET", "HEAD"] as const) {
+          const denied = await app.request(`https://site.invalid/${code}/`, {
+            method,
+            headers: { "cf-access-jwt-assertion": token },
+          }, env);
+          expect(denied.status).toBe(403);
+        }
+      }
+    }
+  });
+
   it("denies assets before calling their binding", async () => {
     const { env, fetch } = setup();
     for (const token of ["", "forged"]) {

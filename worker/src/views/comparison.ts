@@ -6,6 +6,7 @@ export function comparisonPage(
   request: ComparisonRequest,
   result: Awaited<ReturnType<typeof executeComparison>>,
   seasons: string[],
+  metrics: Array<ComparisonRequest["metric"]>,
   locale: Locale,
 ): Response {
   const es = locale.code === "es";
@@ -57,7 +58,11 @@ export function comparisonPage(
             `<option value="${esc(season)}"${season === request.season ? " selected" : ""}>${esc(season)}</option>`,
         )
         .join("")}</select>
-      <label for="metric">${es ? "Métrica" : "Metric"}</label><select name="metric" id="metric"><option value="goals"${request.metric === "goals" ? " selected" : ""}>${es ? "Goles" : "Goals"}</option><option value="assists"${request.metric === "assists" ? " selected" : ""}>${es ? "Asistencias FPL" : "FPL assists"}</option></select>
+      <label for="metric">${es ? "Métrica" : "Metric"}</label><select name="metric" id="metric">${metrics
+        .map((candidate) =>
+          `<option value="${candidate}"${request.metric === candidate ? " selected" : ""}>${candidate === "goals" ? (es ? "Goles" : "Goals") : es ? "Asistencias FPL" : "FPL assists"}</option>`,
+        )
+        .join("")}</select>
       <label for="min_minutes">${es ? "Minutos mínimos" : "Minimum minutes"}</label><input type="number" name="min_minutes" id="min_minutes" min="0" max="20000" step="1" value="${request.minMinutes}" required>
       <button type="submit">${es ? "Comparar" : "Compare"}</button>
     </form>
