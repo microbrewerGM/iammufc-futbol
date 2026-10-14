@@ -41,7 +41,7 @@ describe("team-season comparison", () => {
   it("selects covered PL seasons through the requested season without CL duplicates", () => {
     const seasons = eligibleLeagueSeasons(catalog, "2024-25");
     expect(seasons[0]).toBe("2024-25");
-    expect(seasons.at(-1)).toBe("2013-14");
+    expect(seasons.at(-1)).toBe("2012-13");
     expect(seasons).not.toContain("2025-26");
     expect(new Set(seasons).size).toBe(seasons.length);
     expect(eligibleLeagueSeasons(catalog, "2030-31")).toEqual([]);
