@@ -56,15 +56,22 @@ describe("content-addressed query cache", () => {
   });
 
   it("upserts a validated payload and makes write failure non-fatal", async () => {
-    const run = vi.fn(async () => ({}));
+    const run = vi.fn(async () => ({ success: true, meta: { changes: 1 } }));
     const bind = vi.fn(() => ({ run }));
     const env = { DB: { prepare: vi.fn(() => ({ bind })) } } as unknown as Env;
     await expect(writeQueryCache(env, KEY, SNAPSHOT, RESULT, INTENT)).resolves.toBe(true);
-    expect(bind).toHaveBeenCalledWith(KEY, SNAPSHOT, JSON.stringify(RESULT));
+    expect(bind).toHaveBeenCalledWith(KEY, SNAPSHOT, JSON.stringify(RESULT), SNAPSHOT);
 
     const failed = { DB: { prepare: vi.fn(() => { throw new Error("storage detail"); }) } } as unknown as Env;
     await expect(writeQueryCache(failed, KEY, SNAPSHOT, RESULT, INTENT)).resolves.toBe(false);
   });
+
+  it("reports an atomic guard refusal as not stored", async () => {
+    const run = vi.fn(async () => ({ success: true, meta: { changes: 0 } }));
+    const env = { DB: { prepare: vi.fn(() => ({ bind: () => ({ run }) })) } } as unknown as Env;
+    await expect(writeQueryCache(env, KEY, SNAPSHOT, RESULT, INTENT)).resolves.toBe(false);
+  });
+
 });
 
 describe("privacy-safe query demand", () => {

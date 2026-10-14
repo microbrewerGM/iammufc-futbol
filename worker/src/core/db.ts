@@ -131,14 +131,15 @@ export async function writeQueryCache(
   const encoded = JSON.stringify(result);
   if (!cachedResult(encoded, snapshotId, intent)) return false;
   try {
-    await env.DB.prepare(
+    const stored = await env.DB.prepare(
       `INSERT INTO query_result_cache (artifact_key, snapshot_id, schema_version, result_json)
-       VALUES (?, ?, 1, ?)
+       SELECT ?, ?, 1, ?
+       WHERE ? = (SELECT snapshot_id FROM snapshots ORDER BY created_at DESC LIMIT 1)
        ON CONFLICT(artifact_key, snapshot_id) DO UPDATE SET
          schema_version = excluded.schema_version,
          result_json = excluded.result_json`,
-    ).bind(artifactKey, snapshotId, encoded).run();
-    return true;
+    ).bind(artifactKey, snapshotId, encoded, snapshotId).run();
+    return stored.success && stored.meta.changes > 0;
   } catch {
     return false;
   }
