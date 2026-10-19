@@ -23,18 +23,22 @@ import {
   allPlayerNames,
   currentPublication,
   currentSnapshot,
+  clearQuestionHistory,
   enforceBudget,
+  listQuestionHistory,
   logQueryAggregate,
   playerCareerRows,
   readQueryCache,
   resolvePlayerIdentity,
   runQuery,
+  saveQuestionHistory,
   seasonHistoryRows,
   seasonRecordRow,
   seasonSquadRows,
   writeQueryCache,
   type CacheOutcome,
   type Env,
+  type QuestionHistoryEntry,
   type PublicationState,
 } from "./core/db";
 import { decodeCompiledCatalog } from "./core/catalog-contract";
@@ -51,7 +55,7 @@ import {
 import { executeComparison, parseComparison, type ComparisonRequest } from "./core/comparison";
 import { buildSeasonComparison, eligibleLeagueSeasons } from "./core/season-comparison";
 import { withSecurityHeaders } from "./security/headers";
-import { accessGate } from "./security/auth";
+import { accessGate, accessIdentity, type AccessEnv, type AccessIdentity } from "./security/auth";
 import { gateQuestion, type GateRejected } from "./security/askguard";
 import { esc, html, page } from "./views/layout";
 import { comparisonPage } from "./views/comparison";
@@ -71,7 +75,7 @@ import {
 const AI_MODEL = "@cf/google/gemma-4-26b-a4b-it";
 
 const catalog = new Catalog(decodeCompiledCatalog(compiledCatalog));
-const app = new Hono<{ Bindings: Env }>();
+const app = new Hono<AccessEnv>();
 
 /** Choose a default only from metric/season pairs with executable catalog coverage. */
 export function selectComparisonDefaults(
@@ -494,7 +498,20 @@ function registerLocaleRoutes(code: LocaleCode) {
       locale,
       await propose(verdict.question, c.env, playerNames),
       verdict.question,
+      accessIdentity(c),
     );
+  });
+
+  app.get(`${p}/history`, async (c) => {
+    const identity = accessIdentity(c);
+    const entries = identity?.sub ? await listQuestionHistory(c.env, identity.sub) : [];
+    return questionHistoryPage(locale, entries, Boolean(identity?.sub));
+  });
+
+  app.post(`${p}/history/clear`, async (c) => {
+    const identity = accessIdentity(c);
+    if (identity?.sub) await clearQuestionHistory(c.env, identity.sub);
+    return c.redirect(`${p}/history`, 303);
   });
 
   /** Direct intent entry -- the "show this instead" path from a refusal. */
@@ -539,6 +556,7 @@ function registerLocaleRoutes(code: LocaleCode) {
         model_status: "not_configured",
       },
       null,
+      accessIdentity(c),
       `/q${qs}`,
     );
   });
@@ -756,6 +774,29 @@ ${rejectionPanel(verdict, locale)}
   return html(page(body, { title: verdict.code, locale, unprefixedPath: "/" }));
 }
 
+function questionHistoryPage(locale: Locale, entries: QuestionHistoryEntry[], signedIn: boolean): Response {
+  const spanish = locale.code === "es";
+  const title = spanish ? "Preguntas anteriores" : "Past questions";
+  const list = entries.length
+    ? `<ol>${entries.map((entry) => {
+      const linkLabel = spanish ? "Ver visualización" : "View visualization";
+      return `<li><p>${esc(entry.question)}</p><p><a href="${esc(entry.visualizationPath)}">${linkLabel}</a></p></li>`;
+    }).join("")}</ol>`
+    : `<p>${spanish ? "Aún no hay preguntas guardadas." : "No saved questions yet."}</p>`;
+  const clear = signedIn && entries.length
+    ? `<form method="post" action="/${locale.code}/history/clear"><button type="submit">${spanish ? "Borrar historial" : "Clear history"}</button></form>`
+    : "";
+  return html(page(
+    `<h1>${title}</h1>
+<p>${spanish
+      ? "Tus preguntas se guardan en esta cuenta y se pueden volver a abrir cuando haya datos nuevos."
+      : "Your questions are saved to this account and can be reopened when new data becomes available."}</p>
+${list}${clear}
+<p><a href="/${locale.code}">${esc(locale.strings.backToMatrix)}</a></p>`,
+    { title, locale, unprefixedPath: "/history" },
+  ));
+}
+
 async function propose(
   question: string,
   env: Env,
@@ -828,6 +869,7 @@ async function renderChat(
   locale: Locale,
   proposal: Proposal,
   question: string | null,
+  identity: AccessIdentity,
   /** The GET-reachable equivalent of this result, if one exists. /q results
    *  have one (the query string reconstructs the same intent); /ask POST
    *  results do not -- a language toggle cannot replay a POST, so it falls
@@ -887,6 +929,9 @@ ${intentPanel(proposal, locale)}
     routeFamily,
   ).catch(() => {});
   const overBudget = execution.overBudget;
+  if (question !== null && identity?.sub && !overBudget && responseFeasibility.state !== "no_rights") {
+    await saveQuestionHistory(c.env, identity.sub, question, proposal.intent, locale.code).catch(() => {});
+  }
   const rows = execution.result?.rows ?? [];
 
   const resultBlock = overBudget
@@ -900,6 +945,7 @@ ${intentPanel(proposal, locale)}
 <div class="card">${chatForm(locale, question ?? "")}</div>
 ${intentPanel(proposal, locale)}
 ${resultBlock}
+${identity?.sub ? `<p><a href="/${locale.code}/history">${locale.code === "es" ? "Preguntas anteriores" : "Past questions"}</a></p>` : ""}
 <p><a href="/${locale.code}">${locale.strings.backToMatrix}</a></p>`;
 
   const res = html(

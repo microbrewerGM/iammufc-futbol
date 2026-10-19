@@ -23,6 +23,82 @@ export interface Env {
   AI_PROPOSALS_ENABLED?: string;
 }
 
+/** A successfully parsed, semantically validated website ask. The account key
+ * is the verified human Access `sub`; callers must never pass email or the
+ * service-token identity (whose subject is empty). */
+export interface QuestionHistoryEntry {
+  id: number;
+  question: string;
+  visualizationPath: string;
+  locale: "en" | "es";
+  createdAt: string;
+}
+
+export const QUESTION_HISTORY_LIMIT = 50;
+
+function validHumanSubject(subject: string): boolean {
+  return typeof subject === "string" && subject.trim().length > 0 && subject.length <= 512;
+}
+
+/** Store a validated question separately from aggregate telemetry. The
+ * canonical path replays the same finite intent against the current snapshot,
+ * allowing a previously unavailable answer to become visualizable later. */
+export async function saveQuestionHistory(
+  env: Env,
+  humanSubject: string,
+  question: string,
+  intent: QueryIntent,
+  locale: "en" | "es",
+): Promise<void> {
+  if (!validHumanSubject(humanSubject)) throw new Error("human_access_subject_required");
+  const normalizedQuestion = question.trim();
+  if (!normalizedQuestion || normalizedQuestion.length > 1000) throw new Error("invalid_history_question");
+  const params = new URLSearchParams({
+    metric: intent.metric,
+    entity_type: intent.entity_type,
+    entity_id: intent.entity_id,
+    season: intent.season,
+    competition: intent.competition,
+    viz: intent.viz,
+    limit: String(intent.limit),
+  });
+  const path = `/${locale}/q?${params.toString()}`;
+  const inserted = env.DB.prepare(
+    `INSERT INTO account_question_history (account_sub, question_text, visualization_path, locale, created_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).bind(humanSubject, normalizedQuestion, path, locale, new Date().toISOString());
+  const trimmed = env.DB.prepare(
+    `DELETE FROM account_question_history
+     WHERE account_sub = ? AND id NOT IN (
+       SELECT id FROM account_question_history WHERE account_sub = ? ORDER BY id DESC LIMIT ${QUESTION_HISTORY_LIMIT}
+     )`,
+  ).bind(humanSubject, humanSubject);
+  await env.DB.batch([inserted, trimmed]);
+}
+
+export async function listQuestionHistory(env: Env, humanSubject: string): Promise<QuestionHistoryEntry[]> {
+  if (!validHumanSubject(humanSubject)) throw new Error("human_access_subject_required");
+  const rows = await env.DB.prepare(
+    `SELECT id, question_text, visualization_path, locale, created_at
+     FROM account_question_history WHERE account_sub = ? ORDER BY id DESC LIMIT ${QUESTION_HISTORY_LIMIT}`,
+  ).bind(humanSubject).all<{
+    id: number; question_text: string; visualization_path: string; locale: "en" | "es"; created_at: string;
+  }>();
+  return (rows.results ?? []).map((row) => ({
+    id: row.id,
+    question: row.question_text,
+    visualizationPath: row.visualization_path,
+    locale: row.locale,
+    createdAt: row.created_at,
+  }));
+}
+
+export async function clearQuestionHistory(env: Env, humanSubject: string): Promise<void> {
+  if (!validHumanSubject(humanSubject)) throw new Error("human_access_subject_required");
+  await env.DB.prepare("DELETE FROM account_question_history WHERE account_sub = ?")
+    .bind(humanSubject).run();
+}
+
 /** Metric id -> physical column. A fixed map is what makes the metric name
  *  un-injectable: an unknown metric has no entry and the query never runs. */
 const METRIC_COLUMN: Record<string, string> = {
