@@ -103,11 +103,12 @@ def test_private_seed_consumer_applies_schema_and_migration_before_private_seed(
     commands = [step.get("with", {}).get("command", "") for step in steps]
     schema = next(i for i, command in enumerate(commands) if "0001_schema.sql" in command)
     migration = next(i for i, command in enumerate(commands) if "0003_p16_dot_plot.sql" in command)
+    cache_migration = next(i for i, command in enumerate(commands) if "0004_cache_slots.sql" in command)
     history_migration = next(
         i for i, command in enumerate(commands) if "0005_account_question_history.sql" in command
     )
     seed = next(i for i, command in enumerate(commands) if "private-seed/0002_seed.sql" in command)
-    assert schema < migration < history_migration < seed
+    assert schema < migration < cache_migration < history_migration < seed
 
     deploy_commands = [
         step.get("with", {}).get("command", "")
@@ -115,9 +116,12 @@ def test_private_seed_consumer_applies_schema_and_migration_before_private_seed(
     ]
     deploy_schema = next(i for i, command in enumerate(deploy_commands) if "0001_schema.sql" in command)
     deploy_migration = next(i for i, command in enumerate(deploy_commands) if "0003_p16_dot_plot.sql" in command)
+    deploy_cache_migration = next(
+        i for i, command in enumerate(deploy_commands) if "0004_cache_slots.sql" in command
+    )
     deploy_history_migration = next(
         i for i, command in enumerate(deploy_commands) if "0005_account_question_history.sql" in command
     )
     deploy_worker = next(i for i, command in enumerate(deploy_commands) if command.startswith("deploy "))
-    assert deploy_schema < deploy_migration < deploy_history_migration < deploy_worker
+    assert deploy_schema < deploy_migration < deploy_cache_migration < deploy_history_migration < deploy_worker
     assert not any("0002_seed.sql" in command for command in deploy_commands)
