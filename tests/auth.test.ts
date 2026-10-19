@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from "jose";
 import app from "../worker/src/index";
 import type { Env } from "../worker/src/core/db";
-import { accessGate, verifyAccess } from "../worker/src/security/auth";
+import { accessGate, accessIdentity, type AccessEnv, verifyAccess } from "../worker/src/security/auth";
 
 function setup() {
   const env = {
@@ -74,6 +74,29 @@ describe("Cloudflare Access boundary", () => {
       expect(await res.text()).toBe("protected");
       expect(res.headers.get("Set-Cookie")).toBeNull();
     }
+  });
+
+  it("makes only the verified identity available to protected handlers", async () => {
+    const env = {
+      ACCESS_ISSUER: "https://example.cloudflareaccess.com",
+      ACCESS_AUD: "a".repeat(64),
+      ACCESS_OWNER_EMAILS: "owner@example.invalid",
+      ACCESS_SERVICE_CLIENT_IDS: "test-service",
+    } as unknown as Env;
+    const humanApp = new Hono<AccessEnv>();
+    humanApp.use("*", accessGate(async () => ({ sub: "stable-human-sub", email: "owner@example.invalid" })));
+    humanApp.get("/", (c) => c.json({ ...accessIdentity(c) }));
+    const human = await humanApp.request("https://site.invalid/", {}, env);
+    expect(await human.json()).toEqual({ sub: "stable-human-sub", email: "owner@example.invalid" });
+
+    const serviceApp = new Hono<AccessEnv>();
+    serviceApp.use("*", accessGate(async () => ({ sub: "", serviceClientId: "test-service" })));
+    serviceApp.get("/", (c) => c.json({ ...accessIdentity(c) }));
+    const service = await serviceApp.request("https://site.invalid/", {}, env);
+    const serviceIdentity = await service.json() as { sub: string; email?: string; serviceClientId?: string };
+    expect(serviceIdentity).toEqual({ sub: "", serviceClientId: "test-service" });
+    expect(serviceIdentity.sub).toBe("");
+    expect(serviceIdentity.email).toBeUndefined();
   });
 
   it("rejects unsafe requests without exact same-origin HTTPS proof", async () => {

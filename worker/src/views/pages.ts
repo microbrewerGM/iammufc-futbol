@@ -51,6 +51,13 @@ export function chatForm(locale: Locale, question = ""): string {
 </form>`;
 }
 
+function exampleQuestion(locale: Locale, question: string): string {
+  return `<li><form method="post" action="${base(locale)}/ask">
+<input type="hidden" name="q" value="${esc(question)}">
+<button type="submit">${esc(question)}</button>
+</form></li>`;
+}
+
 /** The parsed intent is shown before anything executes. Ambiguity becomes a
  *  correction opportunity instead of a wrong answer. */
 export function intentPanel(proposal: Proposal, locale: Locale): string {
@@ -691,6 +698,20 @@ export function homeBody(
       : `Compare league seasons · ${teamSeason}`;
     comparisonLinks.push(`<li><a href="${base(locale)}/season/${esc(teamSeason)}#team-seasons">${esc(label)}</a></li>`);
   }
+  const questionExamples = (["goals", "assists", "xg"] as const).flatMap((metric) => {
+    const season = catalog.seasonsFor(metric, "player", "box_score").find((candidate) => {
+      const result = catalog.checkFeasibility({
+        metric, entity_type: "player", entity_id: "all", season: candidate,
+        competition: "PL", dimensions: [], filters: {}, viz: "bar", limit: 10,
+      });
+      return result.state === "available" || result.state === "computable_now_queued";
+    });
+    if (!season) return [];
+    const labels = locale.code === "es"
+      ? { goals: "Máximos goles", assists: "Máximas asistencias", xg: "Goles esperados" }
+      : { goals: "Top goals", assists: "Top assists", xg: "Expected goals" };
+    return [exampleQuestion(locale, `${labels[metric]} ${season}`)];
+  });
   return `<h1>iammufc</h1>
 <p class="tagline">${esc(t.siteTagline)}</p>
 <div class="card">
@@ -698,7 +719,9 @@ ${chatForm(locale)}
 <h3>${esc(t.examplesHeading)}</h3>
 <ul class="examples">
 ${comparisonLinks.join("\n")}
+${questionExamples.join("\n")}
 </ul>
+<p><a href="${base(locale)}/history">${esc(t.historyLink)}</a></p>
 </div>
 ${freshnessPanel(freshness, locale)}
 ${coverageMatrix(catalog, locale)}`;

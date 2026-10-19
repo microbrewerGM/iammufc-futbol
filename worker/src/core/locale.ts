@@ -41,6 +41,7 @@ export interface Locale {
     askPlaceholder: string;
     askButton: string;
     examplesHeading: string;
+    historyLink: string;
     freshnessHeading: string;
     coverageThrough: (season: string) => string;
     lastSuccessfulLoad: string;
@@ -138,6 +139,7 @@ const EN: Locale = {
     askPlaceholder: "Ask about Manchester United…",
     askButton: "Ask",
     examplesHeading: "Try asking",
+    historyLink: "Past questions",
     freshnessHeading: "Data freshness",
     coverageThrough: (s) => `Coverage through ${s}.`,
     lastSuccessfulLoad: "Last successful load:",
@@ -239,6 +241,7 @@ const ES: Locale = {
     askPlaceholder: "Pregunta sobre el Manchester United…",
     askButton: "Preguntar",
     examplesHeading: "Prueba preguntando",
+    historyLink: "Preguntas anteriores",
     freshnessHeading: "Actualización de los datos",
     coverageThrough: (s) => `Cobertura hasta ${s}.`,
     lastSuccessfulLoad: "Última carga correcta:",
