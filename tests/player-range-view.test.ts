@@ -81,6 +81,21 @@ describe("player range body", () => {
     expect(render(value)).toContain("Source attribution unavailable for some data.");
     expect(render(value)).not.toContain("Synthetic fixture credit");
   });
+  it.each(["toString", "__proto__", "constructor"])("does not resolve inherited credit %s", ref => {
+    const value = model(); value.credits = {};
+    value.result = run(facts.map(r => ({...r,lineage:[ref]})));
+    expect(render(value)).toContain("Source attribution unavailable for some data.");
+    value.credits = Object.create({[ref]:"Inherited credit"}) as Record<string,string>;
+    expect(render(value)).not.toContain("Inherited credit");
+    expect(render(value)).toContain("Source attribution unavailable for some data.");
+  });
+  it("requires nonblank string credits even for own properties", () => {
+    const value = model();
+    for (const invalid of ["", "  ", 7, {}, null]) {
+      value.credits = { "synthetic:one": invalid } as unknown as Record<string,string>;
+      expect(render(value)).toContain("Source attribution unavailable for some data.");
+    }
+  });
   it.each(["en", "es"] as const)("shows FPL definition boundary in %s", code => {
     const req = {...request,metric:"assists" as const};
     const value = model(); value.result = run(facts.map(r=>({...r,metric:"assists",definition:"fpl_assists"})), req);
