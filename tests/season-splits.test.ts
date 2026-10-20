@@ -92,7 +92,7 @@ describe("runtime row boundary", () => {
   it.each([
     null, {}, { ...home, extra: 1 }, { ...home, competition: "CL" }, { ...home, venue: "total" },
     { ...home, opponent_id: "club:01" }, { ...home, snapshot_id: "other" }, { ...home, season: "2025-26" },
-    { ...home, lineage: [] }, { ...home, lineage: ["ref", "ref"] }, { ...home, lineage: [" ref"] },
+    { ...home, lineage: [] }, { ...home, lineage: Array(1) }, { ...home, lineage: ["ref", "ref"] }, { ...home, lineage: [" ref"] },
     { ...home, lineage: Array(33).fill("ref") }, { ...home, lineage: "ref" },
     { ...home, played: true }, { ...home, won: -1 }, { ...home, goals_for: 1.5 },
     { ...home, goals_for: NaN }, { ...home, goals_for: Infinity },

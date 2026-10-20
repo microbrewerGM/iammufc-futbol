@@ -92,7 +92,7 @@ function catalog(value: unknown): SeasonSplitCatalog {
   const obj = record(value, ["snapshot_id", "seasons"]);
   if (!identity(obj.snapshot_id) || !Array.isArray(obj.seasons) || obj.seasons.length > 256) fail("catalog");
   const seen = new Set<string>();
-  const seasons = obj.seasons.map((value: unknown): { season: string; coverage: SplitCoverage } => {
+  const seasons = Array.from(obj.seasons, (value: unknown): { season: string; coverage: SplitCoverage } => {
     const entry = record(value, ["season", "coverage"]);
     if (!season(entry.season) || seen.has(entry.season)) fail("catalog season");
     if (entry.coverage !== "complete" && entry.coverage !== "partial" && entry.coverage !== "missing") fail("coverage");
@@ -131,7 +131,7 @@ function row(value: unknown, metadata: SeasonSplitCatalog): SeasonSplitRow {
       || (counters.drawn === 1 && counters.goals_for !== counters.goals_against)
       || (counters.lost === 1 && counters.goals_for >= counters.goals_against)) fail("score outcome");
   if (!Array.isArray(obj.lineage) || obj.lineage.length < 1 || obj.lineage.length > 32
-      || !obj.lineage.every(identity) || new Set(obj.lineage).size !== obj.lineage.length) fail("lineage");
+      || ![...obj.lineage].every(identity) || new Set(obj.lineage).size !== obj.lineage.length) fail("lineage");
   return { season: obj.season, competition: "PL", venue: obj.venue, opponent_id: obj.opponent_id,
     ...Object.fromEntries(COUNTERS.map(k => [k, obj[k]])) as unknown as Counters,
     snapshot_id: metadata.snapshot_id, lineage: [...obj.lineage] as string[] };
