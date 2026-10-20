@@ -74,8 +74,12 @@ export function playerRangeBody(model: PlayerRangeView, locale: Locale): string 
   const maximum = Math.max(1, ...comparable.map(p => p.value ?? 0));
   const bars = result.request.viz === "bar" ? `<section aria-label="${t("Comparable player bars", "Barras de jugadores comparables")}"><h2>${t("Comparable players", "Jugadores comparables")} · ${esc(metric)} · ${result.request.normalization === "per90" ? t("Per 90", "Por 90") : t("Totals", "Totales")}</h2>${comparable.length ? comparable.map(p => `<p>${esc(name(p.person_id))}: <meter min="0" max="${maximum}" value="${p.value ?? 0}" aria-label="${esc(name(p.person_id))}">${number(p.value, 2)}</meter> ${number(p.value, result.request.normalization === "per90" ? 2 : 0)}</p>`).join("") : `<p>${t("No comparable players", "No hay jugadores comparables")}</p>`}</section>` : "";
   const lineage = [...new Set(result.players.flatMap(p => p.lineage))];
-  const credits = [...new Set(lineage.map(ref => model.credits[ref]).filter((credit): credit is string => Boolean(credit)))];
-  const attribution = `<section aria-label="${t("Sources and snapshot", "Fuentes y versión de datos")}"><h2>${t("Sources and snapshot", "Fuentes y versión de datos")}</h2>${credits.map(credit => `<p>${esc(credit)}</p>`).join("")}${!lineage.length || lineage.some(ref => !model.credits[ref]) ? `<p>${t("Source attribution unavailable for some data.", "Atribución de fuente no disponible para algunos datos.")}</p>` : ""}<p>${t("Snapshot", "Versión de datos")}: ${esc(result.snapshot_id)}</p></section>`;
+  const creditFor = (ref: string): string | undefined => {
+    const value: unknown = Object.hasOwn(model.credits, ref) ? model.credits[ref] : undefined;
+    return typeof value === "string" && value.trim() ? value : undefined;
+  };
+  const credits = [...new Set(lineage.map(creditFor).filter((credit): credit is string => credit !== undefined))];
+  const attribution = `<section aria-label="${t("Sources and snapshot", "Fuentes y versión de datos")}"><h2>${t("Sources and snapshot", "Fuentes y versión de datos")}</h2>${credits.map(credit => `<p>${esc(credit)}</p>`).join("")}${!lineage.length || lineage.some(ref => creditFor(ref) === undefined) ? `<p>${t("Source attribution unavailable for some data.", "Atribución de fuente no disponible para algunos datos.")}</p>` : ""}<p>${t("Snapshot", "Versión de datos")}: ${esc(result.snapshot_id)}</p></section>`;
   const definition = result.definition === "fpl_assists" ? `<p>${t("Assists use FPL definitions, which changed in 2025–26. Comparing across that boundary requires care.", "Las asistencias siguen las definiciones FPL, que cambiaron en 2025–26. Compara con cuidado entre ambos periodos.")}</p>` : "";
   return `<h1>${title}</h1>${form}${summary}${bars}${table}${method}${definition}${attribution}`;
 }
