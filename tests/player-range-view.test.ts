@@ -24,8 +24,8 @@ describe("player range body", () => {
     expect(playerRow(body, "Alpha")).toMatch(/<td>2<\/td>\s*<td>270<\/td>/);
     expect(body).not.toContain("0.75");
     expect(playerRow(body,"Beta")).toContain(code === "en" ? "No supported rows" : "Sin filas con datos suficientes");
-    expect(body).toContain(code === "en" ? "2 selected players · 1 comparable players" : "2 jugadores seleccionados · 1 jugadores comparables");
-    expect(body).toContain(`action="/${code}/compare/players"`);
+    expect(body).toContain(code === "en" ? "Selected players: 2 · Comparable players: 1" : "Jugadores seleccionados: 2 · Jugadores comparables: 1");
+    expect(body).toContain(`action="/${code}/players/compare"`);
     expect(body).toContain("Synthetic fixture credit");
     expect(body).toContain("synthetic");
   });

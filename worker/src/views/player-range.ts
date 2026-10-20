@@ -39,7 +39,7 @@ export function playerRangeBody(model: PlayerRangeView, locale: Locale): string 
   };
   const people = [...new Set([...model.people.map(p => p.person_id), ...s.person_ids])];
   const seasons = [...new Set([...model.seasons, ...s.seasons])].sort();
-  const form = `<form method="get" action="/${locale.code}/compare/players">
+  const form = `<form method="get" action="/${locale.code}/players/compare">
     <input type="hidden" name="schema_version" value="1"><input type="hidden" name="competition" value="PL">
     <fieldset><legend>${t("Players (choose 2–5)", "Jugadores (elige 2–5)")}</legend>${people.map((id, index) =>
       `<label for="range-person-${index}"><input id="range-person-${index}" type="checkbox" name="person_ids" value="${esc(id)}"${s.person_ids.includes(id) ? " checked" : ""}>${esc(name(id))}</label>`).join("")}</fieldset>
@@ -61,7 +61,7 @@ export function playerRangeBody(model: PlayerRangeView, locale: Locale): string 
     zero_minutes: t("Per 90 unavailable: zero minutes", "Por 90 no disponible: cero minutos"),
     below_minimum: t("Below minimum minutes", "Por debajo del mínimo de minutos"),
   };
-  const summary = `<p id="range-summary">${esc(metric)} · ${esc(result.request.seasons.join(", "))} · ${result.players.length} ${t("selected players", "jugadores seleccionados")} · ${result.ranked_person_ids.length} ${t("comparable players", "jugadores comparables")}.</p>`;
+  const summary = `<p id="range-summary">${esc(metric)} · ${esc(result.request.seasons.join(", "))} · ${t("Selected players", "Jugadores seleccionados")}: ${result.players.length} · ${t("Comparable players", "Jugadores comparables")}: ${result.ranked_person_ids.length}.</p>`;
   const rows = result.players.map(player => `<tr><th scope="row">${esc(name(player.person_id))}</th>
     <td>${player.comparable ? result.ranked_person_ids.indexOf(player.person_id) + 1 : "—"}</td>
     <td>${number(player.total)}${player.partial ? ` (${t("partial subtotal", "subtotal parcial")})` : ""}</td>
