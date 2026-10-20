@@ -199,7 +199,7 @@ const UNSUPPORTED_SEMANTIC_PATTERNS: RegExp[] = [
  * can be produced by typing a football question.
  */
 const UNSAFE_CHARS =
-  /[ ---­᠎​-‏‪-‮⁠-⁤⁦-⁯﻿]/;
+  /[\u0000-\u0008\u000B-\u0012\u0013-\u001A\u001B-\u001F\u007F-\u0085\u0086-\u008F\u0090-\u0099\u009A-\u009F\u00AD\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u206F\uFEFF]/;
 
 // ---------------------------------------------------------------------------
 // Refusal copy
