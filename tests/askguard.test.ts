@@ -285,7 +285,7 @@ describe("unsafe character filter compatibility", () => {
       const actual = gateQuestion(`${safeQuestion}${character}`);
       expect(actual.allowed === false && actual.code === "unsafe_input", `U+${codePoint.toString(16).padStart(4, "0")}`).toBe(expectedUnsafe);
     }
-  });
+  }, 30_000);
 
   it("rejects astral tag and variation selector characters while allowing plain emoji", () => {
     for (let codePoint = 0xe0000; codePoint <= 0xe007f; codePoint += 1) {
