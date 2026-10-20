@@ -278,12 +278,27 @@ describe("unsafe character filter compatibility", () => {
   const oldUnsafeChars = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u00AD\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u206F\uFEFF]/;
   const safeQuestion = "top scorers 2024-25";
 
-  it("matches the old accept/reject set for every BMP code point", () => {
+  it("matches the old set plus the intended additions for every BMP code point", () => {
     for (let codePoint = 0; codePoint <= 0xffff; codePoint += 1) {
       const character = String.fromCharCode(codePoint);
-      const expectedUnsafe = oldUnsafeChars.test(character);
+      const expectedUnsafe = oldUnsafeChars.test(character) || codePoint === 0x061c || (codePoint >= 0xfe00 && codePoint <= 0xfe0f);
       const actual = gateQuestion(`${safeQuestion}${character}`);
       expect(actual.allowed === false && actual.code === "unsafe_input", `U+${codePoint.toString(16).padStart(4, "0")}`).toBe(expectedUnsafe);
+    }
+  }, 30_000);
+
+  it("rejects astral tag and variation selector characters while allowing plain emoji", () => {
+    for (let codePoint = 0xe0000; codePoint <= 0xe007f; codePoint += 1) {
+      const actual = gateQuestion(`${safeQuestion}${String.fromCodePoint(codePoint)}`);
+      expect(actual.allowed === false && actual.code === "unsafe_input", `U+${codePoint.toString(16)}`).toBe(true);
+    }
+    for (let codePoint = 0xe0100; codePoint <= 0xe01ef; codePoint += 1) {
+      const actual = gateQuestion(`${safeQuestion}${String.fromCodePoint(codePoint)}`);
+      expect(actual.allowed === false && actual.code === "unsafe_input", `U+${codePoint.toString(16)}`).toBe(true);
+    }
+    for (let codePoint = 0x1f600; codePoint <= 0x1f64f; codePoint += 1) {
+      const actual = gateQuestion(`${safeQuestion}${String.fromCodePoint(codePoint)}`);
+      expect(actual.allowed, `U+${codePoint.toString(16)}`).toBe(true);
     }
   });
 
@@ -295,5 +310,34 @@ describe("unsafe character filter compatibility", () => {
     "top goalscorers ⚽ 2024-25",
   ])("allows ordinary football text: %s", (question) => {
     expect(gateQuestion(question, question.startsWith("¿") || question.startsWith("máximas") ? "es" : "en").allowed).toBe(true);
+  });
+
+  it.each([
+    "goals 2024-25\\u{E0000}",
+    "goals 2024-25\\u{E007F}",
+    "goals 2024-25\\u{061C}",
+    "goals 2024-25\\u{FE00}",
+    "goals 2024-25\\u{FE0F}",
+    "goals 2024-25\\u{E0100}",
+    "goals 2024-25\\u{E01EF}",
+  ])("rejects invisible Unicode character: %s", (escapedQuestion) => {
+    const question = escapedQuestion.replace(/\\u\{([0-9A-Fa-f]+)\}/g, (_, hex: string) =>
+      String.fromCodePoint(Number.parseInt(hex, 16)),
+    );
+    const v = gateQuestion(question);
+    expect(v.allowed).toBe(false);
+    expect((v as { code: string }).code).toBe("unsafe_input");
+  });
+
+  it("rejects emoji presentation selectors and subdivision flag tag sequences", () => {
+    // U+FE0F is an emoji presentation selector; tag characters form flag sequences.
+    for (const question of ["goals 2024-25\\u{FE0F}", "goals 2024-25\\u{E0067}\\u{E0062}\\u{E007F}"]) {
+      const decoded = question.replace(/\\u\{([0-9A-Fa-f]+)\}/g, (_, hex: string) =>
+        String.fromCodePoint(Number.parseInt(hex, 16)),
+      );
+      const v = gateQuestion(decoded);
+      expect(v.allowed).toBe(false);
+      expect((v as { code: string }).code).toBe("unsafe_input");
+    }
   });
 });
