@@ -36,7 +36,9 @@ beforeEach(() => { vi.clearAllMocks(); clearCatalog.mockReturnValue("clear"); })
 
 describe("season splits exploration routes", () => {
   it("requires authentication before any aggregate read", async () => {
-    expect((await app.request("https://site.invalid/en/seasons/explore", {}, env)).status).toBe(403);
+    for (const locale of ["en", "es"]) {
+      expect((await app.request(`https://site.invalid/${locale}/seasons/explore`, {}, env)).status).toBe(403);
+    }
     expect(seasonSplitFacts).not.toHaveBeenCalled();
   });
 
@@ -64,5 +66,15 @@ describe("season splits exploration routes", () => {
   it("rejects duplicate and unsupported dimensions", async () => {
     expect((await app.request("https://site.invalid/en/seasons/explore?seasons=2024-25&seasons=2024-25", { headers }, env)).status).toBe(400);
     expect((await app.request("https://site.invalid/en/seasons/explore?seasons=2024-25&filters=x", { headers }, env)).status).toBe(400);
+  });
+
+  it("charges budget only for a bounded aggregate read", async () => {
+    const budget = vi.mocked((await import("../worker/src/core/db")).enforceBudget);
+    await app.request("https://site.invalid/en/seasons/explore", { headers }, env);
+    expect(budget).not.toHaveBeenCalled();
+    await app.request("https://site.invalid/en/seasons/explore?seasons=2024-25&seasons=2024-25", { headers }, env);
+    expect(budget).not.toHaveBeenCalled();
+    await app.request("https://site.invalid/en/seasons/explore?seasons=2024-25", { headers }, env);
+    expect(budget).toHaveBeenCalledTimes(1);
   });
 });

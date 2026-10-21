@@ -356,8 +356,8 @@ export async function seasonSplitFacts(
   if (!/^[0-9a-f]{64}$/.test(snapshotId) || seasons.length < 1 || seasons.length > 16 ||
       seasons.some((value) => !/^\d{4}-\d{2}$/.test(value))) throw new Error("invalid season split read");
   const publication = await env.DB.prepare(
-    "SELECT snapshot_id FROM publication_runs ORDER BY run_id DESC LIMIT 1",
-  ).first<{ snapshot_id: unknown }>();
+    "SELECT snapshot_id FROM snapshots WHERE snapshot_id = ? LIMIT 1",
+  ).bind(snapshotId).first<{ snapshot_id: unknown }>();
   if (publication?.snapshot_id !== snapshotId) throw new Error("stale season split snapshot");
   const marks = seasons.map(() => "?").join(",");
   const { results } = await env.DB.prepare(
@@ -371,15 +371,25 @@ export async function seasonSplitFacts(
     goals_for: number; goals_against: number; lineage_json: string;
   }>();
   if ((results ?? []).length >= 2048) throw new Error("season split read bound reached");
-  const rows = (results ?? []).map((row) => ({
-    snapshot_id: row.snapshot_id, season: row.season, competition: row.competition,
-    venue: row.venue, opponent_id: row.opponent_id, played: row.played, won: row.won,
-    drawn: row.drawn, lost: row.lost, goals_for: row.goals_for, goals_against: row.goals_against,
-    lineage: JSON.parse(row.lineage_json) as string[],
-  }));
+  const allowedSources = new Set(["openfootball_cl", "football_data_couk", "fpl"]);
+  const validLineage = (value: unknown): value is string[] => Array.isArray(value) && value.length > 0 && value.length <= 32 &&
+    value.every((source) => typeof source === "string" && allowedSources.has(source)) && new Set(value).size === value.length;
+  const rows: SeasonSplitRow[] = [];
+  let malformedLineage = false;
+  for (const row of results ?? []) {
+    let lineage: unknown;
+    try { lineage = JSON.parse(row.lineage_json); } catch { malformedLineage = true; continue; }
+    if (!validLineage(lineage)) { malformedLineage = true; continue; }
+    rows.push({ snapshot_id: row.snapshot_id, season: row.season, competition: row.competition,
+      venue: row.venue, opponent_id: row.opponent_id, played: row.played, won: row.won,
+      drawn: row.drawn, lost: row.lost, goals_for: row.goals_for, goals_against: row.goals_against,
+      lineage });
+  }
   const bySeason = new Map(publicationCoverage.map((entry) => [entry.season, entry.coverage]));
   if (seasons.some((season) => !bySeason.has(season))) throw new Error("missing season coverage declaration");
-  return { catalog: { snapshot_id: snapshotId, seasons: seasons.map((season) => ({ season, coverage: bySeason.get(season)! })) }, rows };
+  return { catalog: { snapshot_id: snapshotId, seasons: seasons.map((season) => ({
+    season, coverage: malformedLineage && bySeason.get(season) === "complete" ? "missing" : bySeason.get(season)!,
+  })) }, rows };
 }
 
 /** Bounded, stable-ID-only facts for the selected-player comparison. */

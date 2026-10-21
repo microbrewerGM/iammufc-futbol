@@ -391,20 +391,29 @@ function registerLocaleRoutes(code: LocaleCode) {
       request = parseSeasonSplitRequest(raw, availableSeasons);
       if (catalog.outputCapability("season_splits") !== "clear") {
         error = locale.code === "es" ? "La capacidad de desgloses por temporada no está publicada." : "Season splits capability is not published.";
-      } else if (!(await enforceBudget(c.env, { failClosed: true }))) {
-        error = locale.code === "es" ? "La exploración no está disponible." : "Season exploration is unavailable.";
-        status = 503;
       } else {
-        snapshot = await currentSnapshot(c.env);
-        if (!snapshot) throw new Error("snapshot unavailable");
         const outputState = catalog.outputCapability("season_splits");
-        const coverageState = outputState === "clear" ? "complete" : outputState === "partial" ? "partial" : "missing";
-        const publicationCoverage = request.seasons.map((season) => ({ season, coverage: coverageState as "complete" | "partial" | "missing" }));
-        const facts = await seasonSplitFacts(c.env, snapshot, request.seasons, publicationCoverage);
-        const query = querySeasonSplits(request, facts.catalog, facts.rows);
-        result = query;
-        opponents = [...new Set(facts.rows.map((row) => row.opponent_id))].sort().map((opponent_id) => ({ opponent_id, label: opponent_id }));
-        if (await currentSnapshot(c.env) !== snapshot) { result = undefined; throw new Error("snapshot changed"); }
+        const publicationCoverage = request.seasons.map((season) => {
+          const cells = catalog.coverage.filter((cell) => cell.competition === "PL" && cell.season === season);
+          const coverage = outputState !== "clear" || cells.length === 0 ? "missing" : "complete";
+          return { season, coverage: coverage as "complete" | "partial" | "missing" };
+        });
+        if (!publicationCoverage.some((entry) => entry.coverage === "complete")) {
+          result = querySeasonSplits(request, { snapshot_id: "unpublished", seasons: publicationCoverage }, []);
+        } else if (!(await enforceBudget(c.env, { failClosed: true }))) {
+          error = locale.code === "es" ? "La exploración no está disponible." : "Season exploration is unavailable.";
+          status = 503;
+        } else {
+          snapshot = await currentSnapshot(c.env);
+          if (!snapshot) throw new Error("snapshot unavailable");
+          const facts = await seasonSplitFacts(c.env, snapshot, request.seasons, publicationCoverage);
+          const effectiveCatalog = { ...facts.catalog, seasons: facts.catalog.seasons.map((entry) =>
+            entry.coverage === "complete" && !facts.rows.some((row) => row.season === entry.season)
+              ? { ...entry, coverage: "missing" as const } : entry) };
+          result = querySeasonSplits(request, effectiveCatalog, facts.rows);
+          opponents = [...new Set(facts.rows.map((row) => row.opponent_id))].sort().map((opponent_id) => ({ opponent_id, label: opponent_id }));
+          if (await currentSnapshot(c.env) !== snapshot) { result = undefined; throw new Error("snapshot changed"); }
+        }
       }
     } catch {
       if (request) {
