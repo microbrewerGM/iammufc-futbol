@@ -303,11 +303,10 @@ function utcDay(): string {
  * real gate; KV only exists to skip the D1 round-trip once the day is
  * obviously over budget.
  *
- * Fails open on any storage error. A broken breaker must never become a
- * site-wide outage over a KV/D1 hiccup -- the free-tier ceilings above
- * already leave wide margin before a real cost overrun.
+ * Returns false if D1 cannot confirm the authoritative count. KV remains an
+ * advisory pre-filter; callers can choose route-specific failure handling.
  */
-export async function enforceBudget(env: Env): Promise<boolean> {
+export async function enforceBudget(env: Env, options: { failClosed?: boolean } = {}): Promise<boolean> {
   const day = utcDay();
 
   try {
@@ -334,7 +333,7 @@ export async function enforceBudget(env: Env): Promise<boolean> {
       .first<{ count: number }>();
     return (row?.count ?? 0) <= BUDGET_HARD_LIMIT;
   } catch {
-    return true; // D1 unavailable: a storage outage should not also take down every query on the site.
+    return options.failClosed === true ? false : true;
   }
 }
 

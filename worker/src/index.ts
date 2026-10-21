@@ -435,7 +435,19 @@ function registerLocaleRoutes(code: LocaleCode) {
   });
 
   app.get(`${p}/players/compare`, async (c) => {
-    const params = new URL(c.req.url).searchParams;
+    const query = new URL(c.req.url).search;
+    const MAX_COMPARE_QUERY_BYTES = 2048;
+    if (new TextEncoder().encode(query).byteLength > MAX_COMPARE_QUERY_BYTES) {
+      return html(locale.code === "es" ? "Selección de comparación no válida." : "Invalid comparison selection.", 400);
+    }
+    const params = new URLSearchParams(query);
+    let personParamCount = 0;
+    let seasonParamCount = 0;
+    for (const [key] of params) {
+      if (key === "person_ids" && ++personParamCount > 5 || key === "seasons" && ++seasonParamCount > 8) {
+        return html(locale.code === "es" ? "Selección de comparación no válida." : "Invalid comparison selection.", 400);
+      }
+    }
     const allowed = new Set(["person_ids", "seasons", "schema_version", "competition", "metric", "normalization", "min_minutes", "viz"]);
     if ([...params.keys()].some((key) => !allowed.has(key)) ||
         [...new Set(params.keys())].some((key) => !["person_ids", "seasons"].includes(key) && params.getAll(key).length !== 1)) {
@@ -449,6 +461,12 @@ function registerLocaleRoutes(code: LocaleCode) {
       ...(params.has("min_minutes") ? { min_minutes: /^\d+$/.test(params.get("min_minutes")!) ? Number(params.get("min_minutes")) : NaN } : {}),
       viz: params.get("viz") ?? "table",
     };
+    let candidate: PlayerRangeRequest;
+    try {
+      candidate = parsePlayerRangeRequest(raw, { snapshot_id: "preflight", person_ids: raw.person_ids, seasons: raw.seasons });
+    } catch {
+      return html(locale.code === "es" ? "Selección de comparación no válida." : "Invalid comparison selection.", 400);
+    }
     const snapshot = await currentSnapshot(c.env);
     const covered = (metric: string, season: string) => {
       const cell = catalog.coverage.find((candidate) => candidate.metric === metric && candidate.entity_type === "player" && candidate.granularity === "box_score" && candidate.competition === "PL" && candidate.season === season);
@@ -465,7 +483,10 @@ function registerLocaleRoutes(code: LocaleCode) {
     if (!snapshot) { error = locale.code === "es" ? "La comparación no está disponible." : "Comparison unavailable."; status = 503; }
     else {
       try {
-        const candidate = parsePlayerRangeRequest(raw, { snapshot_id: snapshot, person_ids: raw.person_ids, seasons: coverageSeasons });
+        if (!(await enforceBudget(c.env, { failClosed: true }))) {
+          error = locale.code === "es" ? "La comparación no está disponible." : "Comparison unavailable.";
+          status = 503;
+        } else {
         validationStage = "metadata";
         const identityCatalog = await playerRangeIdentityCatalog(c.env, candidate.person_ids, candidate.seasons, snapshot);
         if (identityCatalog.person_ids.length !== candidate.person_ids.length) {
@@ -481,13 +502,13 @@ function registerLocaleRoutes(code: LocaleCode) {
         }));
         if (!coverageOk) throw new Error("selection");
         validationStage = "compute";
-        if (!(await enforceBudget(c.env))) { error = locale.strings.budgetExceeded; status = 429; }
-        else {
+        {
           const facts = await playerRangeFacts(c.env, validatedRequest, snapshot, catalog.coverage);
           labels = facts.labels;
           request = validatedRequest;
           result = calculatePlayerRange(request, facts.catalog, facts.rows);
           if (await currentSnapshot(c.env) !== snapshot) { error = locale.code === "es" ? "La comparación no está disponible." : "Comparison unavailable."; result = undefined; status = 503; }
+        }
         }
         }
       } catch (caught) {

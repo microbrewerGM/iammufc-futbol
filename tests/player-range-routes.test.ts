@@ -154,6 +154,34 @@ describe("bounded player range routes", () => {
     expect(store.history).toHaveLength(0);
   });
 
+  it.each(["INSERT INTO budget_counter", "SELECT count FROM budget_counter"])("fails closed on budget D1 failure (%s) before identity, facts, or history in both locales", async (sql) => {
+    for (const locale of ["en", "es"]) {
+      const store = fakeD1({ failOn: sql });
+      const response = await app.request(url(locale), { headers }, envFor(store.db));
+      const body = await response.text();
+      expect(response.status).toBe(503);
+      expect(body).toContain(locale === "es" ? "La comparación no está disponible." : "Comparison unavailable.");
+      expect(store.history).toHaveLength(0);
+    }
+  });
+
+  it.each(["en", "es"])("rejects oversized raw query and excess repeated parameters before budget in %s", async (locale) => {
+    const oversized = fakeD1();
+    const huge = await app.request(`https://site.invalid/${locale}/players/compare?${"x".repeat(2050)}`, { headers }, envFor(oversized.db));
+    expect(huge.status).toBe(400);
+    expect(oversized.history).toHaveLength(0);
+
+    const repeatedPeople = fakeD1();
+    const tooManyPeople = await app.request(url(locale, Array(6).fill(ids[0])), { headers }, envFor(repeatedPeople.db));
+    expect(tooManyPeople.status).toBe(400);
+    expect(repeatedPeople.history).toHaveLength(0);
+
+    const repeatedSeasons = fakeD1();
+    const tooManySeasons = await app.request(url(locale, ids, Array(9).fill(seasons[0])), { headers }, envFor(repeatedSeasons.db));
+    expect(tooManySeasons.status).toBe(400);
+    expect(repeatedSeasons.history).toHaveLength(0);
+  });
+
   it("returns 5xx when returned facts fail integrity validation", async () => {
     const store = fakeD1({ corruptFacts: true });
     const response = await app.request(url(), { headers }, envFor(store.db));
