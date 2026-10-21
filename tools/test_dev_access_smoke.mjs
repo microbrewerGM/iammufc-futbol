@@ -36,7 +36,10 @@ const validQuery = (state = 'available') => ({
   artifact_key: 'b'.repeat(64), snapshot_id: snapshot,
   intent: validChat.proposed_intent,
   feasibility: { state },
-  rows: [{ label: 'Player', value: 9, secondary: 'FW', route_key: 'fpl:code:1' }],
+  rows: [
+    { label: 'Player', value: 9, secondary: 'FW', route_key: 'fpl:code:1' },
+    { label: 'Player Two', value: 8, secondary: 'MF', route_key: 'fpl:code:2' },
+  ],
   attribution: ['Source'],
 });
 test('fixed dev origin, manual redirects, private response and all checks', async () => {
@@ -55,15 +58,16 @@ test('fixed dev origin, manual redirects, private response and all checks', asyn
     const rejected = chat && init.body.includes('per 90');
     if (new URL(url).pathname.includes('/players/compare')) {
       const locale = new URL(url).pathname.startsWith('/es/') ? 'es' : 'en';
-      const params = new URLSearchParams({ schema_version: '1', competition: 'PL' });
-      params.append('person_ids', 'fpl:code:101');
-      params.append('person_ids', 'fpl:code:202');
-      params.append('seasons', '2024-25');
-      params.set('metric', 'goals');
-      params.set('normalization', 'total');
-      params.set('viz', 'table');
+      const params = new URL(url).searchParams;
+      const canonicalParams = new URLSearchParams({ schema_version: '1', competition: 'PL' });
+      for (const id of params.getAll('person_ids')) canonicalParams.append('person_ids', id);
+      canonicalParams.append('seasons', '2024-25');
+      canonicalParams.set('metric', 'goals');
+      canonicalParams.set('normalization', 'total');
+      canonicalParams.set('min_minutes', '0');
+      canonicalParams.set('viz', 'table');
       const marker = locale === 'es' ? 'Comparar jugadores' : 'Compare players';
-      return new Response(`${marker}<link rel="canonical" href="/${locale}/players/compare?${params.toString().replaceAll('&', '&amp;')}">`,
+      return new Response(`${marker}<link rel="canonical" href="/${locale}/players/compare?${canonicalParams.toString().replaceAll('&', '&amp;')}">`,
         { status: 200, headers: { 'cache-control': 'private, no-store' } });
     }
     return new Response(health
@@ -261,20 +265,27 @@ test('anonymous and forged probes are fixed-origin, credential-free and do not f
     assert.equal(new URL(url).origin, 'https://iammufc-dev.aaron-cf2.workers.dev');
     assert.equal(init.redirect, 'manual');
     const headers = new Headers(init.headers);
-    assert.equal(headers.has('CF-Access-Client-Id'), false);
-    assert.equal(headers.has('CF-Access-Client-Secret'), false);
+    const crossSite = headers.get('Sec-Fetch-Site') === 'cross-site';
+    const expectedServiceAuth = crossSite || (new URL(url).pathname === '/api/query' &&
+      typeof init.body === 'string' && init.body.includes('"entity_id":"all"'));
+    assert.equal(headers.has('CF-Access-Client-Id'), expectedServiceAuth);
+    assert.equal(headers.has('CF-Access-Client-Secret'), expectedServiceAuth);
     assert.equal(headers.has('Cookie'), false);
     assert.equal(headers.has('Authorization'), false);
+    if (new URL(url).pathname === '/api/query' && typeof init.body === 'string' &&
+        init.body.includes('"entity_id":"all"')) return new Response(JSON.stringify(validQuery()), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    });
     if (new URL(url).pathname.includes('/players/compare')) {
-      return new Response('', { status: 403 });
+    return new Response('', { status: 403 });
     }
     return accessRedirect();
-  });
-  assert.equal(calls.length, 61);
+  }, env);
+  assert.equal(calls.length, 62);
   assert.equal(calls.filter(({ init }) => init.method === 'HEAD').length, 26);
   const postCalls = calls.filter(({ init }) => init.method === 'POST');
   assert.deepEqual(postCalls.map(({ url }) => new URL(url).pathname), [
-    '/en/ask', '/es/ask', '/api/chat', '/api/query',
+    '/en/ask', '/es/ask', '/api/chat', '/api/query', '/api/query',
   ]);
   assert.ok(postCalls.every(({ init }) => typeof init.body === 'string'));
   for (const locale of ['en', 'es']) {
@@ -282,9 +293,13 @@ test('anonymous and forged probes are fixed-origin, credential-free and do not f
       new Headers(init.headers).get('Sec-Fetch-Site') === 'cross-site');
     assert.ok(call);
     assert.equal(new Headers(call.init.headers).get('Origin'), 'https://foreign.invalid');
+    assert.equal(new Headers(call.init.headers).get('CF-Access-Client-Id'), env.CF_ACCESS_CLIENT_ID);
+    assert.equal(new Headers(call.init.headers).get('CF-Access-Client-Secret'), env.CF_ACCESS_CLIENT_SECRET);
   }
   assert.equal(calls.filter(({ init }) => new Headers(init.headers).has('CF-Access-Jwt-Assertion')).length, 3);
-  assert.ok(results.every((result) => result.pass));
+  assert.ok(calls.filter(({ init }) => new Headers(init.headers).get('Sec-Fetch-Site') === 'cross-site')
+    .every(({ init }) => new Headers(init.headers).has('CF-Access-Client-Secret')));
+  assert.ok(results.every((result) => result.pass), JSON.stringify(results.filter((result) => !result.pass)));
   assert.ok(!JSON.stringify(results).includes('private=value'));
   assert.ok(!JSON.stringify(results).includes('synthetic-invalid-assertion'));
   assert.ok(!JSON.stringify(results).includes('Top+assists'));
@@ -311,7 +326,7 @@ test('only the exact trusted Access challenge passes negative probes', async () 
       location: 'https://odd-fog-375d.cloudflareaccess.com/not-access',
     } }),
   ]) {
-    const results = await denialSmoke(async () => response.clone());
+    const results = await denialSmoke(async () => response.clone(), env);
     assert.ok(results.every((result) => !result.pass));
   }
 });
@@ -331,15 +346,16 @@ test('combined smoke requires authenticated success and denial success', async (
     const rejected = chat && init.body.includes('per 90');
     if (path.includes('/players/compare')) {
       const locale = path.startsWith('/es/') ? 'es' : 'en';
-      const params = new URLSearchParams({ schema_version: '1', competition: 'PL' });
-      params.append('person_ids', 'fpl:code:101');
-      params.append('person_ids', 'fpl:code:202');
-      params.append('seasons', '2024-25');
-      params.set('metric', 'goals');
-      params.set('normalization', 'total');
-      params.set('viz', 'table');
+      const params = new URL(url).searchParams;
+      const canonicalParams = new URLSearchParams({ schema_version: '1', competition: 'PL' });
+      for (const id of params.getAll('person_ids')) canonicalParams.append('person_ids', id);
+      canonicalParams.append('seasons', '2024-25');
+      canonicalParams.set('metric', 'goals');
+      canonicalParams.set('normalization', 'total');
+      canonicalParams.set('min_minutes', '0');
+      canonicalParams.set('viz', 'table');
       const marker = locale === 'es' ? 'Comparar jugadores' : 'Compare players';
-      return new Response(`${marker}<link rel="canonical" href="/${locale}/players/compare?${params.toString().replaceAll('&', '&amp;')}">`,
+      return new Response(`${marker}<link rel="canonical" href="/${locale}/players/compare?${canonicalParams.toString().replaceAll('&', '&amp;')}">`,
         { status: 200, headers: { 'cache-control': 'private, no-store' } });
     }
     return new Response(health ? JSON.stringify(validHealth) :
