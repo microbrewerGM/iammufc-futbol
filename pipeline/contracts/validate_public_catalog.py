@@ -67,12 +67,25 @@ class PublicCoverageCell(BaseModel):
         )
 
 
+class PublicOutputCoverage(BaseModel):
+    """Allowlisted output coverage; clear means declared scopes are available.
+
+    A clear state says nothing about overall dataset or product completeness.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    output_id: Literal["shot_map"]
+    state: Literal["clear", "absent", "partial", "unknown"]
+
+
 class PublicCatalog(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     version: Literal[1]
     metrics: list[PublicMetric]
     coverage: list[PublicCoverageCell]
+    output_coverage: list[PublicOutputCoverage] = Field(default_factory=list)
 
 
 def _require_nonempty(value: str | None, path: str) -> None:
@@ -92,6 +105,14 @@ def validate_public_catalog_value(value: object) -> PublicCatalog:
         catalog = PublicCatalog.model_validate(value)
     except ValidationError as exc:
         raise PublicCatalogError(f"public catalog schema violation: {exc}") from exc
+
+    seen_outputs: set[str] = set()
+    for output in catalog.output_coverage:
+        if output.output_id in seen_outputs:
+            raise PublicCatalogError(
+                f"duplicate output coverage entry: {output.output_id}"
+            )
+        seen_outputs.add(output.output_id)
 
     metrics: dict[str, PublicMetric] = {}
     for index, metric in enumerate(catalog.metrics):
