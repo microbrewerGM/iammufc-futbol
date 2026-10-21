@@ -945,5 +945,11 @@
       "unit": "count"
     }
   ],
+  "output_coverage": [
+    {
+      "output_id": "season_splits",
+      "state": "unknown"
+    }
+  ],
   "version": 1
 }
