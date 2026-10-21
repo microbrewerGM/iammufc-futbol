@@ -29,6 +29,7 @@
  * same lookup-not-inference rule feasibility follows.
  */
 
+import { proposeArrivalManager } from "../core/discovery-arrivals";
 import type { LocaleCode } from "../core/locale";
 
 /** Long questions are not real questions. The longest genuine phrasing in the
@@ -322,6 +323,28 @@ function mentionsCompetition(text: string): boolean {
   ]);
 }
 
+/** Reuse the frozen whole-question grammar; candidate/unsupported_wording is
+ * NOT admission. Typo and academy-origin variants reach clarification with their
+ * original wording intact. No date, roster, coverage or execution is inferred.
+ */
+function arrivalScopeText(question: string, locale: LocaleCode): string | null {
+  // Validate before accent folding: it must not erase concealed input.
+  const original = proposeArrivalManager(question, locale);
+  if (original.status === "clarification" && original.reason === "invalid_question") return null;
+  const normalized = question.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase().replace(/\bmangers?\b/g, (word) => word === "mangers" ? "managers" : "manager");
+  // A finite origin qualifier only: never remove academy/youth words generally.
+  const scopeText = normalized.replace(
+    / (?:including academy graduates|including academy players promoted to the first team|incluidos los canteranos promovidos al primer equipo)(?= (?:as of|a fecha de) \d{4}-\d{2}-\d{2}[.?!]?$|[.?!]?$)/,
+    "",
+  );
+  const proposal = proposeArrivalManager(scopeText, locale);
+  return proposal.status === "proposed" ||
+    (proposal.status === "clarification" &&
+      (proposal.reason === "date_required" || proposal.reason === "invalid_date"))
+    ? scopeText : null;
+}
+
 // ---------------------------------------------------------------------------
 // The gate
 // ---------------------------------------------------------------------------
@@ -335,11 +358,15 @@ function mentionsCompetition(text: string): boolean {
  * without naming the club. Optional: the gate is fully functional without it,
  * just slightly stricter, so a D1 outage degrades this to "must mention the
  * club, a season or a competition" rather than failing the route.
+ * `allowArrivalManager` is opt-in: only a caller that handles the constrained
+ * proposal/clarification may enable it. Generic metric callers must not turn
+ * this family into their default goals intent before B15-WIRE exists.
  */
 export function gateQuestion(
   raw: string,
   locale: LocaleCode = "en",
   knownPlayerNames: readonly string[] = [],
+  allowArrivalManager = false,
 ): GateVerdict {
   if (UNSAFE_CHARS.test(raw) || UNSAFE_UNICODE_CHARS.test(raw)) return reject("unsafe_input", locale);
 
@@ -358,9 +385,11 @@ export function gateQuestion(
 
   const text = question.toLowerCase();
 
+  const arrivalText = allowArrivalManager ? arrivalScopeText(question, locale) : null;
+
   // Scope before topic: a women's-team question is on-topic and out of scope,
   // and deserves the accurate refusal rather than "not about United".
-  if (containsAnyWord(text, OUT_OF_SCOPE_SQUAD)) {
+  if (containsAnyWord(arrivalText ?? text, OUT_OF_SCOPE_SQUAD)) {
     return reject("not_mens_first_team", locale);
   }
 
@@ -386,11 +415,11 @@ export function gateQuestion(
   const namesMetric = containsAnyWord(text, METRIC_WORDS);
 
   const hasSubject =
-    namesUnited || namesPlayer || namesMetric || mentionsSeason(text) || mentionsCompetition(text);
+    namesUnited || namesPlayer || namesMetric || mentionsSeason(text) || mentionsCompetition(text) || arrivalText !== null;
   if (!hasSubject) return reject("off_topic", locale);
 
   // On-topic but not a statistics question ("who is the manager?").
-  const hasStatIntent = namesMetric || containsAnyWord(text, INTENT_WORDS) || mentionsSeason(text);
+  const hasStatIntent = namesMetric || containsAnyWord(text, INTENT_WORDS) || mentionsSeason(text) || arrivalText !== null;
   if (!hasStatIntent) return reject("not_statistical", locale);
 
   return { allowed: true, question };
