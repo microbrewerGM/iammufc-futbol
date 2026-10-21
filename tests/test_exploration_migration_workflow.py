@@ -1,4 +1,4 @@
-"""Season-split migration stays ordered in deploy and local publication paths."""
+"""Exploration storage migration stays ordered in deploy and local publication paths."""
 
 import json
 from pathlib import Path
@@ -41,9 +41,26 @@ def test_season_migration_is_ordered_before_worker_and_private_seed() -> None:
     assert all("--remote" in step["with"]["command"] for step in migration_steps)
     assert all(set(step["with"]) == {"apiToken", "accountId", "command"} for step in migration_steps)
 
+    deploy_0007 = next(i for i, command in enumerate(deploy_commands) if "0007_exploration_requests.sql" in command)
+    consumer_0007 = next(i for i, command in enumerate(consumer_commands) if "0007_exploration_requests.sql" in command)
+    assert deploy_0006 + 1 == deploy_0007 < worker
+    assert consumer_0006 + 1 == consumer_0007 < seed
+    request_steps = [
+        step
+        for job in deploy["jobs"].values()
+        for step in job.get("steps", [])
+        if "0007_exploration_requests.sql" in step.get("with", {}).get("command", "")
+    ]
+    assert len(request_steps) == 2
+    assert request_steps[0] == request_steps[1]
+    assert all(step["uses"] == "cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0" for step in request_steps)
+    assert all("--remote" in step["with"]["command"] for step in request_steps)
+    assert all(set(step["with"]) == {"apiToken", "accountId", "command"} for step in request_steps)
+
     local_seed = json.loads(Path("package.json").read_text(encoding="utf-8"))["scripts"]["d1:seed"]
     assert "--remote" not in local_seed
     assert local_seed.index("0005_account_question_history.sql") < local_seed.index("0006_season_splits.sql") < local_seed.index("0002_seed.sql")
+    assert local_seed.index("0006_season_splits.sql") < local_seed.index("0007_exploration_requests.sql") < local_seed.index("0002_seed.sql")
 
     assert deploy["permissions"] == {"contents": "read"}
     assert all(job["permissions"] == {"contents": "read"} for job in deploy["jobs"].values())
