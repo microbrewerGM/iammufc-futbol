@@ -75,7 +75,7 @@ class PublicOutputCoverage(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    output_id: Literal["shot_map", "season_splits"]
+    output_id: Literal["shot_map", "season_splits", "arrival_manager_groups"]
     state: Literal["clear", "absent", "partial", "unknown"]
 
 
@@ -85,7 +85,7 @@ class PublicCatalog(BaseModel):
     version: Literal[1]
     metrics: list[PublicMetric]
     coverage: list[PublicCoverageCell]
-    output_coverage: list[PublicOutputCoverage] = Field(default_factory=list)
+    output_coverage: list[PublicOutputCoverage] = Field(default_factory=list, max_length=3)
 
 
 def _require_nonempty(value: str | None, path: str) -> None:
