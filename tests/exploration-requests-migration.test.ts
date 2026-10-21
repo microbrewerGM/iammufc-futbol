@@ -33,9 +33,10 @@ const insertJob = `INSERT INTO exploration_jobs
 
 describe("exploration request storage migration", () => {
   // Test index:
-  // - enforces closed storage...: request/result/group/publication privacy, retention, idempotency and deletion.
+  // - enforces closed storage... covers request/result/group/publication privacy, retention, idempotency and deletion.
   // - Every state pair is exercised below: accepts only queued→running, running→failed/published, failed→queued.
-  // - Every finite failure value is exercised below: requires its exact retry_after presence and timing envelope.
+  // - Every finite failure value is exercised below: exact retry_after presence and timing envelope.
+  // - Account deletion cascades through a live job; tombstone blocks reinserting either deleted identifier.
   it("enforces closed storage, job transitions, retention and idempotency, and safely replays", () => {
     const db = new DatabaseSync(":memory:");
     try {
@@ -51,11 +52,13 @@ describe("exploration request storage migration", () => {
         "available", "complete", 1, assigned, "[]", '["source:fpl"]', now, jobExpires);
       db.prepare(insertJob).run(jobId, requestId, now, now, now, jobExpires);
       expect(db.prepare("SELECT status FROM exploration_jobs WHERE job_id = ?").get(jobId)).toEqual({ status: "queued" });
-      reject(() => db.prepare("DELETE FROM exploration_jobs WHERE job_id = ?").run(jobId));
-      reject(() => {
-        db.prepare("DELETE FROM exploration_jobs WHERE job_id = ?").run(jobId);
-        db.prepare(insertJob).run(jobId, requestId, now, now, now, jobExpires);
-      });
+      db.prepare("DELETE FROM exploration_jobs WHERE job_id = ?").run(jobId);
+      expect(db.prepare("SELECT job_id, request_id FROM exploration_job_tombstones").all())
+        .toEqual([{ job_id: jobId, request_id: requestId }]);
+      reject(() => db.prepare(insertJob).run(jobId, requestId, now, now, now, jobExpires));
+      // Restore a live job under a fresh opaque id for the transition checks.
+      db.prepare(insertRequest).run({ ...validRequest, request_id: "8".repeat(64) });
+      db.prepare(insertJob).run("9".repeat(64), "8".repeat(64), now, now, now, jobExpires);
 
       const rejectedRequests = [
         { ...validRequest, request_id: "bad" },
@@ -87,30 +90,30 @@ describe("exploration request storage migration", () => {
 
       // Claim is the only path that increments attempt; direct queued -> published is forbidden.
       reject(() => db.prepare(`UPDATE exploration_jobs SET status = 'published', attempt = 1,
-        publication_json = ? WHERE job_id = ?`).run(publication, jobId));
+        publication_json = ? WHERE job_id = ?`).run(publication, "9".repeat(64)));
       reject(() => db.prepare(`UPDATE exploration_jobs SET status = 'running', attempt = 1, claimed_at = ?,
-        lease_id = 'worker:1', lease_expires_at = ? WHERE job_id = ?`).run(now, now, jobId));
+        lease_id = 'worker:1', lease_expires_at = ? WHERE job_id = ?`).run(now, now, "9".repeat(64)));
       db.prepare(`UPDATE exploration_jobs SET status = 'running', attempt = 1, claimed_at = ?,
-        lease_id = 'worker:1', lease_expires_at = '2026-10-20T00:15:00Z' WHERE job_id = ?`).run(now, jobId);
+        lease_id = 'worker:1', lease_expires_at = '2026-10-20T00:15:00Z' WHERE job_id = ?`).run(now, "9".repeat(64));
       db.prepare(`UPDATE exploration_jobs SET status = 'failed', lease_id = NULL, lease_expires_at = NULL,
-        failure = 'source_unavailable', retry_after = '2026-10-20T00:05:00Z' WHERE job_id = ?`).run(jobId);
+        failure = 'source_unavailable', retry_after = '2026-10-20T00:05:00Z' WHERE job_id = ?`).run("9".repeat(64));
       reject(() => db.prepare(`UPDATE exploration_jobs SET status = 'queued',
-        failure = NULL, updated_at = '2026-10-20T00:01:00Z' WHERE job_id = ?`).run(jobId));
+        failure = NULL, updated_at = '2026-10-20T00:01:00Z' WHERE job_id = ?`).run("9".repeat(64)));
       db.prepare(`UPDATE exploration_jobs SET status = 'queued', failure = NULL,
-        retry_after = NULL, updated_at = '2026-10-20T00:06:00Z' WHERE job_id = ?`).run(jobId);
+        retry_after = NULL, updated_at = '2026-10-20T00:06:00Z' WHERE job_id = ?`).run("9".repeat(64));
       db.prepare(`UPDATE exploration_jobs SET status = 'running', attempt = 2, claimed_at = ?,
-        lease_id = 'worker:2', lease_expires_at = '2026-10-20T00:15:00Z', retry_after = NULL WHERE job_id = ?`).run(now, jobId);
+        lease_id = 'worker:2', lease_expires_at = '2026-10-20T00:15:00Z', retry_after = NULL WHERE job_id = ?`).run(now, "9".repeat(64));
       db.prepare(`UPDATE exploration_jobs SET status = 'published', lease_id = NULL, lease_expires_at = NULL,
-        retry_after = NULL, failure = NULL, publication_json = ? WHERE job_id = ?`).run(publication, jobId);
-      reject(() => db.prepare(`UPDATE exploration_jobs SET status = 'queued' WHERE job_id = ?`).run(jobId));
-      reject(() => db.prepare(`UPDATE exploration_jobs SET status = 'failed', failure = 'no_data' WHERE job_id = ?`).run(jobId));
+        retry_after = NULL, failure = NULL, publication_json = ? WHERE job_id = ?`).run(publication, "9".repeat(64));
+      reject(() => db.prepare(`UPDATE exploration_jobs SET status = 'queued' WHERE job_id = ?`).run("9".repeat(64)));
+      reject(() => db.prepare(`UPDATE exploration_jobs SET status = 'failed', failure = 'no_data' WHERE job_id = ?`).run("9".repeat(64)));
       reject(() => db.prepare(`UPDATE exploration_jobs SET publication_json = ? WHERE job_id = ?`)
-        .run(JSON.stringify({ ...JSON.parse(publication), question_text: "raw question" }), jobId));
+        .run(JSON.stringify({ ...JSON.parse(publication), question_text: "raw question" }), "9".repeat(64)));
       const missingPublication = JSON.stringify((({ coverage_record_id: _coverage, ...rest }) => ({ ...rest, extra: "x" }))(JSON.parse(publication)));
-      reject(() => db.prepare(`UPDATE exploration_jobs SET publication_json = ? WHERE job_id = ?`).run(missingPublication, jobId));
+      reject(() => db.prepare(`UPDATE exploration_jobs SET publication_json = ? WHERE job_id = ?`).run(missingPublication, "9".repeat(64)));
       for (const identity of ["job_id", "request_id", "admitted_at", "created_at", "expires_at"]) {
         const value = identity === "job_id" ? "9".repeat(64) : identity === "request_id" ? "8".repeat(64) : "2026-10-21T00:00:00Z";
-        reject(() => db.prepare(`UPDATE exploration_jobs SET ${identity} = ? WHERE job_id = ?`).run(value, jobId));
+        reject(() => db.prepare(`UPDATE exploration_jobs SET ${identity} = ? WHERE job_id = ?`).run(value, "9".repeat(64)));
       }
 
       const idem = `INSERT INTO exploration_job_idempotency
@@ -175,11 +178,13 @@ describe("exploration request storage migration", () => {
         const fail = db.prepare(`UPDATE exploration_jobs SET status='failed', lease_id=NULL, lease_expires_at=NULL, failure=?, retry_after=? WHERE job_id=?`);
         const legalRetry = failure === "attempts_exhausted" ? null : "2026-10-20T00:05:00Z";
         reject(() => fail.run(failure, failure === "attempts_exhausted" ? "2026-10-20T00:05:00Z" : null, failureId));
-        reject(() => fail.run(failure, failure === "attempts_exhausted" ? null : now, failureId));
         if (failure === "attempts_exhausted") {
+          // This failure requires retry_after to be absent.
           reject(() => fail.run(failure, "2026-10-21T00:00:00Z", failureId));
         } else {
-          reject(() => fail.run(failure, "2026-10-21T00:00:00Z", failureId));
+          reject(() => fail.run(failure, now, failureId));
+          // The envelope includes the exact 24-hour boundary; reject beyond it.
+          reject(() => fail.run(failure, "2026-10-22T00:00:00Z", failureId));
         }
         fail.run(failure, legalRetry, failureId);
         const queuedId = ("e" + index).padEnd(64, "e");
@@ -189,18 +194,22 @@ describe("exploration request storage migration", () => {
         reject(() => db.prepare(`UPDATE exploration_jobs SET failure=? WHERE job_id=?`).run(failure, queuedId));
       }
 
-      db.prepare(insertRequest).run({ ...validRequest, request_id: "3".repeat(64), account_sub: "human-subject-b" });
+      db.prepare(insertRequest).run({ ...validRequest, request_id: "3".repeat(64), account_sub: "human-subject-c" });
+      db.prepare(insertJob).run("7".repeat(64), "3".repeat(64), now, now, now, jobExpires);
       db.prepare(`INSERT INTO exploration_request_accounts
         (request_id, account_sub, created_at, expires_at) VALUES (?, ?, ?, ?)`)
-        .run("3".repeat(64), "human-subject-b", now, requestExpires);
+        .run("3".repeat(64), "human-subject-c", now, requestExpires);
       reject(() => db.prepare(`INSERT INTO exploration_request_accounts
         (request_id, account_sub, created_at, expires_at) VALUES (?, ?, ?, ?)`)
         .run("3".repeat(64), "human-subject-a", now, requestExpires));
       reject(() => db.prepare(`UPDATE exploration_request_accounts SET account_sub = 'human-subject-a' WHERE request_id = ?`)
         .run("3".repeat(64)));
-      db.prepare("DELETE FROM exploration_requests WHERE account_sub = ?").run("human-subject-a");
-      expect(db.prepare("SELECT account_sub FROM exploration_requests").all()).toEqual([{ account_sub: "human-subject-b" }]);
-      expect(db.prepare("SELECT count(*) AS n FROM exploration_results").get()).toEqual({ n: 0 });
+      db.prepare("DELETE FROM exploration_requests WHERE account_sub = ?").run("human-subject-c");
+      expect(db.prepare("SELECT count(*) AS n FROM exploration_requests WHERE account_sub = ?").get("human-subject-c")).toEqual({ n: 0 });
+      expect(db.prepare("SELECT count(*) AS n FROM exploration_results WHERE request_id = ?").get("3".repeat(64))).toEqual({ n: 0 });
+      expect(db.prepare("SELECT count(*) AS n FROM exploration_jobs WHERE request_id = ?").get(requestId)).toEqual({ n: 0 });
+      expect(db.prepare("SELECT count(*) AS n FROM exploration_job_tombstones WHERE job_id = ?").get("7".repeat(64)))
+        .toEqual({ n: 1 });
 
       db.exec(readFileSync("infra/migrations/0007_exploration_requests.sql", "utf8"));
     } finally {

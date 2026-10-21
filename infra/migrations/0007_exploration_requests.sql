@@ -174,21 +174,29 @@ CREATE TABLE IF NOT EXISTS exploration_jobs (
          (status = 'failed' AND attempt BETWEEN 1 AND 3 AND claimed_at IS NOT NULL AND lease_id IS NULL AND lease_expires_at IS NULL AND failure IS NOT NULL AND publication_json IS NULL) OR
          (status = 'published' AND attempt BETWEEN 1 AND 3 AND claimed_at IS NOT NULL AND lease_id IS NULL AND lease_expires_at IS NULL AND retry_after IS NULL AND failure IS NULL AND publication_json IS NOT NULL))
 );
+-- Opaque deletion markers preserve IDs against reset/reinsert while allowing
+-- account deletion to cascade immediately. BRIDGE owns retention and cleanup.
+CREATE TABLE IF NOT EXISTS exploration_job_tombstones (
+  job_id TEXT NOT NULL CHECK (length(job_id) = 64 AND job_id NOT GLOB '*[^0-9a-f]*'),
+  request_id TEXT NOT NULL CHECK (length(request_id) = 64 AND request_id NOT GLOB '*[^0-9a-f]*'),
+  deleted_at TEXT NOT NULL,
+  PRIMARY KEY (job_id, request_id)
+);
 CREATE TRIGGER IF NOT EXISTS exploration_jobs_initial_insert
 BEFORE INSERT ON exploration_jobs
-WHEN NEW.status != 'queued' OR NEW.attempt != 0 OR NEW.lease_id IS NOT NULL OR
+WHEN EXISTS (SELECT 1 FROM exploration_job_tombstones WHERE job_id = NEW.job_id OR request_id = NEW.request_id) OR
+  NEW.status != 'queued' OR NEW.attempt != 0 OR NEW.lease_id IS NOT NULL OR
   NEW.lease_expires_at IS NOT NULL OR NEW.claimed_at IS NOT NULL OR NEW.retry_after IS NOT NULL OR
   NEW.failure IS NOT NULL OR NEW.publication_json IS NOT NULL
 BEGIN
   SELECT RAISE(ABORT, 'exploration jobs must start queued and unclaimed');
 END;
--- Keep job IDs and attempt counters as tombstones until the retention window
--- closes; otherwise delete/reinsert can reset the state machine.
-CREATE TRIGGER IF NOT EXISTS exploration_jobs_retained_delete
-BEFORE DELETE ON exploration_jobs
-WHEN OLD.expires_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+-- Keep only opaque identifiers after deletion; never block account-scoped deletion.
+CREATE TRIGGER IF NOT EXISTS exploration_jobs_tombstone_delete
+AFTER DELETE ON exploration_jobs
 BEGIN
-  SELECT RAISE(ABORT, 'exploration jobs retained until expiry');
+  INSERT OR IGNORE INTO exploration_job_tombstones (job_id, request_id, deleted_at)
+  VALUES (OLD.job_id, OLD.request_id, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
 END;
 CREATE TRIGGER IF NOT EXISTS exploration_jobs_state_machine
 BEFORE UPDATE ON exploration_jobs
