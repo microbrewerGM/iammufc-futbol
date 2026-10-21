@@ -467,7 +467,6 @@ function registerLocaleRoutes(code: LocaleCode) {
     } catch {
       return html(locale.code === "es" ? "Selección de comparación no válida." : "Invalid comparison selection.", 400);
     }
-    const snapshot = await currentSnapshot(c.env);
     const covered = (metric: string, season: string) => {
       const cell = catalog.coverage.find((candidate) => candidate.metric === metric && candidate.entity_type === "player" && candidate.granularity === "box_score" && candidate.competition === "PL" && candidate.season === season);
       return cell?.source_id === "fpl" && cell.redistributable && cell.cost_class === "cheap";
@@ -479,11 +478,15 @@ function registerLocaleRoutes(code: LocaleCode) {
     let result;
     let error: string | undefined;
     let status = 200;
+    let snapshot: string | null = null;
     let validationStage: "input" | "metadata" | "coverage" | "compute" = "input";
-    if (!snapshot) { error = locale.code === "es" ? "La comparación no está disponible." : "Comparison unavailable."; status = 503; }
-    else {
-      try {
-        if (!(await enforceBudget(c.env, { failClosed: true }))) {
+    try {
+      if (!(await enforceBudget(c.env, { failClosed: true }))) {
+        error = locale.code === "es" ? "La comparación no está disponible." : "Comparison unavailable.";
+        status = 503;
+      } else {
+        snapshot = await currentSnapshot(c.env);
+        if (!snapshot) {
           error = locale.code === "es" ? "La comparación no está disponible." : "Comparison unavailable.";
           status = 503;
         } else {
@@ -510,12 +513,12 @@ function registerLocaleRoutes(code: LocaleCode) {
           if (await currentSnapshot(c.env) !== snapshot) { error = locale.code === "es" ? "La comparación no está disponible." : "Comparison unavailable."; result = undefined; status = 503; }
         }
         }
-        }
-      } catch (caught) {
-        error = locale.code === "es" ? "Selección de comparación no válida." : "Invalid comparison selection.";
-        status = caught instanceof Error && ((validationStage === "input" && /^Invalid player range:/.test(caught.message)) ||
-          (validationStage === "coverage" && caught.message === "selection")) ? 400 : 503;
       }
+      }
+    } catch (caught) {
+      error = locale.code === "es" ? "Selección de comparación no válida." : "Invalid comparison selection.";
+      status = caught instanceof Error && ((validationStage === "input" && /^Invalid player range:/.test(caught.message)) ||
+        (validationStage === "coverage" && caught.message === "selection")) ? 400 : 503;
     }
     const selection = request ? playerRangeSelection(request) : emptySelection;
     const canonical = request ? new URLSearchParams() : null;

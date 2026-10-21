@@ -1,6 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Env } from "../worker/src/core/db";
 
+const sqliteModuleName: string = "node:sqlite";
+const { DatabaseSync } = await import(sqliteModuleName) as unknown as {
+  DatabaseSync: new (path: string) => {
+    exec(sql: string): void;
+    prepare(sql: string): {
+      run(...values: unknown[]): unknown;
+      get(...values: unknown[]): unknown;
+      all(...values: unknown[]): unknown[];
+    };
+  };
+};
+
 vi.mock("jose", async (original) => ({
   ...await original<typeof import("jose")>(),
   jwtVerify: vi.fn(async () => ({ payload: { sub: "range-user", email: "owner@example.invalid" } })),
@@ -22,54 +34,68 @@ const fixtureFacts = [
 ];
 
 function fakeD1(options: { failOn?: string; corruptFacts?: boolean } = {}) {
+  const sqlite = new DatabaseSync(":memory:");
+  sqlite.exec(`
+    CREATE TABLE budget_counter (day TEXT PRIMARY KEY, count INTEGER NOT NULL);
+    CREATE TABLE snapshots (snapshot_id TEXT NOT NULL, created_at TEXT NOT NULL);
+    CREATE TABLE players (player_id TEXT PRIMARY KEY, web_name TEXT NOT NULL);
+    CREATE TABLE player_identities (person_id TEXT NOT NULL, player_id TEXT NOT NULL, season TEXT NOT NULL);
+    CREATE TABLE player_season_stats (player_id TEXT NOT NULL, season TEXT NOT NULL, competition TEXT NOT NULL, goals INTEGER, assists INTEGER, minutes INTEGER, snapshot_id TEXT NOT NULL);
+    CREATE TABLE account_question_history (id INTEGER PRIMARY KEY AUTOINCREMENT, account_sub TEXT, question_text TEXT, visualization_path TEXT, locale TEXT, created_at TEXT);
+  `);
+  sqlite.prepare("INSERT INTO snapshots VALUES (?, ?)").run(snapshot, "2026-01-01T00:00:00Z");
+  for (const player of fixturePlayers) {
+    sqlite.prepare("INSERT INTO players VALUES (?, ?)").run(player.player_id, player.label);
+    sqlite.prepare("INSERT INTO player_identities VALUES (?, ?, ?)").run(player.person_id, player.player_id, player.season);
+  }
+  for (const fact of fixtureFacts) {
+    sqlite.prepare("INSERT INTO player_season_stats VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(fixturePlayers.find((player) => player.person_id === fact.person_id)!.player_id, fact.season, fact.competition, options.corruptFacts && fact.snapshot_id === snapshot ? -1 : fact.goals, fact.assists, fact.minutes, fact.snapshot_id);
+  }
   const history: unknown[][] = [];
-  let budgetCount = 0;
+  const trace: string[] = [];
   const prepare = (sql: string) => {
-    if (options.failOn && sql.includes(options.failOn)) throw new Error("synthetic D1 failure");
     let bound: unknown[] = [];
     const statement = {
       bind: (...values: unknown[]) => { bound = values; return statement; },
       first: async <T,>() => {
-        if (sql.includes("FROM snapshots")) return { snapshot_id: snapshot } as T;
-        if (sql.includes("SELECT count FROM budget_counter")) return { count: budgetCount } as T;
-        return null;
+        trace.push(sql);
+        if (options.failOn && sql.includes(options.failOn)) throw new Error("synthetic D1 failure");
+        return (sqlite.prepare(sql).get(...bound) ?? null) as T | null;
       },
       all: async <T,>() => {
-        if (sql.includes("SELECT DISTINCT i.person_id")) {
-          const people = new Set<string>(bound as string[]);
-          return { results: fixturePlayers.filter((p) => people.has(p.person_id)).map((p) => ({ person_id: p.person_id })) as T[] };
-        }
-        if (sql.includes("SELECT i.person_id, p.web_name AS label")) {
-          const people = new Set<string>(bound as string[]);
-          return { results: fixturePlayers.filter((p) => people.has(p.person_id)).map((p) => ({ person_id: p.person_id, label: p.label })) as T[] };
-        }
-        if (sql.includes("FROM player_season_stats")) {
-          const people = new Set<string>(bound.slice(0, 2) as string[]);
-          const requestedSeasons = new Set<string>(bound.slice(2, -1) as string[]);
-          const selectedSnapshot = bound.at(-1) as string;
-          const facts = fixtureFacts.filter((row) => people.has(row.person_id) && requestedSeasons.has(row.season) && row.snapshot_id === selectedSnapshot);
-          if (options.corruptFacts && facts[0]) facts[0] = { ...facts[0], goals: -1 };
-          return { results: facts as T[] };
-        }
-        throw new Error(`Unexpected fake D1 query: ${sql}`);
+        trace.push(sql);
+        if (options.failOn && sql.includes(options.failOn)) throw new Error("synthetic D1 failure");
+        return { results: sqlite.prepare(sql).all(...bound) as T[] };
       },
       run: async () => {
-        if (sql.includes("INSERT INTO budget_counter")) budgetCount += 1;
-        return { success: true };
+        trace.push(sql);
+        if (options.failOn && sql.includes(options.failOn)) throw new Error("synthetic D1 failure");
+        return sqlite.prepare(sql).run(...bound);
       },
-      query: sql,
-      values: () => bound,
     };
-    return statement;
+    return Object.assign(statement, { sql, values: () => bound });
   };
   return {
     history,
+    trace,
     db: {
       prepare,
-      batch: async (statements: Array<{ [key: string]: unknown }>) => {
-        const insert = statements[0] as unknown as { query: string; values: () => unknown[] };
-        if (insert.query?.includes("INSERT INTO account_question_history")) history.push(insert.values());
-        return [];
+      batch: async (statements: Array<{ sql: string; values: () => unknown[] }>) => {
+        sqlite.exec("BEGIN");
+        try {
+          for (const item of statements) {
+            trace.push(item.sql);
+            if (options.failOn && item.sql.includes(options.failOn)) throw new Error("synthetic D1 failure");
+            sqlite.prepare(item.sql).run(...item.values());
+            if (item.sql.startsWith("INSERT INTO account_question_history")) history.push(item.values());
+          }
+          sqlite.exec("COMMIT");
+          return [];
+        } catch (error) {
+          sqlite.exec("ROLLBACK");
+          throw error;
+        }
       },
     },
   };
@@ -163,6 +189,22 @@ describe("bounded player range routes", () => {
       expect(body).toContain(locale === "es" ? "La comparación no está disponible." : "Comparison unavailable.");
       expect(store.history).toHaveLength(0);
     }
+  });
+
+  it("validates input before D1 and enforces budget before snapshot and every later read", async () => {
+    const invalid = fakeD1();
+    const invalidResponse = await app.request(`${url()}&metric=assists`, { headers }, envFor(invalid.db));
+    expect(invalidResponse.status).toBe(400);
+    expect(invalid.trace).toEqual([]);
+
+    const valid = fakeD1();
+    const response = await app.request(url(), { headers }, envFor(valid.db));
+    expect(response.status).toBe(200);
+    const budgetWrite = valid.trace.findIndex((sql) => sql.includes("INSERT INTO budget_counter"));
+    const snapshotRead = valid.trace.findIndex((sql) => sql.includes("FROM snapshots"));
+    expect(budgetWrite).toBeGreaterThanOrEqual(0);
+    expect(snapshotRead).toBeGreaterThan(budgetWrite);
+    expect(valid.trace.slice(0, budgetWrite).every((sql) => !sql.trimStart().toUpperCase().startsWith("SELECT"))).toBe(true);
   });
 
   it.each(["en", "es"])("rejects oversized raw query and excess repeated parameters before budget in %s", async (locale) => {
