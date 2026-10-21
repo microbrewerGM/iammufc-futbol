@@ -75,7 +75,7 @@ class PublicOutputCoverage(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    output_id: Literal["shot_map"]
+    output_id: Literal["shot_map", "season_splits"]
     state: Literal["clear", "absent", "partial", "unknown"]
 
 
