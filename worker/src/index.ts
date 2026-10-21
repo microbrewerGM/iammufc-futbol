@@ -45,7 +45,7 @@ import {
   type QuestionHistoryEntry,
   type PublicationState,
 } from "./core/db";
-import { decodeCompiledCatalog } from "./core/catalog-contract";
+import { decodeCompiledCatalog, seasonSplitsSeasonCoverage } from "./core/catalog-contract";
 import { Catalog, columnFeasibility, hasSubstance } from "./core/feasibility";
 import { artifactKey, canonicalize } from "./core/intent";
 import { parseIntent, validateExecutionSupport, validateQuerySemantics } from "./core/validate-intent";
@@ -83,7 +83,8 @@ import {
 /** Pin site P14. Bump deliberately -- a different model parses differently. */
 const AI_MODEL = "@cf/google/gemma-4-26b-a4b-it";
 
-const catalog = new Catalog(decodeCompiledCatalog(compiledCatalog));
+const decodedCatalog = decodeCompiledCatalog(compiledCatalog);
+const catalog = new Catalog(decodedCatalog);
 const app = new Hono<AccessEnv>();
 
 /** Choose a default only from metric/season pairs with executable catalog coverage. */
@@ -394,9 +395,8 @@ function registerLocaleRoutes(code: LocaleCode) {
       } else {
         const outputState = catalog.outputCapability("season_splits");
         const publicationCoverage = request.seasons.map((season) => {
-          const cells = catalog.coverage.filter((cell) => cell.competition === "PL" && cell.season === season);
-          const coverage = outputState !== "clear" || cells.length === 0 ? "missing" : "complete";
-          return { season, coverage: coverage as "complete" | "partial" | "missing" };
+          const coverage = seasonSplitsSeasonCoverage(decodedCatalog, season, outputState);
+          return { season, coverage };
         });
         if (!publicationCoverage.some((entry) => entry.coverage === "complete")) {
           result = querySeasonSplits(request, { snapshot_id: "unpublished", seasons: publicationCoverage }, []);
@@ -404,15 +404,14 @@ function registerLocaleRoutes(code: LocaleCode) {
           error = locale.code === "es" ? "La exploración no está disponible." : "Season exploration is unavailable.";
           status = 503;
         } else {
-          snapshot = await currentSnapshot(c.env);
+          const publication = await currentPublication(c.env);
+          snapshot = publication?.snapshotId ?? null;
           if (!snapshot) throw new Error("snapshot unavailable");
-          const facts = await seasonSplitFacts(c.env, snapshot, request.seasons, publicationCoverage);
-          const effectiveCatalog = { ...facts.catalog, seasons: facts.catalog.seasons.map((entry) =>
-            entry.coverage === "complete" && !facts.rows.some((row) => row.season === entry.season)
-              ? { ...entry, coverage: "missing" as const } : entry) };
-          result = querySeasonSplits(request, effectiveCatalog, facts.rows);
+          const facts = await seasonSplitFacts(c.env, snapshot, request.seasons, publicationCoverage, {
+            venue: request.venue, opponent_id: request.opponent_id,
+          });
+          result = querySeasonSplits(request, facts.catalog, facts.rows);
           opponents = [...new Set(facts.rows.map((row) => row.opponent_id))].sort().map((opponent_id) => ({ opponent_id, label: opponent_id }));
-          if (await currentSnapshot(c.env) !== snapshot) { result = undefined; throw new Error("snapshot changed"); }
         }
       }
     } catch {

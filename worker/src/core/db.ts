@@ -352,34 +352,69 @@ export async function seasonSplitFacts(
   snapshotId: string,
   seasons: readonly string[],
   publicationCoverage: readonly { season: string; coverage: "complete" | "partial" | "missing" }[],
+  dimensions: { venue: "home" | "away" | null; opponent_id: string | null } = { venue: null, opponent_id: null },
 ): Promise<{ catalog: SeasonSplitCatalog; rows: SeasonSplitRow[] }> {
   if (!/^[0-9a-f]{64}$/.test(snapshotId) || seasons.length < 1 || seasons.length > 16 ||
-      seasons.some((value) => !/^\d{4}-\d{2}$/.test(value))) throw new Error("invalid season split read");
+      seasons.some((value) => !/^\d{4}-\d{2}$/.test(value)) ||
+      (dimensions.venue !== null && dimensions.venue !== "home" && dimensions.venue !== "away") ||
+      (dimensions.opponent_id !== null && !/^club:[1-9][0-9]{0,17}$/.test(dimensions.opponent_id))) {
+    throw new Error("invalid season split read");
+  }
   const publication = await env.DB.prepare(
-    "SELECT snapshot_id FROM snapshots WHERE snapshot_id = ? LIMIT 1",
-  ).bind(snapshotId).first<{ snapshot_id: unknown }>();
-  if (publication?.snapshot_id !== snapshotId) throw new Error("stale season split snapshot");
+    `SELECT r.snapshot_id FROM publication_runs r
+      JOIN snapshots s ON s.snapshot_id = r.snapshot_id
+     ORDER BY r.run_id DESC LIMIT 1`,
+  ).first<{ snapshot_id: unknown }>();
+  if (publication?.snapshot_id !== snapshotId) throw new Error("stale season split publication");
   const marks = seasons.map(() => "?").join(",");
+  const venueClause = dimensions.venue === null ? "" : " AND venue = ?";
+  const opponentClause = dimensions.opponent_id === null ? "" : " AND opponent_id = ?";
+  const dimensionBindings = [
+    ...(dimensions.venue === null ? [] : [dimensions.venue]),
+    ...(dimensions.opponent_id === null ? [] : [dimensions.opponent_id]),
+  ];
+  // The producer's season-split validator accepts at most 4,096 rows. The
+  // extra row is a SQL-side overflow sentinel; LIMIT remains inside D1.
   const { results } = await env.DB.prepare(
     `SELECT snapshot_id, season, competition, venue, opponent_id, played, won, drawn, lost,
             goals_for, goals_against, lineage_json
-       FROM season_splits WHERE snapshot_id = ? AND season IN (${marks})
-       ORDER BY season, venue, opponent_id LIMIT 2048`,
-  ).bind(snapshotId, ...seasons).all<{
+       FROM season_splits WHERE snapshot_id = ? AND season IN (${marks})${venueClause}${opponentClause}
+       ORDER BY season, venue, opponent_id LIMIT 4097`,
+  ).bind(snapshotId, ...seasons, ...dimensionBindings).all<{
     snapshot_id: string; season: string; competition: "PL"; venue: "home" | "away";
     opponent_id: string; played: number; won: number; drawn: number; lost: number;
     goals_for: number; goals_against: number; lineage_json: string;
   }>();
-  if ((results ?? []).length >= 2048) throw new Error("season split read bound reached");
+  if ((results ?? []).length > 4096) throw new Error("season split read bound reached");
+  const { results: lineageResults } = await env.DB.prepare(
+    `SELECT season, lineage_json FROM season_splits
+      WHERE snapshot_id = ? AND competition = 'PL' AND season IN (${marks})
+      ORDER BY season, venue, opponent_id LIMIT 4097`,
+  ).bind(snapshotId, ...seasons).all<{ season: string; lineage_json: string }>();
+  if ((lineageResults ?? []).length > 4096) throw new Error("season split lineage bound reached");
+  const totals = await env.DB.prepare(
+    `SELECT season, played FROM season_stats
+      WHERE snapshot_id = ? AND competition = 'PL' AND season IN (${marks})`,
+  ).bind(snapshotId, ...seasons).all<{ season: string; played: number }>();
+  const aggregateTotals = await env.DB.prepare(
+    `SELECT season, SUM(played) AS played, COUNT(*) AS row_count FROM season_splits
+      WHERE snapshot_id = ? AND competition = 'PL' AND season IN (${marks})
+      GROUP BY season`,
+  ).bind(snapshotId, ...seasons).all<{ season: string; played: number; row_count: number }>();
   const allowedSources = new Set(["openfootball_cl", "football_data_couk", "fpl"]);
   const validLineage = (value: unknown): value is string[] => Array.isArray(value) && value.length > 0 && value.length <= 32 &&
     value.every((source) => typeof source === "string" && allowedSources.has(source)) && new Set(value).size === value.length;
   const rows: SeasonSplitRow[] = [];
-  let malformedLineage = false;
+  const malformedSeasons = new Set<string>();
+  for (const row of lineageResults ?? []) {
+    let lineage: unknown;
+    try { lineage = JSON.parse(row.lineage_json); } catch { malformedSeasons.add(row.season); continue; }
+    if (!validLineage(lineage)) malformedSeasons.add(row.season);
+  }
   for (const row of results ?? []) {
     let lineage: unknown;
-    try { lineage = JSON.parse(row.lineage_json); } catch { malformedLineage = true; continue; }
-    if (!validLineage(lineage)) { malformedLineage = true; continue; }
+    try { lineage = JSON.parse(row.lineage_json); } catch { malformedSeasons.add(row.season); continue; }
+    if (!validLineage(lineage)) { malformedSeasons.add(row.season); continue; }
     rows.push({ snapshot_id: row.snapshot_id, season: row.season, competition: row.competition,
       venue: row.venue, opponent_id: row.opponent_id, played: row.played, won: row.won,
       drawn: row.drawn, lost: row.lost, goals_for: row.goals_for, goals_against: row.goals_against,
@@ -387,8 +422,20 @@ export async function seasonSplitFacts(
   }
   const bySeason = new Map(publicationCoverage.map((entry) => [entry.season, entry.coverage]));
   if (seasons.some((season) => !bySeason.has(season))) throw new Error("missing season coverage declaration");
+  const totalsBySeason = new Map((totals.results ?? []).map((entry) => [entry.season, entry.played]));
+  const aggregatesBySeason = new Map((aggregateTotals.results ?? []).map((entry) => [entry.season, entry]));
+  const publicationAfterReads = await env.DB.prepare(
+    `SELECT r.snapshot_id FROM publication_runs r
+      JOIN snapshots s ON s.snapshot_id = r.snapshot_id
+     ORDER BY r.run_id DESC LIMIT 1`,
+  ).first<{ snapshot_id: unknown }>();
+  if (publicationAfterReads?.snapshot_id !== snapshotId) throw new Error("season split publication changed during read");
   return { catalog: { snapshot_id: snapshotId, seasons: seasons.map((season) => ({
-    season, coverage: malformedLineage && bySeason.get(season) === "complete" ? "missing" : bySeason.get(season)!,
+    season,
+    coverage: bySeason.get(season) === "complete" && (aggregatesBySeason.get(season)?.row_count ?? 0) > 0 &&
+      !malformedSeasons.has(season) && totalsBySeason.has(season) &&
+      aggregatesBySeason.get(season)?.played === totalsBySeason.get(season)
+        ? "complete" : "missing",
   })) }, rows };
 }
 
