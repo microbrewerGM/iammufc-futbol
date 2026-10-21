@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS season_splits (
   lost          INTEGER NOT NULL CHECK (typeof(lost) = 'integer' AND lost >= 0),
   goals_for     INTEGER NOT NULL CHECK (typeof(goals_for) = 'integer' AND goals_for >= 0),
   goals_against INTEGER NOT NULL CHECK (typeof(goals_against) = 'integer' AND goals_against >= 0),
-  -- Attribution renders from lineage: a bounded JSON array of source ids.
+  -- Attribution renders from lineage: bounded source IDs matching the catalog
+  -- contract ([a-z][a-z0-9_]*), with tuple uniqueness enforced below.
   lineage_json  TEXT NOT NULL CHECK (
     length(lineage_json) BETWEEN 4 AND 8192 AND
     json_valid(lineage_json) AND
@@ -34,3 +35,39 @@ CREATE TABLE IF NOT EXISTS season_splits (
   CHECK (won + drawn + lost = played),
   PRIMARY KEY (snapshot_id, season, competition, venue, opponent_id)
 ) WITHOUT ROWID;
+
+-- SQLite CHECK constraints cannot inspect json_each rows. Validate each
+-- lineage tuple at write time; json_valid/shape checks above run first.
+CREATE TRIGGER IF NOT EXISTS season_splits_lineage_insert
+BEFORE INSERT ON season_splits
+WHEN EXISTS (
+  SELECT 1 FROM json_each(NEW.lineage_json)
+  WHERE type != 'text'
+     OR length(value) NOT BETWEEN 1 AND 128
+     OR value GLOB '*[^a-z0-9_]*'
+     OR substr(value, 1, 1) GLOB '[^a-z]'
+) OR (
+  SELECT count(*) FROM json_each(NEW.lineage_json)
+) != (
+  SELECT count(DISTINCT value) FROM json_each(NEW.lineage_json)
+)
+BEGIN
+  SELECT RAISE(ABORT, 'invalid season_splits lineage');
+END;
+
+CREATE TRIGGER IF NOT EXISTS season_splits_lineage_update
+BEFORE UPDATE OF lineage_json ON season_splits
+WHEN EXISTS (
+  SELECT 1 FROM json_each(NEW.lineage_json)
+  WHERE type != 'text'
+     OR length(value) NOT BETWEEN 1 AND 128
+     OR value GLOB '*[^a-z0-9_]*'
+     OR substr(value, 1, 1) GLOB '[^a-z]'
+) OR (
+  SELECT count(*) FROM json_each(NEW.lineage_json)
+) != (
+  SELECT count(DISTINCT value) FROM json_each(NEW.lineage_json)
+)
+BEGIN
+  SELECT RAISE(ABORT, 'invalid season_splits lineage');
+END;
