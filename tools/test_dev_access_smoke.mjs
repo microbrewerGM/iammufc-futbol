@@ -331,6 +331,26 @@ test('only the exact trusted Access challenge passes negative probes', async () 
   }
 });
 
+test('cross-site probes fail visibly when query discovers fewer than two valid IDs', async () => {
+  for (const row of [
+    { ...validQuery().rows[0], route_key: 'not-a-valid-id' },
+    { ...validQuery().rows[0], route_key: 'fpl:code:1' },
+  ]) {
+    const results = await denialSmoke(async (url) => {
+      if (new URL(url).pathname === '/api/query') return new Response(JSON.stringify({
+        ...validQuery(), rows: [row],
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+      return accessRedirect();
+    }, env);
+    const crossSiteResults = results.filter((result) => result.mode === 'cross-site');
+    assert.deepEqual(crossSiteResults.map(({ path, pass }) => ({ path, pass })), [
+      { path: '/en/players/compare', pass: false },
+      { path: '/es/players/compare', pass: false },
+    ]);
+    assert.ok(results.some((result) => result.path === '/api/query' && result.pass === undefined) === false);
+  }
+});
+
 test('combined smoke requires authenticated success and denial success', async () => {
   let queryCalls = 0;
   const results = await runSmoke(env, async (url, init) => {

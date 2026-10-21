@@ -344,8 +344,12 @@ export async function denialSmoke(request = fetch, env = {}) {
     try { ids = [...new Set(JSON.parse(await queryResponse.text()).rows.map((row) => row.route_key))]
       .filter((id) => /^fpl:code:[1-9]\d*$/.test(id)).slice(0, 2); } catch { ids = []; }
   }
-  if (ids.length === 2) {
   for (const locale of ['en', 'es']) {
+    if (ids.length !== 2) {
+      results.push({ mode: 'cross-site', method: 'GET', path: `/${locale}/players/compare`,
+        status: queryResponse.status, pass: false });
+      continue;
+    }
     const params = new URLSearchParams(playerCompareParams);
     for (const id of ids) params.append('person_ids', id);
     params.append('seasons', '2024-25');
@@ -356,7 +360,6 @@ export async function denialSmoke(request = fetch, env = {}) {
     });
     results.push({ mode: 'cross-site', method: 'GET', path, status: response.status,
       pass: response.status === 403 });
-  }
   }
   return results;
 }
