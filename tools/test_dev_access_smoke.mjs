@@ -53,6 +53,19 @@ test('fixed dev origin, manual redirects, private response and all checks', asyn
     const chat = path === '/api/chat';
     const query = path === '/api/query';
     const rejected = chat && init.body.includes('per 90');
+    if (new URL(url).pathname.includes('/players/compare')) {
+      const locale = new URL(url).pathname.startsWith('/es/') ? 'es' : 'en';
+      const params = new URLSearchParams({ schema_version: '1', competition: 'PL' });
+      params.append('person_ids', 'fpl:code:101');
+      params.append('person_ids', 'fpl:code:202');
+      params.append('seasons', '2024-25');
+      params.set('metric', 'goals');
+      params.set('normalization', 'total');
+      params.set('viz', 'table');
+      const marker = locale === 'es' ? 'Comparar jugadores' : 'Compare players';
+      return new Response(`${marker}<link rel="canonical" href="/${locale}/players/compare?${params.toString().replaceAll('&', '&amp;')}">`,
+        { status: 200, headers: { 'cache-control': 'private, no-store' } });
+    }
     return new Response(health
       ? JSON.stringify(validHealth)
       : chat ? JSON.stringify(rejected ? unsupported : validChat)
@@ -61,18 +74,26 @@ test('fixed dev origin, manual redirects, private response and all checks', asyn
     { status: rejected ? 422 : 200, headers: { 'cache-control': 'private, no-store',
       ...((health || chat || query) ? { 'content-type': 'application/json; charset=UTF-8' } : {}) } });
   });
-  assert.equal(calls.length, 17);
+  assert.equal(calls.length, 19);
   assert.equal(calls.find((call) => new URL(call.url).pathname === '/en/ask').init.method, 'POST');
   assert.equal(calls.find((call) => new URL(call.url).pathname === '/api/health').init.method, 'GET');
   assert.ok(results.every((result) => result.pass), JSON.stringify(results.filter((result) => !result.pass)));
-  assert.deepEqual(results.at(-4), { path: '/api/chat', status: 200, pass: true,
+  assert.deepEqual(results.at(-6), { path: '/api/chat', status: 200, pass: true,
     model_status: 'accepted' });
-  assert.deepEqual(results.at(-3), { path: '/api/chat', status: 422, pass: true,
+  assert.deepEqual(results.at(-5), { path: '/api/chat', status: 422, pass: true,
     gate_status: 'unsupported_semantics' });
-  assert.deepEqual(results.at(-2), { path: '/api/query', status: 200, pass: true,
+  assert.deepEqual(results.at(-4), { path: '/api/query', status: 200, pass: true,
     query_state: 'computable_now_queued' });
-  assert.deepEqual(results.at(-1), { path: '/api/query', status: 200, pass: true,
+  assert.deepEqual(results.at(-3), { path: '/api/query', status: 200, pass: true,
     query_state: 'available' });
+  for (const locale of ['en', 'es']) {
+    const call = calls.find(({ url }) => new URL(url).pathname === `/${locale}/players/compare`);
+    assert.ok(call);
+    assert.equal(call.init.headers['Sec-Fetch-Site'], 'same-origin');
+    const result = results.find(({ path }) => path.startsWith(`/${locale}/players/compare`));
+    assert.deepEqual(result, { path: call && new URL(call.url).pathname + new URL(call.url).search,
+      status: 200, pass: true });
+  }
   assert.ok(!JSON.stringify(results).includes('synthetic'));
   assert.ok(!JSON.stringify(results).includes(snapshot));
   assert.ok(!JSON.stringify(results).includes(retrieved));
@@ -244,15 +265,24 @@ test('anonymous and forged probes are fixed-origin, credential-free and do not f
     assert.equal(headers.has('CF-Access-Client-Secret'), false);
     assert.equal(headers.has('Cookie'), false);
     assert.equal(headers.has('Authorization'), false);
+    if (new URL(url).pathname.includes('/players/compare')) {
+      return new Response('', { status: 403 });
+    }
     return accessRedirect();
   });
-  assert.equal(calls.length, 59);
+  assert.equal(calls.length, 61);
   assert.equal(calls.filter(({ init }) => init.method === 'HEAD').length, 26);
   const postCalls = calls.filter(({ init }) => init.method === 'POST');
   assert.deepEqual(postCalls.map(({ url }) => new URL(url).pathname), [
     '/en/ask', '/es/ask', '/api/chat', '/api/query',
   ]);
   assert.ok(postCalls.every(({ init }) => typeof init.body === 'string'));
+  for (const locale of ['en', 'es']) {
+    const call = calls.find(({ url, init }) => new URL(url).pathname === `/${locale}/players/compare` &&
+      new Headers(init.headers).get('Sec-Fetch-Site') === 'cross-site');
+    assert.ok(call);
+    assert.equal(new Headers(call.init.headers).get('Origin'), 'https://foreign.invalid');
+  }
   assert.equal(calls.filter(({ init }) => new Headers(init.headers).has('CF-Access-Jwt-Assertion')).length, 3);
   assert.ok(results.every((result) => result.pass));
   assert.ok(!JSON.stringify(results).includes('private=value'));
@@ -290,12 +320,28 @@ test('combined smoke requires authenticated success and denial success', async (
   let queryCalls = 0;
   const results = await runSmoke(env, async (url, init) => {
     const headers = new Headers(init.headers);
+    if (new URL(url).pathname.includes('/players/compare') && headers.get('Sec-Fetch-Site') === 'cross-site') {
+      return new Response('', { status: 403 });
+    }
     if (!headers.has('CF-Access-Client-Id')) return accessRedirect();
     const path = new URL(url).pathname;
     const health = path === '/api/health';
     const chat = path === '/api/chat';
     const query = path === '/api/query';
     const rejected = chat && init.body.includes('per 90');
+    if (path.includes('/players/compare')) {
+      const locale = path.startsWith('/es/') ? 'es' : 'en';
+      const params = new URLSearchParams({ schema_version: '1', competition: 'PL' });
+      params.append('person_ids', 'fpl:code:101');
+      params.append('person_ids', 'fpl:code:202');
+      params.append('seasons', '2024-25');
+      params.set('metric', 'goals');
+      params.set('normalization', 'total');
+      params.set('viz', 'table');
+      const marker = locale === 'es' ? 'Comparar jugadores' : 'Compare players';
+      return new Response(`${marker}<link rel="canonical" href="/${locale}/players/compare?${params.toString().replaceAll('&', '&amp;')}">`,
+        { status: 200, headers: { 'cache-control': 'private, no-store' } });
+    }
     return new Response(health ? JSON.stringify(validHealth) :
       chat ? JSON.stringify(rejected ? unsupported : validChat) :
       query ? JSON.stringify(validQuery(queryCalls++ === 0 ? 'computable_now_queued' : 'available')) :
@@ -303,6 +349,6 @@ test('combined smoke requires authenticated success and denial success', async (
     { status: rejected ? 422 : 200, headers: { 'cache-control': 'private, no-store',
       ...((health || chat || query) ? { 'content-type': 'application/json' } : {}) } });
   });
-  assert.equal(results.length, 76);
+  assert.equal(results.length, 80);
   assert.ok(results.every((result) => result.pass), JSON.stringify(results.filter((result) => !result.pass)));
 });
