@@ -1,0 +1,36 @@
+-- B14 season splits: derived aggregates only, one row per producer grain
+-- (snapshot, season, PL, venue, opponent). Raw fixtures and events never land
+-- here; points, goal difference and rates are derived at query time, so only
+-- integer counts are stored. Additive and repeatable: older Workers ignore it.
+-- No foreign key to snapshots, matching season_stats, so seed import order and
+-- snapshot replacement cannot fail on this table.
+CREATE TABLE IF NOT EXISTS season_splits (
+  snapshot_id   TEXT NOT NULL CHECK (length(snapshot_id) = 64 AND snapshot_id NOT GLOB '*[^0-9a-f]*'),
+  season        TEXT NOT NULL CHECK (
+    length(season) = 7 AND
+    season GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]' AND
+    CAST(substr(season, 6, 2) AS INTEGER) = (CAST(substr(season, 1, 4) AS INTEGER) + 1) % 100
+  ),
+  competition   TEXT NOT NULL CHECK (competition = 'PL'),
+  venue         TEXT NOT NULL CHECK (venue IN ('home', 'away')),
+  opponent_id   TEXT NOT NULL CHECK (
+    length(opponent_id) BETWEEN 6 AND 23 AND
+    opponent_id GLOB 'club:[1-9]*' AND
+    substr(opponent_id, 6) NOT GLOB '*[^0-9]*'
+  ),
+  played        INTEGER NOT NULL CHECK (typeof(played) = 'integer' AND played >= 0),
+  won           INTEGER NOT NULL CHECK (typeof(won) = 'integer' AND won >= 0),
+  drawn         INTEGER NOT NULL CHECK (typeof(drawn) = 'integer' AND drawn >= 0),
+  lost          INTEGER NOT NULL CHECK (typeof(lost) = 'integer' AND lost >= 0),
+  goals_for     INTEGER NOT NULL CHECK (typeof(goals_for) = 'integer' AND goals_for >= 0),
+  goals_against INTEGER NOT NULL CHECK (typeof(goals_against) = 'integer' AND goals_against >= 0),
+  -- Attribution renders from lineage: a bounded JSON array of source ids.
+  lineage_json  TEXT NOT NULL CHECK (
+    length(lineage_json) BETWEEN 4 AND 8192 AND
+    json_valid(lineage_json) AND
+    json_type(lineage_json) = 'array' AND
+    json_array_length(lineage_json) BETWEEN 1 AND 32
+  ),
+  CHECK (won + drawn + lost = played),
+  PRIMARY KEY (snapshot_id, season, competition, venue, opponent_id)
+) WITHOUT ROWID;
