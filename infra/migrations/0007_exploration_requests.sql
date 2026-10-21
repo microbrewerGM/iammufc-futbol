@@ -182,6 +182,14 @@ WHEN NEW.status != 'queued' OR NEW.attempt != 0 OR NEW.lease_id IS NOT NULL OR
 BEGIN
   SELECT RAISE(ABORT, 'exploration jobs must start queued and unclaimed');
 END;
+-- Keep job IDs and attempt counters as tombstones until the retention window
+-- closes; otherwise delete/reinsert can reset the state machine.
+CREATE TRIGGER IF NOT EXISTS exploration_jobs_retained_delete
+BEFORE DELETE ON exploration_jobs
+WHEN OLD.expires_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+BEGIN
+  SELECT RAISE(ABORT, 'exploration jobs retained until expiry');
+END;
 CREATE TRIGGER IF NOT EXISTS exploration_jobs_state_machine
 BEFORE UPDATE ON exploration_jobs
 WHEN NEW.job_id IS NOT OLD.job_id OR NEW.request_id IS NOT OLD.request_id OR
@@ -192,7 +200,11 @@ WHEN NEW.job_id IS NOT OLD.job_id OR NEW.request_id IS NOT OLD.request_id OR
    NEW.failure IS NULL AND NEW.publication_json IS NULL) OR
   (OLD.status = 'running' AND NEW.status = 'failed' AND NEW.attempt = OLD.attempt AND
    NEW.claimed_at = OLD.claimed_at AND NEW.lease_id IS NULL AND NEW.lease_expires_at IS NULL AND
-   NEW.failure IS NOT NULL AND NEW.publication_json IS NULL) OR
+   NEW.failure IS NOT NULL AND NEW.publication_json IS NULL AND
+   ((NEW.failure = 'attempts_exhausted' AND NEW.retry_after IS NULL) OR
+    (NEW.failure IN ('source_unavailable','validation_failed','publication_failed','lease_expired') AND
+     NEW.retry_after IS NOT NULL AND NEW.retry_after > NEW.claimed_at AND
+     NEW.retry_after <= strftime('%Y-%m-%dT%H:%M:%SZ', NEW.claimed_at, '+1 day')))) OR
   (OLD.status = 'running' AND NEW.status = 'published' AND NEW.attempt = OLD.attempt AND
    NEW.claimed_at = OLD.claimed_at AND NEW.lease_id IS NULL AND NEW.lease_expires_at IS NULL AND
    NEW.failure IS NULL AND NEW.publication_json IS NOT NULL) OR
@@ -306,3 +318,21 @@ CREATE INDEX IF NOT EXISTS idx_exploration_request_accounts_account_recent
   ON exploration_request_accounts(account_sub, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_exploration_request_accounts_expiry
   ON exploration_request_accounts(expires_at);
+CREATE TRIGGER IF NOT EXISTS exploration_request_accounts_owner_insert
+BEFORE INSERT ON exploration_request_accounts
+WHEN NOT EXISTS (
+  SELECT 1 FROM exploration_requests r
+  WHERE r.request_id = NEW.request_id AND r.account_sub = NEW.account_sub
+)
+BEGIN
+  SELECT RAISE(ABORT, 'account link owner must match request owner');
+END;
+CREATE TRIGGER IF NOT EXISTS exploration_request_accounts_owner_update
+BEFORE UPDATE ON exploration_request_accounts
+WHEN NOT EXISTS (
+  SELECT 1 FROM exploration_requests r
+  WHERE r.request_id = NEW.request_id AND r.account_sub = NEW.account_sub
+)
+BEGIN
+  SELECT RAISE(ABORT, 'account link owner must match request owner');
+END;

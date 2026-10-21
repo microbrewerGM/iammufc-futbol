@@ -32,6 +32,10 @@ const insertJob = `INSERT INTO exploration_jobs
   VALUES (?, ?, 'queued', 0, ?, ?, ?, ?)`;
 
 describe("exploration request storage migration", () => {
+  // Test index:
+  // - enforces closed storage...: request/result/group/publication privacy, retention, idempotency and deletion.
+  // - Every state pair is exercised below: accepts only queued→running, running→failed/published, failed→queued.
+  // - Every finite failure value is exercised below: requires its exact retry_after presence and timing envelope.
   it("enforces closed storage, job transitions, retention and idempotency, and safely replays", () => {
     const db = new DatabaseSync(":memory:");
     try {
@@ -47,6 +51,11 @@ describe("exploration request storage migration", () => {
         "available", "complete", 1, assigned, "[]", '["source:fpl"]', now, jobExpires);
       db.prepare(insertJob).run(jobId, requestId, now, now, now, jobExpires);
       expect(db.prepare("SELECT status FROM exploration_jobs WHERE job_id = ?").get(jobId)).toEqual({ status: "queued" });
+      reject(() => db.prepare("DELETE FROM exploration_jobs WHERE job_id = ?").run(jobId));
+      reject(() => {
+        db.prepare("DELETE FROM exploration_jobs WHERE job_id = ?").run(jobId);
+        db.prepare(insertJob).run(jobId, requestId, now, now, now, jobExpires);
+      });
 
       const rejectedRequests = [
         { ...validRequest, request_id: "bad" },
@@ -156,13 +165,23 @@ describe("exploration request storage migration", () => {
 
       // Every finite failure value is legal only from running -> failed; none
       // can be attached to a queued row, published row, or non-failure result.
+      // Each failure value is checked with missing, early, late, and legal retry_after values.
       for (const [index, failure] of failureValues.entries()) {
         const failureId = ("f" + index).padEnd(64, "f");
         const failureRequestId = ("c" + index).padEnd(64, "c");
         db.prepare(insertRequest).run({ ...validRequest, request_id: failureRequestId });
         db.prepare(insertJob).run(failureId, failureRequestId, now, now, now, jobExpires);
         db.prepare(`UPDATE exploration_jobs SET status='running', attempt=1, claimed_at=?, lease_id='worker:f', lease_expires_at='2026-10-20T00:15:00Z' WHERE job_id=?`).run(now, failureId);
-        db.prepare(`UPDATE exploration_jobs SET status='failed', lease_id=NULL, lease_expires_at=NULL, failure=?, retry_after=? WHERE job_id=?`).run(failure, failure === "attempts_exhausted" ? null : "2026-10-20T00:05:00Z", failureId);
+        const fail = db.prepare(`UPDATE exploration_jobs SET status='failed', lease_id=NULL, lease_expires_at=NULL, failure=?, retry_after=? WHERE job_id=?`);
+        const legalRetry = failure === "attempts_exhausted" ? null : "2026-10-20T00:05:00Z";
+        reject(() => fail.run(failure, failure === "attempts_exhausted" ? "2026-10-20T00:05:00Z" : null, failureId));
+        reject(() => fail.run(failure, failure === "attempts_exhausted" ? null : now, failureId));
+        if (failure === "attempts_exhausted") {
+          reject(() => fail.run(failure, "2026-10-21T00:00:00Z", failureId));
+        } else {
+          reject(() => fail.run(failure, "2026-10-21T00:00:00Z", failureId));
+        }
+        fail.run(failure, legalRetry, failureId);
         const queuedId = ("e" + index).padEnd(64, "e");
         const queuedRequestId = ("d" + index).padEnd(64, "d");
         db.prepare(insertRequest).run({ ...validRequest, request_id: queuedRequestId });
@@ -174,6 +193,11 @@ describe("exploration request storage migration", () => {
       db.prepare(`INSERT INTO exploration_request_accounts
         (request_id, account_sub, created_at, expires_at) VALUES (?, ?, ?, ?)`)
         .run("3".repeat(64), "human-subject-b", now, requestExpires);
+      reject(() => db.prepare(`INSERT INTO exploration_request_accounts
+        (request_id, account_sub, created_at, expires_at) VALUES (?, ?, ?, ?)`)
+        .run("3".repeat(64), "human-subject-a", now, requestExpires));
+      reject(() => db.prepare(`UPDATE exploration_request_accounts SET account_sub = 'human-subject-a' WHERE request_id = ?`)
+        .run("3".repeat(64)));
       db.prepare("DELETE FROM exploration_requests WHERE account_sub = ?").run("human-subject-a");
       expect(db.prepare("SELECT account_sub FROM exploration_requests").all()).toEqual([{ account_sub: "human-subject-b" }]);
       expect(db.prepare("SELECT count(*) AS n FROM exploration_results").get()).toEqual({ n: 0 });
