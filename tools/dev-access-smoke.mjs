@@ -10,6 +10,20 @@ const denialCases = [
   '/style.css', '/robots.txt', '/sitemap.xml', '/', '/q', '/data', '/player/access-probe',
   '/season/access-probe', '/season/2015-16', '/__access_probe_not_found__',
 ];
+const playerCompareParams = new URLSearchParams({
+  schema_version: '1', competition: 'PL', metric: 'goals', normalization: 'total',
+  min_minutes: '0', viz: 'table',
+});
+for (const personId of ['fpl:code:101', 'fpl:code:202']) {
+  playerCompareParams.append('person_ids', personId);
+}
+playerCompareParams.append('seasons', '2024-25');
+const playerCompareQuery = playerCompareParams.toString();
+const playerCompareCanonical = `/players/compare?${playerCompareQuery}`;
+const playerCompareCases = [
+  { path: `/en${playerCompareCanonical}`, marker: 'Compare players', locale: 'en' },
+  { path: `/es${playerCompareCanonical}`, marker: 'Comparar jugadores', locale: 'es' },
+];
 const denialPostCases = [
   { path: '/en/ask', contentType: 'application/x-www-form-urlencoded', body: 'q=Top+assists+2023-24' },
   { path: '/es/ask', contentType: 'application/x-www-form-urlencoded', body: 'q=Top+asistencias+2023-24' },
@@ -247,6 +261,25 @@ export async function smoke(env, request = fetch) {
       ...(check.unsupported ? { gate_status: pass ? 'unsupported_semantics' : 'invalid' } : {}) });
     if (check.query) results.at(-1).query_state = pass ? queryResult.state : 'invalid';
   }
+  for (const check of playerCompareCases) {
+    const response = await request(origin + check.path, {
+      method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(15000),
+      headers: { ...headers, 'Sec-Fetch-Site': 'same-origin' },
+    });
+    const body = await response.text();
+    const canonicalParams = new URLSearchParams({ schema_version: '1', competition: 'PL' });
+    canonicalParams.append('person_ids', 'fpl:code:101');
+    canonicalParams.append('person_ids', 'fpl:code:202');
+    canonicalParams.append('seasons', '2024-25');
+    canonicalParams.set('metric', 'goals');
+    canonicalParams.set('normalization', 'total');
+    canonicalParams.set('viz', 'table');
+    const canonical = `<link rel="canonical" href="/${check.locale}/players/compare?${canonicalParams.toString().replaceAll('&', '&amp;')}">`;
+    const pass = response.status === 200 &&
+      response.headers.get('cache-control')?.includes('no-store') &&
+      body.includes(check.marker) && body.includes(canonical);
+    results.push({ path: check.path, status: response.status, pass });
+  }
   return results;
 }
 
@@ -296,6 +329,15 @@ export async function denialSmoke(request = fetch) {
     });
     results.push({ mode: 'forged-identity', method: 'GET', path, status: response.status,
       pass: denied(response) });
+  }
+  for (const locale of ['en', 'es']) {
+    const path = `/${locale}${playerCompareCanonical}`;
+    const response = await request(origin + path, {
+      method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(15000),
+      headers: { Origin: 'https://foreign.invalid', 'Sec-Fetch-Site': 'cross-site' },
+    });
+    results.push({ mode: 'cross-site', method: 'GET', path, status: response.status,
+      pass: response.status === 403 });
   }
   return results;
 }
