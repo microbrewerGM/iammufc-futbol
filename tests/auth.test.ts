@@ -123,6 +123,24 @@ describe("Cloudflare Access boundary", () => {
     expect((await request("/en", { headers: { "Sec-Fetch-Site": "cross-site" } })).status).toBe(200);
     expect((await request("/en/q", { headers: { Origin: "https://foreign.invalid", "Sec-Fetch-Site": "same-origin" } })).status).toBe(403);
   });
+
+  it("protects only the localized player comparison GET routes with the same origin rules", async () => {
+    const { request } = setup();
+    for (const path of ["/en/players/compare", "/es/players/compare", "/en/players/compare/", "/es/players/compare/"]) {
+      for (const site of ["cross-site", "same-site"]) {
+        expect((await request(path, { headers: { "Sec-Fetch-Site": site } })).status).toBe(403);
+      }
+      expect((await request(path, { headers: { Origin: "https://foreign.invalid" } })).status).toBe(403);
+      expect((await request(path, { headers: { "Sec-Fetch-Site": "same-origin" } })).status).toBe(200);
+      expect((await request(path, { headers: { "Sec-Fetch-Site": "none" } })).status).toBe(403);
+      expect((await request(path, { headers: { Origin: "https://site.invalid" } })).status).toBe(200);
+      expect((await request(path, { headers: { "Sec-Fetch-Site": "same-origin", Origin: "https://foreign.invalid" } })).status).toBe(403);
+    }
+    for (const path of ["/compare", "/en/players/compare/extra", "/en/players/Compare", "/en/players%2Fcompare", "/en/players/%63ompare", "/en/players/%2563ompare"]) {
+      const decodedMatch = path === "/en/players/%63ompare";
+      expect((await request(path, { headers: { "Sec-Fetch-Site": "cross-site" } })).status, path).toBe(decodedMatch ? 403 : 200);
+    }
+  });
 });
 
 describe("Access JWT verification uses signatures and required claims", () => {
