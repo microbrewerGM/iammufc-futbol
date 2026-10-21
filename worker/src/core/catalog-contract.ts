@@ -210,3 +210,8 @@ export function decodeCompiledCatalog(value: unknown): CompiledCatalog {
 
   return { version: 1, metrics, coverage, output_coverage: outputCoverage };
 }
+
+/** Return a capability only from an already validated public artifact. */
+export function seasonSplitsCapability(catalog: CompiledCatalog): "clear" | "absent" | "partial" | "unknown" {
+  return catalog.output_coverage?.find((entry) => entry.output_id === "season_splits")?.state ?? "unknown";
+}

@@ -10,6 +10,7 @@ import type { QueryIntent } from "./intent";
 import { parseIntent, validateExecutionSupport } from "./validate-intent";
 import type { PlayerRangeCatalog, PlayerRangeRequest, PlayerRangeRow } from "./player-range";
 import type { CoverageCell } from "./feasibility";
+import type { SeasonSplitCatalog, SeasonSplitRow } from "./season-splits";
 
 export interface Env {
   DB: D1Database;
@@ -342,6 +343,43 @@ export async function currentSnapshot(env: Env): Promise<string | null> {
     "SELECT snapshot_id FROM snapshots ORDER BY created_at DESC LIMIT 1",
   ).first<{ snapshot_id: string }>();
   return row?.snapshot_id ?? null;
+}
+
+/** Read only the bounded aggregate projection for one current snapshot. The
+ * catalog capability is passed in by the caller and must already be validated. */
+export async function seasonSplitFacts(
+  env: Env,
+  snapshotId: string,
+  seasons: readonly string[],
+  publicationCoverage: readonly { season: string; coverage: "complete" | "partial" | "missing" }[],
+): Promise<{ catalog: SeasonSplitCatalog; rows: SeasonSplitRow[] }> {
+  if (!/^[0-9a-f]{64}$/.test(snapshotId) || seasons.length < 1 || seasons.length > 16 ||
+      seasons.some((value) => !/^\d{4}-\d{2}$/.test(value))) throw new Error("invalid season split read");
+  const publication = await env.DB.prepare(
+    "SELECT snapshot_id FROM publication_runs ORDER BY run_id DESC LIMIT 1",
+  ).first<{ snapshot_id: unknown }>();
+  if (publication?.snapshot_id !== snapshotId) throw new Error("stale season split snapshot");
+  const marks = seasons.map(() => "?").join(",");
+  const { results } = await env.DB.prepare(
+    `SELECT snapshot_id, season, competition, venue, opponent_id, played, won, drawn, lost,
+            goals_for, goals_against, lineage_json
+       FROM season_splits WHERE snapshot_id = ? AND season IN (${marks})
+       ORDER BY season, venue, opponent_id LIMIT 2048`,
+  ).bind(snapshotId, ...seasons).all<{
+    snapshot_id: string; season: string; competition: "PL"; venue: "home" | "away";
+    opponent_id: string; played: number; won: number; drawn: number; lost: number;
+    goals_for: number; goals_against: number; lineage_json: string;
+  }>();
+  if ((results ?? []).length >= 2048) throw new Error("season split read bound reached");
+  const rows = (results ?? []).map((row) => ({
+    snapshot_id: row.snapshot_id, season: row.season, competition: row.competition,
+    venue: row.venue, opponent_id: row.opponent_id, played: row.played, won: row.won,
+    drawn: row.drawn, lost: row.lost, goals_for: row.goals_for, goals_against: row.goals_against,
+    lineage: JSON.parse(row.lineage_json) as string[],
+  }));
+  const bySeason = new Map(publicationCoverage.map((entry) => [entry.season, entry.coverage]));
+  if (seasons.some((season) => !bySeason.has(season))) throw new Error("missing season coverage declaration");
+  return { catalog: { snapshot_id: snapshotId, seasons: seasons.map((season) => ({ season, coverage: bySeason.get(season)! })) }, rows };
 }
 
 /** Bounded, stable-ID-only facts for the selected-player comparison. */

@@ -37,6 +37,7 @@ import {
   saveQuestionHistory,
   seasonHistoryRows,
   seasonRecordRow,
+  seasonSplitFacts,
   seasonSquadRows,
   writeQueryCache,
   type CacheOutcome,
@@ -58,6 +59,8 @@ import {
 import { executeComparison, parseComparison, type ComparisonRequest } from "./core/comparison";
 import { buildSeasonComparison, eligibleLeagueSeasons } from "./core/season-comparison";
 import { calculatePlayerRange, parsePlayerRangeRequest } from "./core/player-range";
+import { parseSeasonSplitRequest, querySeasonSplits } from "./core/season-splits";
+import { seasonSplitsBody, seasonSplitSelection } from "./views/season-splits";
 import type { PlayerRangeRequest } from "./core/player-range";
 import { playerRangeBody, playerRangeSelection } from "./views/player-range";
 import { withSecurityHeaders } from "./security/headers";
@@ -353,6 +356,77 @@ function registerLocaleRoutes(code: LocaleCode) {
         unprefixedPath: "/data",
       }),
     );
+    res.headers.set("Cache-Control", CACHE_CONTROL);
+    return res;
+  });
+
+  app.get(`${p}/seasons/explore`, async (c) => {
+    const url = new URL(c.req.url);
+    const rawQuery = url.search;
+    if (new TextEncoder().encode(rawQuery).byteLength > 2048) return html("Invalid season selection.", 400);
+    const params = url.searchParams;
+    let seasonCount = 0;
+    for (const [key] of params) {
+      if (key === "seasons" && ++seasonCount > 16) return html("Invalid season selection.", 400);
+    }
+    const allowed = new Set(["schema_version", "competition", "seasons", "group_by", "venue", "opponent_id"]);
+    if ([...params.keys()].some((key) => !allowed.has(key)) ||
+        [...params.keys()].some((key) => key !== "seasons" && params.getAll(key).length !== 1)) {
+      return html(locale.code === "es" ? "Selección de temporada no válida." : "Invalid season selection.", 400);
+    }
+    const raw = { schema_version: params.has("schema_version") ? Number(params.get("schema_version")) : 1,
+      competition: params.get("competition") ?? "PL", seasons: params.getAll("seasons"),
+      group_by: params.get("group_by") ?? "venue", venue: params.get("venue") || null,
+      opponent_id: params.get("opponent_id") || null };
+    const availableSeasons = [...new Set(catalog.coverage.filter((cell) => cell.competition === "PL").map((cell) => cell.season))].sort();
+    let request;
+    let result;
+    let error: string | undefined;
+    let status = 200;
+    let snapshot: string | null = null;
+    let opponents: { opponent_id: string; label: string }[] = [];
+    const credits = Object.fromEntries(catalog.coverage.map((cell) => [`${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`,
+      locale.code === "es" ? cell.attribution_text_es ?? cell.attribution_text ?? "" : cell.attribution_text ?? ""]));
+    try {
+      request = parseSeasonSplitRequest(raw, availableSeasons);
+      if (catalog.outputCapability("season_splits") !== "clear") {
+        error = locale.code === "es" ? "La capacidad de desgloses por temporada no está publicada." : "Season splits capability is not published.";
+      } else if (!(await enforceBudget(c.env, { failClosed: true }))) {
+        error = locale.code === "es" ? "La exploración no está disponible." : "Season exploration is unavailable.";
+        status = 503;
+      } else {
+        snapshot = await currentSnapshot(c.env);
+        if (!snapshot) throw new Error("snapshot unavailable");
+        const outputState = catalog.outputCapability("season_splits");
+        const coverageState = outputState === "clear" ? "complete" : outputState === "partial" ? "partial" : "missing";
+        const publicationCoverage = request.seasons.map((season) => ({ season, coverage: coverageState as "complete" | "partial" | "missing" }));
+        const facts = await seasonSplitFacts(c.env, snapshot, request.seasons, publicationCoverage);
+        const query = querySeasonSplits(request, facts.catalog, facts.rows);
+        result = query;
+        opponents = [...new Set(facts.rows.map((row) => row.opponent_id))].sort().map((opponent_id) => ({ opponent_id, label: opponent_id }));
+        if (await currentSnapshot(c.env) !== snapshot) { result = undefined; throw new Error("snapshot changed"); }
+      }
+    } catch {
+      if (request) {
+        error = locale.code === "es" ? "Los datos de desgloses no están disponibles para esta selección." : "Season split data is unavailable for this selection.";
+        status = 503;
+      } else {
+        error = locale.code === "es" ? "Selección de temporada no válida." : "Invalid season selection.";
+        status = 400;
+      }
+    }
+    const selection = request ? seasonSplitSelection(request) : { seasons: raw.seasons, group_by: String(raw.group_by), venue: String(raw.venue ?? ""), opponent_id: String(raw.opponent_id ?? "") };
+    const canonical = request ? new URLSearchParams() : null;
+    if (canonical && request) {
+      canonical.set("schema_version", "1"); canonical.set("competition", "PL");
+      request.seasons.forEach((season) => canonical.append("seasons", season));
+      canonical.set("group_by", request.group_by);
+      if (request.venue) canonical.set("venue", request.venue);
+      if (request.opponent_id) canonical.set("opponent_id", request.opponent_id);
+    }
+    const body = seasonSplitsBody({ selection, seasons: availableSeasons, opponents, result, error, credits }, locale);
+    const canonicalPath = canonical ? `/seasons/explore?${canonical.toString()}` : "/seasons/explore";
+    const res = html(page(body, { title: locale.code === "es" ? "Explorar temporadas" : "Explore seasons", locale, unprefixedPath: canonicalPath, snapshotId: snapshot }), status);
     res.headers.set("Cache-Control", CACHE_CONTROL);
     return res;
   });
