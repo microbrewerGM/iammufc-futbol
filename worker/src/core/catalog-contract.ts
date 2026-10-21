@@ -11,6 +11,9 @@ const COST_CLASSES = new Set(["cheap", "expensive"]);
 const SOURCE_ID = /^[a-z][a-z0-9_]*$/;
 
 const ROOT_KEYS = ["version", "metrics", "coverage"];
+const OUTPUT_COVERAGE_KEYS = ["output_id", "state"];
+const OUTPUT_IDS = new Set(["shot_map", "season_splits"]);
+const OUTPUT_STATES = new Set(["clear", "absent", "partial", "unknown"]);
 const METRIC_KEYS = [
   "metric_id",
   "label_en",
@@ -128,12 +131,34 @@ function decodeCoverage(value: unknown, index: number): CoverageCell {
   };
 }
 
+function decodeOutputCoverage(value: unknown, index: number) {
+  const path = `$.output_coverage[${index}]`;
+  const item = record(value, path);
+  exactKeys(item, OUTPUT_COVERAGE_KEYS, path);
+  return {
+    output_id: enumString<"shot_map" | "season_splits">(
+      item.output_id,
+      OUTPUT_IDS,
+      `${path}.output_id`,
+    ),
+    state: enumString<"clear" | "absent" | "partial" | "unknown">(
+      item.state,
+      OUTPUT_STATES,
+      `${path}.state`,
+    ),
+  };
+}
+
 export function decodeCompiledCatalog(value: unknown): CompiledCatalog {
   const root = record(value, "$");
-  exactKeys(root, ROOT_KEYS, "$");
+  const hasOutputCoverage = Object.hasOwn(root, "output_coverage");
+  exactKeys(root, hasOutputCoverage ? [...ROOT_KEYS, "output_coverage"] : ROOT_KEYS, "$");
   if (root.version !== 1) invalid("$.version", "must be integer 1");
   if (!Array.isArray(root.metrics)) invalid("$.metrics", "must be an array");
   if (!Array.isArray(root.coverage)) invalid("$.coverage", "must be an array");
+  if (hasOutputCoverage && !Array.isArray(root.output_coverage)) {
+    invalid("$.output_coverage", "must be an array");
+  }
 
   const metrics = root.metrics.map(decodeMetric);
   const metricsById = new Map<string, MetricDef>();
@@ -172,5 +197,16 @@ export function decodeCompiledCatalog(value: unknown): CompiledCatalog {
     sourceDisplay.set(cell.source_id, display);
   }
 
-  return { version: 1, metrics, coverage };
+  const outputCoverage = hasOutputCoverage
+    ? (root.output_coverage as unknown[]).map(decodeOutputCoverage)
+    : [];
+  const seenOutputs = new Set<string>();
+  for (const output of outputCoverage) {
+    if (seenOutputs.has(output.output_id)) {
+      invalid("$.output_coverage", `duplicate output coverage entry: ${output.output_id}`);
+    }
+    seenOutputs.add(output.output_id);
+  }
+
+  return { version: 1, metrics, coverage, output_coverage: outputCoverage };
 }

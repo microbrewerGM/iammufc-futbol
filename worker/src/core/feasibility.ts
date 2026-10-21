@@ -66,6 +66,12 @@ export interface CompiledCatalog {
   version: number;
   metrics: MetricDef[];
   coverage: CoverageCell[];
+  output_coverage?: OutputCoverage[];
+}
+
+export interface OutputCoverage {
+  output_id: "shot_map" | "season_splits";
+  state: "clear" | "absent" | "partial" | "unknown";
 }
 
 export interface FeasibilityResult {
