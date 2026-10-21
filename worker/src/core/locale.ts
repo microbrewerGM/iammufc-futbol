@@ -42,6 +42,7 @@ export interface Locale {
     askButton: string;
     examplesHeading: string;
     historyLink: string;
+    playerRangeLink: string;
     freshnessHeading: string;
     coverageThrough: (season: string) => string;
     lastSuccessfulLoad: string;
@@ -140,6 +141,7 @@ const EN: Locale = {
     askButton: "Ask",
     examplesHeading: "Try asking",
     historyLink: "Past questions",
+    playerRangeLink: "Compare players across seasons",
     freshnessHeading: "Data freshness",
     coverageThrough: (s) => `Coverage through ${s}.`,
     lastSuccessfulLoad: "Last successful load:",
@@ -242,6 +244,7 @@ const ES: Locale = {
     askButton: "Preguntar",
     examplesHeading: "Prueba preguntando",
     historyLink: "Preguntas anteriores",
+    playerRangeLink: "Comparar jugadores entre temporadas",
     freshnessHeading: "Actualización de los datos",
     coverageThrough: (s) => `Cobertura hasta ${s}.`,
     lastSuccessfulLoad: "Última carga correcta:",

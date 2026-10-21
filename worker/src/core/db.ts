@@ -8,6 +8,8 @@
 
 import type { QueryIntent } from "./intent";
 import { parseIntent, validateExecutionSupport } from "./validate-intent";
+import type { PlayerRangeCatalog, PlayerRangeRequest, PlayerRangeRow } from "./player-range";
+import type { CoverageCell } from "./feasibility";
 
 export interface Env {
   DB: D1Database;
@@ -301,11 +303,10 @@ function utcDay(): string {
  * real gate; KV only exists to skip the D1 round-trip once the day is
  * obviously over budget.
  *
- * Fails open on any storage error. A broken breaker must never become a
- * site-wide outage over a KV/D1 hiccup -- the free-tier ceilings above
- * already leave wide margin before a real cost overrun.
+ * Returns false if D1 cannot confirm the authoritative count. KV remains an
+ * advisory pre-filter; callers can choose route-specific failure handling.
  */
-export async function enforceBudget(env: Env): Promise<boolean> {
+export async function enforceBudget(env: Env, options: { failClosed?: boolean } = {}): Promise<boolean> {
   const day = utcDay();
 
   try {
@@ -332,7 +333,7 @@ export async function enforceBudget(env: Env): Promise<boolean> {
       .first<{ count: number }>();
     return (row?.count ?? 0) <= BUDGET_HARD_LIMIT;
   } catch {
-    return true; // D1 unavailable: a storage outage should not also take down every query on the site.
+    return options.failClosed === true ? false : true;
   }
 }
 
@@ -341,6 +342,75 @@ export async function currentSnapshot(env: Env): Promise<string | null> {
     "SELECT snapshot_id FROM snapshots ORDER BY created_at DESC LIMIT 1",
   ).first<{ snapshot_id: string }>();
   return row?.snapshot_id ?? null;
+}
+
+/** Bounded, stable-ID-only facts for the selected-player comparison. */
+export async function playerRangeFacts(
+  env: Env, request: PlayerRangeRequest, snapshotId: string, coverage: readonly CoverageCell[],
+): Promise<{ catalog: PlayerRangeCatalog; rows: PlayerRangeRow[]; labels: { person_id: string; label: string }[] }> {
+  const seasons = request.seasons;
+  const people = request.person_ids;
+  const placeholders = people.map(() => "?").join(",");
+  const { results } = await env.DB.prepare(
+    `SELECT i.person_id, p.web_name AS label
+       FROM player_identities i JOIN players p ON p.player_id = i.player_id
+      WHERE i.person_id IN (${placeholders})
+      ORDER BY i.person_id, i.season DESC`,
+  ).bind(...people).all<{ person_id: string; label: string }>();
+  const labels = new Map<string, string>();
+  for (const row of results ?? []) if (!labels.has(row.person_id)) labels.set(row.person_id, row.label);
+  const catalog: PlayerRangeCatalog = { snapshot_id: snapshotId, person_ids: [...labels.keys()].sort(), seasons: [...seasons].sort() };
+  const cells = request.seasons.flatMap((season) => [request.metric, "minutes"].map((metric) => {
+    const cell = coverage.find((item) => item.metric === metric && item.entity_type === "player" &&
+      item.granularity === "box_score" && item.competition === "PL" && item.season === season);
+    return { season, metric, cell };
+  }));
+  const supported = cells.filter(({ cell }) => cell?.source_id === "fpl" && cell.redistributable && cell.cost_class === "cheap");
+  const supportedSeasons = new Set(request.seasons.filter((season) => [request.metric, "minutes"].every((metric) => supported.some((cell) => cell.season === season && cell.metric === metric))));
+  const seasonsForRead = [...supportedSeasons];
+  const rows: PlayerRangeRow[] = [];
+  if (labels.size && seasonsForRead.length) {
+    const { results: facts } = await env.DB.prepare(
+      `SELECT i.person_id, s.season, s.competition, s.goals, s.assists, s.minutes, s.snapshot_id
+         FROM player_season_stats s JOIN player_identities i ON i.player_id = s.player_id
+        WHERE i.person_id IN (${placeholders}) AND s.season IN (${seasonsForRead.map(() => "?").join(",")})
+          AND s.competition = 'PL' AND s.snapshot_id = ?`,
+    ).bind(...people, ...seasonsForRead, snapshotId).all<{ person_id: string; season: string; competition: "PL"; goals: number | null; assists: number | null; minutes: number | null; snapshot_id: string }>();
+    const lineageFor = (season: string, metric: string) => {
+      const cell = coverage.find((item) => item.metric === metric && item.entity_type === "player" && item.granularity === "box_score" && item.competition === "PL" && item.season === season)!;
+      return `${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`;
+    };
+    for (const row of facts ?? []) {
+      if (!supportedSeasons.has(row.season)) continue;
+      const metric = request.metric;
+      rows.push({ person_id: row.person_id, season: row.season, competition: "PL",
+        metric, definition: metric === "goals" ? "goals" : "fpl_assists", total: row[metric],
+        minutes: row.minutes, snapshot_id: row.snapshot_id, lineage: [...new Set([lineageFor(row.season, metric), lineageFor(row.season, "minutes")])] });
+    }
+  }
+  return { catalog, rows, labels: people.filter((id) => labels.has(id)).map((id) => ({ person_id: id, label: labels.get(id)! })) };
+}
+
+export async function playerRangeIdentityCatalog(env: Env, people: readonly string[], seasons: readonly string[], snapshotId: string): Promise<PlayerRangeCatalog> {
+  void seasons;
+  const { results } = await env.DB.prepare(
+    `SELECT DISTINCT i.person_id FROM player_identities i JOIN players p ON p.player_id = i.player_id
+      WHERE i.person_id IN (${people.map(() => "?").join(",")})`,
+  ).bind(...people).all<{ person_id: string }>();
+  return { snapshot_id: snapshotId, person_ids: (results ?? []).map((row) => row.person_id), seasons: [...seasons] };
+}
+
+export async function savePlayerRangeHistory(env: Env, subject: string, replayPath: string, locale: "en" | "es"): Promise<void> {
+  if (!validHumanSubject(subject) || !replayPath.startsWith(`/${locale}/players/compare?`) || replayPath.length > 2000) throw new Error("invalid_player_range_history");
+  const inserted = env.DB.prepare(
+    `INSERT INTO account_question_history (account_sub, question_text, visualization_path, locale, created_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).bind(subject, locale === "es" ? "Comparación de jugadores" : "Player comparison", replayPath, locale, new Date().toISOString());
+  const trimmed = env.DB.prepare(
+    `DELETE FROM account_question_history WHERE account_sub = ? AND id NOT IN (
+      SELECT id FROM account_question_history WHERE account_sub = ? ORDER BY id DESC LIMIT ${QUESTION_HISTORY_LIMIT})`,
+  ).bind(subject, subject);
+  await env.DB.batch([inserted, trimmed]);
 }
 
 export type SourceObservationStatus = "observed" | "unavailable";

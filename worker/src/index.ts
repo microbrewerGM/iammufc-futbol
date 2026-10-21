@@ -23,8 +23,11 @@ import {
   allPlayerNames,
   currentPublication,
   currentSnapshot,
-  clearQuestionHistory,
+  playerRangeFacts,
+  playerRangeIdentityCatalog,
+  savePlayerRangeHistory,
   enforceBudget,
+  clearQuestionHistory,
   listQuestionHistory,
   logQueryAggregate,
   playerCareerRows,
@@ -54,6 +57,9 @@ import {
 } from "./core/parser";
 import { executeComparison, parseComparison, type ComparisonRequest } from "./core/comparison";
 import { buildSeasonComparison, eligibleLeagueSeasons } from "./core/season-comparison";
+import { calculatePlayerRange, parsePlayerRangeRequest } from "./core/player-range";
+import type { PlayerRangeRequest } from "./core/player-range";
+import { playerRangeBody, playerRangeSelection } from "./views/player-range";
 import { withSecurityHeaders } from "./security/headers";
 import { accessGate, accessIdentity, type AccessEnv, type AccessIdentity } from "./security/auth";
 import { gateQuestion, type GateRejected } from "./security/askguard";
@@ -426,6 +432,107 @@ function registerLocaleRoutes(code: LocaleCode) {
       availableMetrics,
       locale,
     );
+  });
+
+  app.get(`${p}/players/compare`, async (c) => {
+    const query = new URL(c.req.url).search;
+    const MAX_COMPARE_QUERY_BYTES = 2048;
+    if (new TextEncoder().encode(query).byteLength > MAX_COMPARE_QUERY_BYTES) {
+      return html(locale.code === "es" ? "Selección de comparación no válida." : "Invalid comparison selection.", 400);
+    }
+    const params = new URLSearchParams(query);
+    let personParamCount = 0;
+    let seasonParamCount = 0;
+    for (const [key] of params) {
+      if (key === "person_ids" && ++personParamCount > 5 || key === "seasons" && ++seasonParamCount > 8) {
+        return html(locale.code === "es" ? "Selección de comparación no válida." : "Invalid comparison selection.", 400);
+      }
+    }
+    const allowed = new Set(["person_ids", "seasons", "schema_version", "competition", "metric", "normalization", "min_minutes", "viz"]);
+    if ([...params.keys()].some((key) => !allowed.has(key)) ||
+        [...new Set(params.keys())].some((key) => !["person_ids", "seasons"].includes(key) && params.getAll(key).length !== 1)) {
+      return html(locale.code === "es" ? "Selección de comparación no válida." : "Invalid comparison selection.", 400);
+    }
+    const raw = {
+      schema_version: params.has("schema_version") ? Number(params.get("schema_version")) : 1,
+      competition: params.get("competition") ?? "PL",
+      person_ids: params.getAll("person_ids"), seasons: params.getAll("seasons"),
+      metric: params.get("metric") ?? "goals", normalization: params.get("normalization") ?? "total",
+      ...(params.has("min_minutes") ? { min_minutes: /^\d+$/.test(params.get("min_minutes")!) ? Number(params.get("min_minutes")) : NaN } : {}),
+      viz: params.get("viz") ?? "table",
+    };
+    let candidate: PlayerRangeRequest;
+    try {
+      candidate = parsePlayerRangeRequest(raw, { snapshot_id: "preflight", person_ids: raw.person_ids, seasons: raw.seasons });
+    } catch {
+      return html(locale.code === "es" ? "Selección de comparación no válida." : "Invalid comparison selection.", 400);
+    }
+    const covered = (metric: string, season: string) => {
+      const cell = catalog.coverage.find((candidate) => candidate.metric === metric && candidate.entity_type === "player" && candidate.granularity === "box_score" && candidate.competition === "PL" && candidate.season === season);
+      return cell?.source_id === "fpl" && cell.redistributable && cell.cost_class === "cheap";
+    };
+    const coverageSeasons = [...new Set(catalog.coverage.filter((cell) => cell.entity_type === "player" && cell.granularity === "box_score" && cell.competition === "PL" && ["goals", "assists"].some((metric) => covered(metric, cell.season) && covered("minutes", cell.season))).map((cell) => cell.season))].sort();
+    const emptySelection = { person_ids: raw.person_ids, seasons: raw.seasons, metric: String(raw.metric), normalization: String(raw.normalization), min_minutes: params.get("min_minutes") ?? (raw.normalization === "per90" ? "450" : "0"), viz: String(raw.viz) };
+    let request: PlayerRangeRequest | undefined;
+    let labels: { person_id: string; label: string }[] = [];
+    let result;
+    let error: string | undefined;
+    let status = 200;
+    let snapshot: string | null = null;
+    let validationStage: "input" | "metadata" | "coverage" | "compute" = "input";
+    try {
+      if (!(await enforceBudget(c.env, { failClosed: true }))) {
+        error = locale.code === "es" ? "La comparación no está disponible." : "Comparison unavailable.";
+        status = 503;
+      } else {
+        snapshot = await currentSnapshot(c.env);
+        if (!snapshot) {
+          error = locale.code === "es" ? "La comparación no está disponible." : "Comparison unavailable.";
+          status = 503;
+        } else {
+        validationStage = "metadata";
+        const identityCatalog = await playerRangeIdentityCatalog(c.env, candidate.person_ids, candidate.seasons, snapshot);
+        if (identityCatalog.person_ids.length !== candidate.person_ids.length) {
+          error = locale.code === "es" ? "Uno o más identificadores de jugador no están disponibles." : "One or more player IDs are unknown.";
+          status = 400;
+        } else {
+        const validatedRequest = parsePlayerRangeRequest(raw, identityCatalog);
+        request = validatedRequest;
+        validationStage = "coverage";
+        const coverageOk = validatedRequest.seasons.every((season) => [validatedRequest.metric, "minutes"].every((metric) => {
+          const cell = catalog.coverage.find((candidate) => candidate.metric === metric && candidate.entity_type === "player" && candidate.granularity === "box_score" && candidate.competition === "PL" && candidate.season === season);
+          return cell?.source_id === "fpl" && cell.redistributable && cell.cost_class === "cheap" && ["available", "computable_now_queued"].includes(catalog.checkFeasibility({ metric, entity_type: "player", entity_id: "all", season, competition: "PL", dimensions: [], filters: {}, viz: "table", limit: 50 }, locale.code).state);
+        }));
+        if (!coverageOk) throw new Error("selection");
+        validationStage = "compute";
+        {
+          const facts = await playerRangeFacts(c.env, validatedRequest, snapshot, catalog.coverage);
+          labels = facts.labels;
+          request = validatedRequest;
+          result = calculatePlayerRange(request, facts.catalog, facts.rows);
+          if (await currentSnapshot(c.env) !== snapshot) { error = locale.code === "es" ? "La comparación no está disponible." : "Comparison unavailable."; result = undefined; status = 503; }
+        }
+        }
+      }
+      }
+    } catch (caught) {
+      error = locale.code === "es" ? "Selección de comparación no válida." : "Invalid comparison selection.";
+      status = caught instanceof Error && ((validationStage === "input" && /^Invalid player range:/.test(caught.message)) ||
+        (validationStage === "coverage" && caught.message === "selection")) ? 400 : 503;
+    }
+    const selection = request ? playerRangeSelection(request) : emptySelection;
+    const canonical = request ? new URLSearchParams() : null;
+    if (canonical && request) {
+      canonical.set("schema_version", "1"); canonical.set("competition", "PL");
+      request.person_ids.forEach((id) => canonical.append("person_ids", id));
+      request.seasons.forEach((season) => canonical.append("seasons", season));
+      canonical.set("metric", request.metric); canonical.set("normalization", request.normalization);
+      canonical.set("min_minutes", String(request.min_minutes)); canonical.set("viz", request.viz);
+    }
+    if (result && accessIdentity(c)?.sub && canonical) await savePlayerRangeHistory(c.env, accessIdentity(c)!.sub, `${p}/players/compare?${canonical.toString()}`, locale.code).catch(() => {});
+    const body = playerRangeBody({ selection, people: labels, seasons: coverageSeasons, result, error, credits: Object.fromEntries(catalog.coverage.map((cell) => [`${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`, locale.code === "es" ? cell.attribution_text_es ?? cell.attribution_text ?? "" : cell.attribution_text ?? ""])) }, locale);
+    const canonicalPath = canonical ? `/players/compare?${canonical.toString()}` : "/players/compare";
+    return html(page(body, { title: locale.strings.playerRangeLink, locale, unprefixedPath: canonicalPath, snapshotId: snapshot }), status);
   });
 
   app.get(p, async (c) => {
