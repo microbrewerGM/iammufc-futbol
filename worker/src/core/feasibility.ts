@@ -73,7 +73,7 @@ export interface CompiledCatalog {
 export type OutputCoverageState = "clear" | "absent" | "partial" | "unknown";
 
 export interface OutputCoverage {
-  output_id: "shot_map" | "season_splits";
+  output_id: "shot_map" | "season_splits" | "arrival_manager_groups";
   state: "clear" | "absent" | "partial" | "unknown";
 }
 
@@ -220,7 +220,7 @@ export class Catalog {
   }
 
   /** A capability is usable only when the validated artifact explicitly says clear. */
-  outputCapability(outputId: "shot_map" | "season_splits"): OutputCoverageState {
+  outputCapability(outputId: OutputCoverage["output_id"]): OutputCoverageState {
     return this.compiled.output_coverage?.find((entry) => entry.output_id === outputId)?.state ?? "unknown";
   }
 
