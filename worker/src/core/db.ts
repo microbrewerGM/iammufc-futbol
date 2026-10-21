@@ -10,6 +10,7 @@ import type { QueryIntent } from "./intent";
 import { parseIntent, validateExecutionSupport } from "./validate-intent";
 import type { PlayerRangeCatalog, PlayerRangeRequest, PlayerRangeRow } from "./player-range";
 import type { CoverageCell } from "./feasibility";
+import type { SeasonSplitCatalog, SeasonSplitRow } from "./season-splits";
 
 export interface Env {
   DB: D1Database;
@@ -342,6 +343,104 @@ export async function currentSnapshot(env: Env): Promise<string | null> {
     "SELECT snapshot_id FROM snapshots ORDER BY created_at DESC LIMIT 1",
   ).first<{ snapshot_id: string }>();
   return row?.snapshot_id ?? null;
+}
+
+/** Read only the bounded aggregate projection for one current snapshot. The
+ * catalog capability is passed in by the caller and must already be validated. */
+export async function seasonSplitFacts(
+  env: Env,
+  snapshotId: string,
+  seasons: readonly string[],
+  dimensions: { venue: "home" | "away" | null; opponent_id: string | null } = { venue: null, opponent_id: null },
+): Promise<{ catalog: SeasonSplitCatalog; rows: SeasonSplitRow[] }> {
+  if (!/^[0-9a-f]{64}$/.test(snapshotId) || seasons.length < 1 || seasons.length > 16 ||
+      seasons.some((value) => !/^\d{4}-\d{2}$/.test(value)) ||
+      (dimensions.venue !== null && dimensions.venue !== "home" && dimensions.venue !== "away") ||
+      (dimensions.opponent_id !== null && !/^club:[1-9][0-9]{0,17}$/.test(dimensions.opponent_id))) {
+    throw new Error("invalid season split read");
+  }
+  const publication = await env.DB.prepare(
+    `SELECT r.snapshot_id FROM publication_runs r
+      JOIN snapshots s ON s.snapshot_id = r.snapshot_id
+     ORDER BY r.run_id DESC LIMIT 1`,
+  ).first<{ snapshot_id: unknown }>();
+  if (publication?.snapshot_id !== snapshotId) throw new Error("stale season split publication");
+  const marks = seasons.map(() => "?").join(",");
+  const venueClause = dimensions.venue === null ? "" : " AND venue = ?";
+  const opponentClause = dimensions.opponent_id === null ? "" : " AND opponent_id = ?";
+  const dimensionBindings = [
+    ...(dimensions.venue === null ? [] : [dimensions.venue]),
+    ...(dimensions.opponent_id === null ? [] : [dimensions.opponent_id]),
+  ];
+  // The seed producer at data-platform/pipeline/aggregates/season_splits_seed.py
+  // emits season/venue/opponent grains; the aggregate contract caps
+  // MAX_SEASONS=16 and MAX_OPPONENTS=128 in season_splits.py, so 16 × 2 venues
+  // × 128 opponents = 4,096 rows.
+  // Fetch one extra row as an overflow sentinel; keep LIMIT inside D1.
+  const producerMaxRows = 16 * 2 * 128;
+  const { results } = await env.DB.prepare(
+    `SELECT snapshot_id, season, competition, venue, opponent_id, played, won, drawn, lost,
+            goals_for, goals_against, lineage_json
+       FROM season_splits WHERE snapshot_id = ? AND season IN (${marks})${venueClause}${opponentClause}
+       ORDER BY season, venue, opponent_id LIMIT ${producerMaxRows + 1}`,
+  ).bind(snapshotId, ...seasons, ...dimensionBindings).all<{
+    snapshot_id: string; season: string; competition: "PL"; venue: "home" | "away";
+    opponent_id: string; played: number; won: number; drawn: number; lost: number;
+    goals_for: number; goals_against: number; lineage_json: string;
+  }>();
+  if ((results ?? []).length > producerMaxRows) throw new Error("season split read bound reached");
+  const { results: lineageResults } = await env.DB.prepare(
+    `SELECT season, lineage_json FROM season_splits
+      WHERE snapshot_id = ? AND competition = 'PL' AND season IN (${marks})
+      ORDER BY season, venue, opponent_id LIMIT ${producerMaxRows + 1}`,
+  ).bind(snapshotId, ...seasons).all<{ season: string; lineage_json: string }>();
+  if ((lineageResults ?? []).length > producerMaxRows) throw new Error("season split lineage bound reached");
+  const totals = await env.DB.prepare(
+    `SELECT season, played FROM season_stats
+      WHERE snapshot_id = ? AND competition = 'PL' AND season IN (${marks})`,
+  ).bind(snapshotId, ...seasons).all<{ season: string; played: number }>();
+  const aggregateTotals = await env.DB.prepare(
+    `SELECT season, SUM(played) AS played, COUNT(*) AS row_count FROM season_splits
+      WHERE snapshot_id = ? AND competition = 'PL' AND season IN (${marks})
+      GROUP BY season`,
+  ).bind(snapshotId, ...seasons).all<{ season: string; played: number; row_count: number }>();
+  const allowedSources = new Set(["openfootball_cl", "football_data_couk", "fpl"]);
+  const validLineage = (value: unknown): value is string[] => Array.isArray(value) && value.length > 0 && value.length <= 32 &&
+    value.every((source) => typeof source === "string" && allowedSources.has(source)) && new Set(value).size === value.length;
+  const rows: SeasonSplitRow[] = [];
+  const malformedSeasons = new Set<string>();
+  for (const row of lineageResults ?? []) {
+    let lineage: unknown;
+    try { lineage = JSON.parse(row.lineage_json); } catch { malformedSeasons.add(row.season); continue; }
+    if (!validLineage(lineage)) malformedSeasons.add(row.season);
+  }
+  for (const row of results ?? []) {
+    let lineage: unknown;
+    try { lineage = JSON.parse(row.lineage_json); } catch { malformedSeasons.add(row.season); continue; }
+    if (!validLineage(lineage)) { malformedSeasons.add(row.season); continue; }
+    rows.push({ snapshot_id: row.snapshot_id, season: row.season, competition: row.competition,
+      venue: row.venue, opponent_id: row.opponent_id, played: row.played, won: row.won,
+      drawn: row.drawn, lost: row.lost, goals_for: row.goals_for, goals_against: row.goals_against,
+      lineage });
+  }
+  const totalsBySeason = new Map((totals.results ?? []).map((entry) => [entry.season, entry.played]));
+  const aggregatesBySeason = new Map((aggregateTotals.results ?? []).map((entry) => [entry.season, entry]));
+  const publicationAfterReads = await env.DB.prepare(
+    `SELECT r.snapshot_id FROM publication_runs r
+      JOIN snapshots s ON s.snapshot_id = r.snapshot_id
+     ORDER BY r.run_id DESC LIMIT 1`,
+  ).first<{ snapshot_id: unknown }>();
+  if (publicationAfterReads?.snapshot_id !== snapshotId) throw new Error("season split publication changed during read");
+  const seasonCoverage: SeasonSplitCatalog["seasons"] = seasons.map((season) => ({
+    season,
+    coverage: (aggregatesBySeason.get(season)?.row_count ?? 0) > 0 &&
+      !malformedSeasons.has(season) && totalsBySeason.has(season) &&
+      aggregatesBySeason.get(season)?.played === totalsBySeason.get(season)
+        ? "complete" : "missing",
+  }));
+  const completeSeasons = new Set(seasonCoverage.filter((entry) => entry.coverage === "complete").map((entry) => entry.season));
+  return { catalog: { snapshot_id: snapshotId, seasons: seasonCoverage },
+    rows: rows.filter((row) => completeSeasons.has(row.season)) };
 }
 
 /** Bounded, stable-ID-only facts for the selected-player comparison. */
