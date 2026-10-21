@@ -215,15 +215,3 @@ export function decodeCompiledCatalog(value: unknown): CompiledCatalog {
 export function seasonSplitsCapability(catalog: CompiledCatalog): "clear" | "absent" | "partial" | "unknown" {
   return catalog.output_coverage?.find((entry) => entry.output_id === "season_splits")?.state ?? "unknown";
 }
-
-/** Per-season declaration from the validated public catalog. A global output
- * capability is necessary, but cannot establish season coverage on its own. */
-export function seasonSplitsSeasonCoverage(
-  catalog: CompiledCatalog,
-  season: string,
-  capability: "clear" | "absent" | "partial" | "unknown" = seasonSplitsCapability(catalog),
-): "complete" | "missing" {
-  if (capability !== "clear") return "missing";
-  return catalog.coverage.some((cell) => cell.competition === "PL" && cell.season === season)
-    ? "complete" : "missing";
-}

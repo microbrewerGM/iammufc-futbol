@@ -1,6 +1,6 @@
 /** Pure B14 query seam. No reads, SQL, capability inference or publication.
- * Rows are the producer's single season/PL/venue/opponent grain. Catalog coverage
- * is supplied by a validated publication adapter; row presence never proves it.
+ * Rows are the producer's single season/PL/venue/opponent grain. Per-season
+ * completeness is supplied only after same-snapshot aggregate reconciliation.
  */
 export type Venue = "home" | "away";
 export type SplitCoverage = "complete" | "partial" | "missing";

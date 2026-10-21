@@ -53,11 +53,11 @@ function addSeason(store: ReturnType<typeof fakeD1>, season: string, played: num
 const envFor = (db: ReturnType<typeof fakeD1>["db"]) => ({ DB: db, CFG: {} }) as unknown as Env;
 
 describe("season split D1 publication facts", () => {
-  it("marks only reconciled, catalog-covered seasons complete", async () => {
+  it("marks only seasons whose aggregate match totals reconcile", async () => {
     const store = fakeD1();
     addSeason(store, seasons[0]!, 3, 2); // Partial: aggregate matches do not reconcile.
     addSeason(store, seasons[1]!, 2, 2);
-    const facts = await seasonSplitFacts(envFor(store.db), snapshotA, seasons, seasons.map((season) => ({ season, coverage: "complete" as const })));
+    const facts = await seasonSplitFacts(envFor(store.db), snapshotA, seasons);
     expect(facts.catalog).toEqual({ snapshot_id: snapshotA, seasons: [
       { season: seasons[0], coverage: "missing" }, { season: seasons[1], coverage: "complete" },
     ] });
@@ -65,7 +65,7 @@ describe("season split D1 publication facts", () => {
 
   it("binds reads to the validated publication snapshot and rejects a mismatch", async () => {
     const store = fakeD1(snapshotB);
-    await expect(seasonSplitFacts(envFor(store.db), snapshotA, [seasons[1]!], [{ season: seasons[1]!, coverage: "complete" }]))
+    await expect(seasonSplitFacts(envFor(store.db), snapshotA, [seasons[1]!]))
       .rejects.toThrow("stale season split publication");
   });
 
@@ -74,7 +74,7 @@ describe("season split D1 publication facts", () => {
     addSeason(store, seasons[0]!, 1);
     addSeason(store, seasons[1]!, 1);
     store.sqlite.prepare("UPDATE season_splits SET lineage_json = 'not-json' WHERE season = ?").run(seasons[0]!);
-    const facts = await seasonSplitFacts(envFor(store.db), snapshotA, seasons, seasons.map((season) => ({ season, coverage: "complete" as const })));
+    const facts = await seasonSplitFacts(envFor(store.db), snapshotA, seasons);
     expect(facts.catalog.seasons).toEqual([
       { season: seasons[0], coverage: "missing" }, { season: seasons[1], coverage: "complete" },
     ]);
@@ -85,19 +85,34 @@ describe("season split D1 publication facts", () => {
     const store = fakeD1();
     addSeason(store, seasons[1]!, 2, 2);
     store.sqlite.prepare("UPDATE season_splits SET lineage_json = 'not-json' WHERE venue = 'home'").run();
-    const facts = await seasonSplitFacts(envFor(store.db), snapshotA, [seasons[1]!], [{ season: seasons[1]!, coverage: "complete" }], { venue: "away", opponent_id: null });
+    const facts = await seasonSplitFacts(envFor(store.db), snapshotA, [seasons[1]!], { venue: "away", opponent_id: null });
     expect(facts.catalog.seasons).toEqual([{ season: seasons[1]!, coverage: "missing" }]);
-    expect(facts.rows).toHaveLength(1);
+    expect(facts.rows).toHaveLength(0);
   });
 
   it("pushes dimensions and the selection bound into the SQL read", async () => {
     const store = fakeD1();
     addSeason(store, seasons[1]!, 2, 2);
-    const facts = await seasonSplitFacts(envFor(store.db), snapshotA, [seasons[1]!], [{ season: seasons[1]!, coverage: "complete" }], { venue: "home", opponent_id: null });
+    const facts = await seasonSplitFacts(envFor(store.db), snapshotA, [seasons[1]!], { venue: "home", opponent_id: null });
     expect(facts.rows).toHaveLength(1);
     const oversized = fakeD1();
     addSeason(oversized, seasons[1]!, 4097, 4097);
-    await expect(seasonSplitFacts(envFor(oversized.db), snapshotA, [seasons[1]!], [{ season: seasons[1]!, coverage: "complete" }]))
+    await expect(seasonSplitFacts(envFor(oversized.db), snapshotA, [seasons[1]!]))
       .rejects.toThrow("season split read bound reached");
+  });
+
+  it("accepts the producer's 16-season × 2-venue × 128-opponent row bound", async () => {
+    const store = fakeD1();
+    const maximumSeasons = Array.from({ length: 16 }, (_, i) => `${2010 + i}-${String((11 + i) % 100).padStart(2, "0")}`);
+    for (const season of maximumSeasons) {
+      store.sqlite.prepare("INSERT INTO season_stats VALUES (?, ?, 'PL', 256)").run(snapshotA, season);
+      const insert = store.sqlite.prepare(`INSERT INTO season_splits VALUES (?, ?, 'PL', ?, ?, 1, 1, 0, 0, 2, 0, '[\"football_data_couk\"]')`);
+      for (let opponent = 1; opponent <= 128; opponent++) {
+        for (const venue of ["home", "away"]) insert.run(snapshotA, season, venue, `club:${opponent}`);
+      }
+    }
+    const facts = await seasonSplitFacts(envFor(store.db), snapshotA, maximumSeasons);
+    expect(facts.rows).toHaveLength(16 * 2 * 128);
+    expect(facts.catalog.seasons.every((entry) => entry.coverage === "complete")).toBe(true);
   });
 });

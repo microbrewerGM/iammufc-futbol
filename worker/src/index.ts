@@ -45,7 +45,7 @@ import {
   type QuestionHistoryEntry,
   type PublicationState,
 } from "./core/db";
-import { decodeCompiledCatalog, seasonSplitsSeasonCoverage } from "./core/catalog-contract";
+import { decodeCompiledCatalog } from "./core/catalog-contract";
 import { Catalog, columnFeasibility, hasSubstance } from "./core/feasibility";
 import { artifactKey, canonicalize } from "./core/intent";
 import { parseIntent, validateExecutionSupport, validateQuerySemantics } from "./core/validate-intent";
@@ -393,21 +393,14 @@ function registerLocaleRoutes(code: LocaleCode) {
       if (catalog.outputCapability("season_splits") !== "clear") {
         error = locale.code === "es" ? "La capacidad de desgloses por temporada no está publicada." : "Season splits capability is not published.";
       } else {
-        const outputState = catalog.outputCapability("season_splits");
-        const publicationCoverage = request.seasons.map((season) => {
-          const coverage = seasonSplitsSeasonCoverage(decodedCatalog, season, outputState);
-          return { season, coverage };
-        });
-        if (!publicationCoverage.some((entry) => entry.coverage === "complete")) {
-          result = querySeasonSplits(request, { snapshot_id: "unpublished", seasons: publicationCoverage }, []);
-        } else if (!(await enforceBudget(c.env, { failClosed: true }))) {
+        if (!(await enforceBudget(c.env, { failClosed: true }))) {
           error = locale.code === "es" ? "La exploración no está disponible." : "Season exploration is unavailable.";
           status = 503;
         } else {
           const publication = await currentPublication(c.env);
           snapshot = publication?.snapshotId ?? null;
           if (!snapshot) throw new Error("snapshot unavailable");
-          const facts = await seasonSplitFacts(c.env, snapshot, request.seasons, publicationCoverage, {
+          const facts = await seasonSplitFacts(c.env, snapshot, request.seasons, {
             venue: request.venue, opponent_id: request.opponent_id,
           });
           result = querySeasonSplits(request, facts.catalog, facts.rows);
