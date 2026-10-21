@@ -10,12 +10,12 @@ CREATE TABLE IF NOT EXISTS exploration_requests (
   request_json TEXT NOT NULL CHECK (
     length(request_json) BETWEEN 2 AND 4096 AND json_valid(request_json) AND
     json_type(request_json) = 'object' AND
-    json_extract(request_json, '$.version') = 1 AND
-    json_extract(request_json, '$.family') = 'arrival_manager' AND
-    json_extract(request_json, '$.population') = 'first_team_available' AND
-    json_extract(request_json, '$.joining_basis') = 'effective_first_team_spell_entry' AND
-    json_extract(request_json, '$.academy_basis') = 'documented_first_team_promotion' AND
-    json_extract(request_json, '$.visualization') = 'table' AND
+    json_type(request_json, '$.version') IS NOT NULL AND json_extract(request_json, '$.version') = 1 AND
+    json_type(request_json, '$.family') IS NOT NULL AND json_extract(request_json, '$.family') = 'arrival_manager' AND
+    json_type(request_json, '$.population') IS NOT NULL AND json_extract(request_json, '$.population') = 'first_team_available' AND
+    json_type(request_json, '$.joining_basis') IS NOT NULL AND json_extract(request_json, '$.joining_basis') = 'effective_first_team_spell_entry' AND
+    json_type(request_json, '$.academy_basis') IS NOT NULL AND json_extract(request_json, '$.academy_basis') = 'documented_first_team_promotion' AND
+    json_type(request_json, '$.visualization') IS NOT NULL AND json_extract(request_json, '$.visualization') = 'table' AND
     json_type(request_json, '$.as_of') = 'text'
   ),
   created_at TEXT NOT NULL,
@@ -28,13 +28,21 @@ CREATE INDEX IF NOT EXISTS idx_exploration_requests_expiry
 
 CREATE TRIGGER IF NOT EXISTS exploration_requests_closed_insert
 BEFORE INSERT ON exploration_requests
-WHEN (SELECT count(*) FROM json_each(NEW.request_json)) != 7
+WHEN (SELECT count(*) FROM json_each(NEW.request_json)) != 7 OR
+  json_type(NEW.request_json, '$.version') IS NULL OR json_type(NEW.request_json, '$.family') IS NULL OR
+  json_type(NEW.request_json, '$.as_of') IS NULL OR json_type(NEW.request_json, '$.population') IS NULL OR
+  json_type(NEW.request_json, '$.joining_basis') IS NULL OR json_type(NEW.request_json, '$.academy_basis') IS NULL OR
+  json_type(NEW.request_json, '$.visualization') IS NULL
 BEGIN
   SELECT RAISE(ABORT, 'invalid arrival-manager request shape');
 END;
 CREATE TRIGGER IF NOT EXISTS exploration_requests_closed_update
 BEFORE UPDATE OF request_json ON exploration_requests
-WHEN (SELECT count(*) FROM json_each(NEW.request_json)) != 7
+WHEN (SELECT count(*) FROM json_each(NEW.request_json)) != 7 OR
+  json_type(NEW.request_json, '$.version') IS NULL OR json_type(NEW.request_json, '$.family') IS NULL OR
+  json_type(NEW.request_json, '$.as_of') IS NULL OR json_type(NEW.request_json, '$.population') IS NULL OR
+  json_type(NEW.request_json, '$.joining_basis') IS NULL OR json_type(NEW.request_json, '$.academy_basis') IS NULL OR
+  json_type(NEW.request_json, '$.visualization') IS NULL
 BEGIN
   SELECT RAISE(ABORT, 'invalid arrival-manager request shape');
 END;
@@ -68,19 +76,19 @@ CREATE TRIGGER IF NOT EXISTS exploration_results_privacy_insert
 BEFORE INSERT ON exploration_results
 WHEN EXISTS (
   SELECT 1 FROM json_each(NEW.assigned_json) AS item
-  WHERE item.type != 'object' OR (SELECT count(*) FROM json_each(item.value)) != 7 OR
-    json_type(item.value, '$.member_id') != 'text' OR json_type(item.value, '$.person_id') != 'text' OR
-    json_type(item.value, '$.spell_id') != 'text' OR json_type(item.value, '$.manager_id') != 'text' OR
-    json_type(item.value, '$.event_id') != 'text' OR json_type(item.value, '$.tenure_id') != 'text' OR
-    json_type(item.value, '$.lineage') != 'array' OR json_array_length(json_extract(item.value, '$.lineage')) NOT BETWEEN 1 AND 32 OR
+    WHERE item.type != 'object' OR (SELECT count(*) FROM json_each(item.value)) != 7 OR
+    json_type(item.value, '$.member_id') IS NOT 'text' OR json_type(item.value, '$.person_id') IS NOT 'text' OR
+    json_type(item.value, '$.spell_id') IS NOT 'text' OR json_type(item.value, '$.manager_id') IS NOT 'text' OR
+    json_type(item.value, '$.event_id') IS NOT 'text' OR json_type(item.value, '$.tenure_id') IS NOT 'text' OR
+    json_type(item.value, '$.lineage') IS NOT 'array' OR json_array_length(json_extract(item.value, '$.lineage')) NOT BETWEEN 1 AND 32 OR
     EXISTS (SELECT 1 FROM json_each(json_extract(item.value, '$.lineage')) WHERE type != 'text' OR length(value) NOT BETWEEN 1 AND 96)
 ) OR EXISTS (
   SELECT 1 FROM json_each(NEW.unknown_json) AS item
-  WHERE item.type != 'object' OR (SELECT count(*) FROM json_each(item.value)) != 5 OR
-    json_type(item.value, '$.member_id') != 'text' OR json_type(item.value, '$.person_id') NOT IN ('text','null') OR
-    json_type(item.value, '$.spell_id') NOT IN ('text','null') OR json_type(item.value, '$.reason') != 'text' OR
+    WHERE item.type != 'object' OR (SELECT count(*) FROM json_each(item.value)) != 5 OR
+    json_type(item.value, '$.member_id') IS NOT 'text' OR json_type(item.value, '$.person_id') IS NULL OR json_type(item.value, '$.person_id') NOT IN ('text','null') OR
+    json_type(item.value, '$.spell_id') IS NULL OR json_type(item.value, '$.spell_id') NOT IN ('text','null') OR json_type(item.value, '$.reason') IS NOT 'text' OR
     json_extract(item.value, '$.reason') NOT IN ('identity_unresolved','spell_missing','arrival_missing','promotion_missing','date_uncertain','boundary_unresolved','tenure_missing','tenure_overlap','source_conflict') OR
-    json_type(item.value, '$.lineage') != 'array' OR json_array_length(json_extract(item.value, '$.lineage')) NOT BETWEEN 1 AND 32 OR
+    json_type(item.value, '$.lineage') IS NOT 'array' OR json_array_length(json_extract(item.value, '$.lineage')) NOT BETWEEN 1 AND 32 OR
     EXISTS (SELECT 1 FROM json_each(json_extract(item.value, '$.lineage')) WHERE type != 'text' OR length(value) NOT BETWEEN 1 AND 96)
 ) OR EXISTS (SELECT 1 FROM json_each(NEW.lineage_json) WHERE type != 'text' OR length(value) NOT BETWEEN 1 AND 96)
 BEGIN
@@ -92,18 +100,18 @@ BEGIN
   SELECT CASE WHEN EXISTS (
     SELECT 1 FROM json_each(NEW.assigned_json) AS item
     WHERE item.type != 'object' OR (SELECT count(*) FROM json_each(item.value)) != 7 OR
-      json_type(item.value, '$.member_id') != 'text' OR json_type(item.value, '$.person_id') != 'text' OR
-      json_type(item.value, '$.spell_id') != 'text' OR json_type(item.value, '$.manager_id') != 'text' OR
-      json_type(item.value, '$.event_id') != 'text' OR json_type(item.value, '$.tenure_id') != 'text' OR
-      json_type(item.value, '$.lineage') != 'array' OR json_array_length(json_extract(item.value, '$.lineage')) NOT BETWEEN 1 AND 32 OR
+      json_type(item.value, '$.member_id') IS NOT 'text' OR json_type(item.value, '$.person_id') IS NOT 'text' OR
+      json_type(item.value, '$.spell_id') IS NOT 'text' OR json_type(item.value, '$.manager_id') IS NOT 'text' OR
+      json_type(item.value, '$.event_id') IS NOT 'text' OR json_type(item.value, '$.tenure_id') IS NOT 'text' OR
+      json_type(item.value, '$.lineage') IS NOT 'array' OR json_array_length(json_extract(item.value, '$.lineage')) NOT BETWEEN 1 AND 32 OR
       EXISTS (SELECT 1 FROM json_each(json_extract(item.value, '$.lineage')) WHERE type != 'text' OR length(value) NOT BETWEEN 1 AND 96)
   ) OR EXISTS (
     SELECT 1 FROM json_each(NEW.unknown_json) AS item
     WHERE item.type != 'object' OR (SELECT count(*) FROM json_each(item.value)) != 5 OR
-      json_type(item.value, '$.member_id') != 'text' OR json_type(item.value, '$.person_id') NOT IN ('text','null') OR
-      json_type(item.value, '$.spell_id') NOT IN ('text','null') OR json_type(item.value, '$.reason') != 'text' OR
+      json_type(item.value, '$.member_id') IS NOT 'text' OR json_type(item.value, '$.person_id') IS NULL OR json_type(item.value, '$.person_id') NOT IN ('text','null') OR
+      json_type(item.value, '$.spell_id') IS NULL OR json_type(item.value, '$.spell_id') NOT IN ('text','null') OR json_type(item.value, '$.reason') IS NOT 'text' OR
       json_extract(item.value, '$.reason') NOT IN ('identity_unresolved','spell_missing','arrival_missing','promotion_missing','date_uncertain','boundary_unresolved','tenure_missing','tenure_overlap','source_conflict') OR
-      json_type(item.value, '$.lineage') != 'array' OR json_array_length(json_extract(item.value, '$.lineage')) NOT BETWEEN 1 AND 32 OR
+      json_type(item.value, '$.lineage') IS NOT 'array' OR json_array_length(json_extract(item.value, '$.lineage')) NOT BETWEEN 1 AND 32 OR
       EXISTS (SELECT 1 FROM json_each(json_extract(item.value, '$.lineage')) WHERE type != 'text' OR length(value) NOT BETWEEN 1 AND 96)
   ) OR EXISTS (SELECT 1 FROM json_each(NEW.lineage_json) WHERE type != 'text' OR length(value) NOT BETWEEN 1 AND 96)
   THEN RAISE(ABORT, 'invalid private result JSON shape') END;
@@ -122,10 +130,10 @@ BEFORE INSERT ON exploration_result_groups
 WHEN EXISTS (
   SELECT 1 FROM json_each(NEW.members_json) AS item
   WHERE item.type != 'object' OR (SELECT count(*) FROM json_each(item.value)) != 7 OR
-    json_type(item.value, '$.member_id') != 'text' OR json_type(item.value, '$.person_id') != 'text' OR
-    json_type(item.value, '$.spell_id') != 'text' OR json_type(item.value, '$.manager_id') != 'text' OR
-    json_type(item.value, '$.event_id') != 'text' OR json_type(item.value, '$.tenure_id') != 'text' OR
-    json_type(item.value, '$.lineage') != 'array' OR json_array_length(json_extract(item.value, '$.lineage')) NOT BETWEEN 1 AND 32 OR
+    json_type(item.value, '$.member_id') IS NOT 'text' OR json_type(item.value, '$.person_id') IS NOT 'text' OR
+    json_type(item.value, '$.spell_id') IS NOT 'text' OR json_type(item.value, '$.manager_id') IS NOT 'text' OR
+    json_type(item.value, '$.event_id') IS NOT 'text' OR json_type(item.value, '$.tenure_id') IS NOT 'text' OR
+    json_type(item.value, '$.lineage') IS NOT 'array' OR json_array_length(json_extract(item.value, '$.lineage')) NOT BETWEEN 1 AND 32 OR
     EXISTS (SELECT 1 FROM json_each(json_extract(item.value, '$.lineage')) WHERE type != 'text' OR length(value) NOT BETWEEN 1 AND 96)
 ) OR EXISTS (SELECT 1 FROM json_each(NEW.lineage_json) WHERE type != 'text' OR length(value) NOT BETWEEN 1 AND 96)
 BEGIN
@@ -136,10 +144,10 @@ BEFORE UPDATE OF members_json, lineage_json ON exploration_result_groups
 WHEN EXISTS (
   SELECT 1 FROM json_each(NEW.members_json) AS item
   WHERE item.type != 'object' OR (SELECT count(*) FROM json_each(item.value)) != 7 OR
-    json_type(item.value, '$.member_id') != 'text' OR json_type(item.value, '$.person_id') != 'text' OR
-    json_type(item.value, '$.spell_id') != 'text' OR json_type(item.value, '$.manager_id') != 'text' OR
-    json_type(item.value, '$.event_id') != 'text' OR json_type(item.value, '$.tenure_id') != 'text' OR
-    json_type(item.value, '$.lineage') != 'array' OR json_array_length(json_extract(item.value, '$.lineage')) NOT BETWEEN 1 AND 32 OR
+    json_type(item.value, '$.member_id') IS NOT 'text' OR json_type(item.value, '$.person_id') IS NOT 'text' OR
+    json_type(item.value, '$.spell_id') IS NOT 'text' OR json_type(item.value, '$.manager_id') IS NOT 'text' OR
+    json_type(item.value, '$.event_id') IS NOT 'text' OR json_type(item.value, '$.tenure_id') IS NOT 'text' OR
+    json_type(item.value, '$.lineage') IS NOT 'array' OR json_array_length(json_extract(item.value, '$.lineage')) NOT BETWEEN 1 AND 32 OR
     EXISTS (SELECT 1 FROM json_each(json_extract(item.value, '$.lineage')) WHERE type != 'text' OR length(value) NOT BETWEEN 1 AND 96)
 ) OR EXISTS (SELECT 1 FROM json_each(NEW.lineage_json) WHERE type != 'text' OR length(value) NOT BETWEEN 1 AND 96)
 BEGIN
@@ -158,6 +166,7 @@ CREATE TABLE IF NOT EXISTS exploration_jobs (
   failure TEXT CHECK (failure IS NULL OR failure IN ('source_unavailable','validation_failed','publication_failed','lease_expired','attempts_exhausted')),
   publication_json TEXT CHECK (publication_json IS NULL OR (length(publication_json) BETWEEN 2 AND 16384 AND json_valid(publication_json) AND json_type(publication_json) = 'object')),
   admitted_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   expires_at TEXT NOT NULL CHECK (expires_at = strftime('%Y-%m-%dT%H:%M:%SZ', admitted_at, '+30 days')),
   CHECK ((status = 'queued' AND lease_id IS NULL AND lease_expires_at IS NULL AND failure IS NULL AND publication_json IS NULL) OR
@@ -165,9 +174,19 @@ CREATE TABLE IF NOT EXISTS exploration_jobs (
          (status = 'failed' AND attempt BETWEEN 1 AND 3 AND claimed_at IS NOT NULL AND lease_id IS NULL AND lease_expires_at IS NULL AND failure IS NOT NULL AND publication_json IS NULL) OR
          (status = 'published' AND attempt BETWEEN 1 AND 3 AND claimed_at IS NOT NULL AND lease_id IS NULL AND lease_expires_at IS NULL AND retry_after IS NULL AND failure IS NULL AND publication_json IS NOT NULL))
 );
+CREATE TRIGGER IF NOT EXISTS exploration_jobs_initial_insert
+BEFORE INSERT ON exploration_jobs
+WHEN NEW.status != 'queued' OR NEW.attempt != 0 OR NEW.lease_id IS NOT NULL OR
+  NEW.lease_expires_at IS NOT NULL OR NEW.claimed_at IS NOT NULL OR NEW.retry_after IS NOT NULL OR
+  NEW.failure IS NOT NULL OR NEW.publication_json IS NOT NULL
+BEGIN
+  SELECT RAISE(ABORT, 'exploration jobs must start queued and unclaimed');
+END;
 CREATE TRIGGER IF NOT EXISTS exploration_jobs_state_machine
 BEFORE UPDATE ON exploration_jobs
-WHEN NOT (
+WHEN NEW.job_id IS NOT OLD.job_id OR NEW.request_id IS NOT OLD.request_id OR
+  NEW.admitted_at IS NOT OLD.admitted_at OR NEW.created_at IS NOT OLD.created_at OR
+  NEW.expires_at IS NOT OLD.expires_at OR NOT (
   (OLD.status = 'queued' AND NEW.status = 'running' AND NEW.attempt = OLD.attempt + 1 AND NEW.attempt <= 3 AND
    NEW.claimed_at IS NOT NULL AND NEW.lease_id IS NOT NULL AND NEW.lease_expires_at > NEW.claimed_at AND
    NEW.failure IS NULL AND NEW.publication_json IS NULL) OR
@@ -190,12 +209,12 @@ CREATE TRIGGER IF NOT EXISTS exploration_jobs_publication_shape_insert
 BEFORE INSERT ON exploration_jobs
 WHEN NEW.publication_json IS NOT NULL AND (
   (SELECT count(*) FROM json_each(NEW.publication_json)) != 8 OR
-  json_type(NEW.publication_json, '$.artifact_key') != 'text' OR length(json_extract(NEW.publication_json, '$.artifact_key')) != 64 OR
-  json_type(NEW.publication_json, '$.request_id') != 'text' OR length(json_extract(NEW.publication_json, '$.request_id')) != 64 OR
-  json_type(NEW.publication_json, '$.validation_record_id') != 'text' OR json_type(NEW.publication_json, '$.publication_id') != 'text' OR
-  json_type(NEW.publication_json, '$.loaded_snapshot_id') != 'text' OR json_type(NEW.publication_json, '$.coverage_record_id') != 'text' OR
-  json_type(NEW.publication_json, '$.loaded_at') != 'text' OR substr(json_extract(NEW.publication_json, '$.loaded_at'), -1) != 'Z' OR
-  json_type(NEW.publication_json, '$.lineage') != 'array' OR json_array_length(json_extract(NEW.publication_json, '$.lineage')) NOT BETWEEN 1 AND 32 OR
+  json_type(NEW.publication_json, '$.artifact_key') IS NOT 'text' OR length(json_extract(NEW.publication_json, '$.artifact_key')) != 64 OR
+  json_type(NEW.publication_json, '$.request_id') IS NOT 'text' OR length(json_extract(NEW.publication_json, '$.request_id')) != 64 OR
+  json_type(NEW.publication_json, '$.validation_record_id') IS NOT 'text' OR json_type(NEW.publication_json, '$.publication_id') IS NOT 'text' OR
+  json_type(NEW.publication_json, '$.loaded_snapshot_id') IS NOT 'text' OR json_type(NEW.publication_json, '$.coverage_record_id') IS NOT 'text' OR
+  json_type(NEW.publication_json, '$.loaded_at') IS NOT 'text' OR substr(json_extract(NEW.publication_json, '$.loaded_at'), -1) != 'Z' OR
+  json_type(NEW.publication_json, '$.lineage') IS NOT 'array' OR json_array_length(json_extract(NEW.publication_json, '$.lineage')) NOT BETWEEN 1 AND 32 OR
   EXISTS (SELECT 1 FROM json_each(json_extract(NEW.publication_json, '$.lineage')) WHERE type != 'text' OR length(value) NOT BETWEEN 1 AND 96)
 )
 BEGIN
@@ -205,12 +224,12 @@ CREATE TRIGGER IF NOT EXISTS exploration_jobs_publication_shape_update
 BEFORE UPDATE OF publication_json ON exploration_jobs
 WHEN NEW.publication_json IS NOT NULL AND (
   (SELECT count(*) FROM json_each(NEW.publication_json)) != 8 OR
-  json_type(NEW.publication_json, '$.artifact_key') != 'text' OR length(json_extract(NEW.publication_json, '$.artifact_key')) != 64 OR
-  json_type(NEW.publication_json, '$.request_id') != 'text' OR length(json_extract(NEW.publication_json, '$.request_id')) != 64 OR
-  json_type(NEW.publication_json, '$.validation_record_id') != 'text' OR json_type(NEW.publication_json, '$.publication_id') != 'text' OR
-  json_type(NEW.publication_json, '$.loaded_snapshot_id') != 'text' OR json_type(NEW.publication_json, '$.coverage_record_id') != 'text' OR
-  json_type(NEW.publication_json, '$.loaded_at') != 'text' OR substr(json_extract(NEW.publication_json, '$.loaded_at'), -1) != 'Z' OR
-  json_type(NEW.publication_json, '$.lineage') != 'array' OR json_array_length(json_extract(NEW.publication_json, '$.lineage')) NOT BETWEEN 1 AND 32 OR
+  json_type(NEW.publication_json, '$.artifact_key') IS NOT 'text' OR length(json_extract(NEW.publication_json, '$.artifact_key')) != 64 OR
+  json_type(NEW.publication_json, '$.request_id') IS NOT 'text' OR length(json_extract(NEW.publication_json, '$.request_id')) != 64 OR
+  json_type(NEW.publication_json, '$.validation_record_id') IS NOT 'text' OR json_type(NEW.publication_json, '$.publication_id') IS NOT 'text' OR
+  json_type(NEW.publication_json, '$.loaded_snapshot_id') IS NOT 'text' OR json_type(NEW.publication_json, '$.coverage_record_id') IS NOT 'text' OR
+  json_type(NEW.publication_json, '$.loaded_at') IS NOT 'text' OR substr(json_extract(NEW.publication_json, '$.loaded_at'), -1) != 'Z' OR
+  json_type(NEW.publication_json, '$.lineage') IS NOT 'array' OR json_array_length(json_extract(NEW.publication_json, '$.lineage')) NOT BETWEEN 1 AND 32 OR
   EXISTS (SELECT 1 FROM json_each(json_extract(NEW.publication_json, '$.lineage')) WHERE type != 'text' OR length(value) NOT BETWEEN 1 AND 96)
 )
 BEGIN
@@ -227,22 +246,52 @@ CREATE TABLE IF NOT EXISTS exploration_job_idempotency (
   operation_type TEXT NOT NULL CHECK (operation_type IN ('claim','ack')),
   operation_id TEXT NOT NULL CHECK (length(operation_id) BETWEEN 1 AND 96 AND operation_id NOT GLOB '*[^a-z0-9:_-]*'),
   body_hash TEXT NOT NULL CHECK (length(body_hash) = 64 AND body_hash NOT GLOB '*[^0-9a-f]*'),
-  response_json TEXT NOT NULL CHECK (length(response_json) BETWEEN 2 AND 65536 AND json_valid(response_json)),
+  response_json TEXT NOT NULL CHECK (length(response_json) BETWEEN 2 AND 65536 AND json_valid(response_json) AND
+    json_type(response_json) = 'object' AND
+    json_type(response_json, '$.version') IS NOT NULL AND json_type(response_json, '$.version') = 'integer' AND
+    json_extract(response_json, '$.version') = 1 AND
+    json_type(response_json, '$.kind') IS NOT NULL AND json_type(response_json, '$.kind') = 'text' AND
+    json_extract(response_json, '$.kind') IN ('read_result','claim_result','ack_result') AND
+    json_type(response_json, '$.payload') IS NOT NULL AND json_type(response_json, '$.payload') = 'object'),
   created_at TEXT NOT NULL,
   expires_at TEXT NOT NULL CHECK (expires_at = strftime('%Y-%m-%dT%H:%M:%SZ', created_at, '+30 days')),
   PRIMARY KEY (scope_key, operation_type, operation_id)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS idx_exploration_idempotency_expiry
   ON exploration_job_idempotency(expires_at);
-CREATE TRIGGER IF NOT EXISTS exploration_idempotency_body_conflict
+CREATE TRIGGER IF NOT EXISTS exploration_idempotency_response_closed_insert
+BEFORE INSERT ON exploration_job_idempotency
+WHEN (SELECT count(*) FROM json_each(NEW.response_json)) != 3 OR
+  json_type(NEW.response_json, '$.version') IS NOT 'integer' OR
+  json_extract(NEW.response_json, '$.version') != 1 OR
+  json_type(NEW.response_json, '$.kind') IS NOT 'text' OR
+  json_extract(NEW.response_json, '$.kind') NOT IN ('read_result','claim_result','ack_result') OR
+  json_type(NEW.response_json, '$.payload') IS NOT 'object'
+BEGIN
+  SELECT RAISE(ABORT, 'invalid idempotency response shape');
+END;
+-- Idempotency rows are immutable tombstones. B15-BRIDGE owns the retention job;
+-- deletion is permitted only after expiry to preserve replay protection.
+CREATE TRIGGER IF NOT EXISTS exploration_idempotency_immutable_update
+BEFORE UPDATE ON exploration_job_idempotency
+BEGIN
+  SELECT RAISE(ABORT, 'idempotency rows are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS exploration_idempotency_duplicate_insert
 BEFORE INSERT ON exploration_job_idempotency
 WHEN EXISTS (
   SELECT 1 FROM exploration_job_idempotency existing
   WHERE existing.scope_key = NEW.scope_key AND existing.operation_type = NEW.operation_type AND
-    existing.operation_id = NEW.operation_id AND existing.body_hash != NEW.body_hash
+    existing.operation_id = NEW.operation_id
 )
 BEGIN
-  SELECT RAISE(ABORT, 'idempotency operation body conflict');
+  SELECT RAISE(ABORT, 'idempotency operation already recorded');
+END;
+CREATE TRIGGER IF NOT EXISTS exploration_idempotency_immutable_delete
+BEFORE DELETE ON exploration_job_idempotency
+WHEN OLD.expires_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+BEGIN
+  SELECT RAISE(ABORT, 'idempotency rows retained until expiry');
 END;
 
 -- Human history retention is separate from job/tombstone retention. Explicit
