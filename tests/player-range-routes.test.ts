@@ -23,7 +23,11 @@ import app from "../worker/src/index";
 const ids: [string, string] = ["fpl:code:101", "fpl:code:202"];
 const seasons = ["2024-25"];
 const snapshot = "a".repeat(64);
-const headers = { "cf-access-jwt-assertion": "synthetic" };
+const headers = {
+  "cf-access-jwt-assertion": "synthetic",
+  Origin: "https://site.invalid",
+  "Sec-Fetch-Site": "same-origin",
+};
 const fixturePlayers = ids.map((person_id, i) => ({
   person_id, player_id: `fpl:${101 + i}:2024-25`, season: "2024-25", label: `Player ${i + 1}`,
 }));
@@ -120,6 +124,15 @@ describe("bounded player range routes", () => {
     const store = fakeD1();
     const response = await app.request(url(), {}, envFor(store.db));
     expect(response.status).toBe(403);
+  });
+
+  it.each(["en", "es"]) ("rejects cross-site comparison requests in %s", async (locale) => {
+    const store = fakeD1();
+    const response = await app.request(url(locale), {
+      headers: { ...headers, Origin: "https://foreign.invalid", "Sec-Fetch-Site": "cross-site" },
+    }, envFor(store.db));
+    expect(response.status).toBe(403);
+    expect(store.trace).toEqual([]);
   });
 
   it.each(["en", "es"])("round-trips the full canonical selection in %s", async (locale) => {
