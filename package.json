@@ -16,7 +16,7 @@
     "ingest": "uv run python -m pipeline.sources.run"
   },
   "dependencies": {
-    "hono": "4.13.7",
+    "hono": "4.13.11",
     "jose": "6.1.3"
   },
   "devDependencies": {
