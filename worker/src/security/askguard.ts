@@ -29,6 +29,7 @@
  * same lookup-not-inference rule feasibility follows.
  */
 
+import { proposeArrivalManager } from "../core/discovery-arrivals";
 import type { LocaleCode } from "../core/locale";
 
 /** Long questions are not real questions. The longest genuine phrasing in the
@@ -191,18 +192,12 @@ const UNSUPPORTED_SEMANTIC_PATTERNS: RegExp[] = [
   /\b(?:europa league|fa cup|league cup|carabao cup|domestic cup|copa doméstica)\b/i,
 ];
 
-/**
- * C0/C1 control characters plus the Unicode bidirectional-override and
- * invisible-formatting characters. The bidi set matters specifically because
- * it can visually reorder a string so that what a human reviewer reads is not
- * what the parser sees -- the Trojan Source class of attack. None of these
- * can be produced by typing a football question.
- */
-const UNSAFE_CHARS =
-  /[\u0000-\u0008\u000B-\u0012\u0013-\u001A\u001B-\u001F\u007F-\u0085\u0086-\u008F\u0090-\u0099\u009A-\u009F\u00AD\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u206F\uFEFF]/;
-
-/** Invisible tag and selector characters can smuggle text or alter display. */
-const UNSAFE_UNICODE_CHARS = /[\u{E0000}-\u{E007F}\u{061C}\u{FE00}-\u{FE0F}\u{E0100}-\u{E01EF}]/u;
+/** Reject concealed/default-ignorable, format, private-use and control text
+ * before normalization. TAB/LF remain ordinary collapsible whitespace.
+ * In Unicode mode Cs matches lone UTF-16 surrogates, not valid astral pairs.
+ * Private-use glyphs have no portable meaning; selectors/ZWJ/tag emoji remain
+ * refused, while plain visible emoji and accented EN/ES text stay supported. */
+const UNSAFE_CHARS = /(?![\t\n])[\p{Cc}\p{Cf}\p{Co}\p{Cs}\p{Default_Ignorable_Code_Point}]/u;
 
 // ---------------------------------------------------------------------------
 // Refusal copy
@@ -322,6 +317,28 @@ function mentionsCompetition(text: string): boolean {
   ]);
 }
 
+/** Reuse the frozen whole-question grammar; candidate/unsupported_wording is
+ * NOT admission. Typo and academy-origin variants reach clarification with their
+ * original wording intact. No date, roster, coverage or execution is inferred.
+ */
+function arrivalScopeText(question: string, locale: LocaleCode): string | null {
+  // Validate before accent folding: it must not erase concealed input.
+  const original = proposeArrivalManager(question, locale);
+  if (original.status === "clarification" && original.reason === "invalid_question") return null;
+  const normalized = question.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase().replace(/\bmangers?\b/g, (word) => word === "mangers" ? "managers" : "manager");
+  // A finite origin qualifier only: never remove academy/youth words generally.
+  const scopeText = normalized.replace(
+    / (?:including academy graduates|including academy players promoted to the first team|incluidos los canteranos promovidos al primer equipo)(?= (?:as of|a fecha de) \d{4}-\d{2}-\d{2}[.?!]?$|[.?!]?$)/,
+    "",
+  );
+  const proposal = proposeArrivalManager(scopeText, locale);
+  return proposal.status === "proposed" ||
+    (proposal.status === "clarification" &&
+      (proposal.reason === "date_required" || proposal.reason === "invalid_date"))
+    ? scopeText : null;
+}
+
 // ---------------------------------------------------------------------------
 // The gate
 // ---------------------------------------------------------------------------
@@ -335,13 +352,17 @@ function mentionsCompetition(text: string): boolean {
  * without naming the club. Optional: the gate is fully functional without it,
  * just slightly stricter, so a D1 outage degrades this to "must mention the
  * club, a season or a competition" rather than failing the route.
+ * `allowArrivalManager` is opt-in: only a caller that handles the constrained
+ * proposal/clarification may enable it. Generic metric callers must not turn
+ * this family into their default goals intent before B15-WIRE exists.
  */
 export function gateQuestion(
   raw: string,
   locale: LocaleCode = "en",
   knownPlayerNames: readonly string[] = [],
+  allowArrivalManager = false,
 ): GateVerdict {
-  if (UNSAFE_CHARS.test(raw) || UNSAFE_UNICODE_CHARS.test(raw)) return reject("unsafe_input", locale);
+  if (UNSAFE_CHARS.test(raw)) return reject("unsafe_input", locale);
 
   const question = raw.replace(/\s+/g, " ").trim();
   if (!question) return reject("empty", locale);
@@ -358,9 +379,11 @@ export function gateQuestion(
 
   const text = question.toLowerCase();
 
+  const arrivalText = allowArrivalManager ? arrivalScopeText(question, locale) : null;
+
   // Scope before topic: a women's-team question is on-topic and out of scope,
   // and deserves the accurate refusal rather than "not about United".
-  if (containsAnyWord(text, OUT_OF_SCOPE_SQUAD)) {
+  if (containsAnyWord(arrivalText ?? text, OUT_OF_SCOPE_SQUAD)) {
     return reject("not_mens_first_team", locale);
   }
 
@@ -386,11 +409,11 @@ export function gateQuestion(
   const namesMetric = containsAnyWord(text, METRIC_WORDS);
 
   const hasSubject =
-    namesUnited || namesPlayer || namesMetric || mentionsSeason(text) || mentionsCompetition(text);
+    namesUnited || namesPlayer || namesMetric || mentionsSeason(text) || mentionsCompetition(text) || arrivalText !== null;
   if (!hasSubject) return reject("off_topic", locale);
 
   // On-topic but not a statistics question ("who is the manager?").
-  const hasStatIntent = namesMetric || containsAnyWord(text, INTENT_WORDS) || mentionsSeason(text);
+  const hasStatIntent = namesMetric || containsAnyWord(text, INTENT_WORDS) || mentionsSeason(text) || arrivalText !== null;
   if (!hasStatIntent) return reject("not_statistical", locale);
 
   return { allowed: true, question };
