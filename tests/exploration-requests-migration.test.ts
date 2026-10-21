@@ -36,7 +36,7 @@ describe("exploration request storage migration", () => {
   // - enforces closed storage... covers request/result/group/publication privacy, retention, idempotency and deletion.
   // - Every state pair is exercised below: accepts only queued→running, running→failed/published, failed→queued.
   // - Every finite failure value is exercised below: exact retry_after presence and timing envelope.
-  // - Account deletion cascades through a live job; tombstone blocks reinserting either deleted identifier.
+  // - Account deletion cascades through a live job; tombstone blocks reuse of its job_id, request_id, or both.
   it("enforces closed storage, job transitions, retention and idempotency, and safely replays", () => {
     const db = new DatabaseSync(":memory:");
     try {
@@ -56,6 +56,8 @@ describe("exploration request storage migration", () => {
       expect(db.prepare("SELECT job_id, request_id FROM exploration_job_tombstones").all())
         .toEqual([{ job_id: jobId, request_id: requestId }]);
       reject(() => db.prepare(insertJob).run(jobId, requestId, now, now, now, jobExpires));
+      reject(() => db.prepare(insertJob).run("b".repeat(64), "8".repeat(64), now, now, now, jobExpires));
+      reject(() => db.prepare(insertJob).run("9".repeat(64), requestId, now, now, now, jobExpires));
       // Restore a live job under a fresh opaque id for the transition checks.
       db.prepare(insertRequest).run({ ...validRequest, request_id: "8".repeat(64) });
       db.prepare(insertJob).run("9".repeat(64), "8".repeat(64), now, now, now, jobExpires);
@@ -210,6 +212,9 @@ describe("exploration request storage migration", () => {
       expect(db.prepare("SELECT count(*) AS n FROM exploration_jobs WHERE request_id = ?").get(requestId)).toEqual({ n: 0 });
       expect(db.prepare("SELECT count(*) AS n FROM exploration_job_tombstones WHERE job_id = ?").get("7".repeat(64)))
         .toEqual({ n: 1 });
+      reject(() => db.prepare(insertJob).run("7".repeat(64), "6".repeat(64), now, now, now, jobExpires));
+      reject(() => db.prepare(insertJob).run("5".repeat(64), requestId, now, now, now, jobExpires));
+      reject(() => db.prepare(insertJob).run("7".repeat(64), requestId, now, now, now, jobExpires));
 
       db.exec(readFileSync("infra/migrations/0007_exploration_requests.sql", "utf8"));
     } finally {
