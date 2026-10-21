@@ -461,10 +461,12 @@ function registerLocaleRoutes(code: LocaleCode) {
     let result;
     let error: string | undefined;
     let status = 200;
+    let validationStage: "input" | "metadata" | "coverage" | "compute" = "input";
     if (!snapshot) { error = locale.code === "es" ? "La comparación no está disponible." : "Comparison unavailable."; status = 503; }
     else {
       try {
         const candidate = parsePlayerRangeRequest(raw, { snapshot_id: snapshot, person_ids: raw.person_ids, seasons: coverageSeasons });
+        validationStage = "metadata";
         const identityCatalog = await playerRangeIdentityCatalog(c.env, candidate.person_ids, candidate.seasons, snapshot);
         if (identityCatalog.person_ids.length !== candidate.person_ids.length) {
           error = locale.code === "es" ? "Uno o más identificadores de jugador no están disponibles." : "One or more player IDs are unknown.";
@@ -472,11 +474,13 @@ function registerLocaleRoutes(code: LocaleCode) {
         } else {
         const validatedRequest = parsePlayerRangeRequest(raw, identityCatalog);
         request = validatedRequest;
+        validationStage = "coverage";
         const coverageOk = validatedRequest.seasons.every((season) => [validatedRequest.metric, "minutes"].every((metric) => {
           const cell = catalog.coverage.find((candidate) => candidate.metric === metric && candidate.entity_type === "player" && candidate.granularity === "box_score" && candidate.competition === "PL" && candidate.season === season);
           return cell?.source_id === "fpl" && cell.redistributable && cell.cost_class === "cheap" && ["available", "computable_now_queued"].includes(catalog.checkFeasibility({ metric, entity_type: "player", entity_id: "all", season, competition: "PL", dimensions: [], filters: {}, viz: "table", limit: 50 }, locale.code).state);
         }));
         if (!coverageOk) throw new Error("selection");
+        validationStage = "compute";
         if (!(await enforceBudget(c.env))) { error = locale.strings.budgetExceeded; status = 429; }
         else {
           const facts = await playerRangeFacts(c.env, validatedRequest, snapshot, catalog.coverage);
@@ -486,9 +490,10 @@ function registerLocaleRoutes(code: LocaleCode) {
           if (await currentSnapshot(c.env) !== snapshot) { error = locale.code === "es" ? "La comparación no está disponible." : "Comparison unavailable."; result = undefined; status = 503; }
         }
         }
-      } catch {
+      } catch (caught) {
         error = locale.code === "es" ? "Selección de comparación no válida." : "Invalid comparison selection.";
-        status = 400;
+        status = caught instanceof Error && ((validationStage === "input" && /^Invalid player range:/.test(caught.message)) ||
+          (validationStage === "coverage" && caught.message === "selection")) ? 400 : 503;
       }
     }
     const selection = request ? playerRangeSelection(request) : emptySelection;
@@ -502,7 +507,8 @@ function registerLocaleRoutes(code: LocaleCode) {
     }
     if (result && accessIdentity(c)?.sub && canonical) await savePlayerRangeHistory(c.env, accessIdentity(c)!.sub, `${p}/players/compare?${canonical.toString()}`, locale.code).catch(() => {});
     const body = playerRangeBody({ selection, people: labels, seasons: coverageSeasons, result, error, credits: Object.fromEntries(catalog.coverage.map((cell) => [`${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`, locale.code === "es" ? cell.attribution_text_es ?? cell.attribution_text ?? "" : cell.attribution_text ?? ""])) }, locale);
-    return html(page(body, { title: locale.strings.playerRangeLink, locale, unprefixedPath: "/players/compare", snapshotId: snapshot }), status);
+    const canonicalPath = canonical ? `/players/compare?${canonical.toString()}` : "/players/compare";
+    return html(page(body, { title: locale.strings.playerRangeLink, locale, unprefixedPath: canonicalPath, snapshotId: snapshot }), status);
   });
 
   app.get(p, async (c) => {

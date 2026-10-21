@@ -352,13 +352,12 @@ export async function playerRangeFacts(
   const seasons = request.seasons;
   const people = request.person_ids;
   const placeholders = people.map(() => "?").join(",");
-  const seasonPlaceholders = seasons.map(() => "?").join(",");
   const { results } = await env.DB.prepare(
     `SELECT i.person_id, p.web_name AS label
        FROM player_identities i JOIN players p ON p.player_id = i.player_id
-      WHERE i.person_id IN (${placeholders}) AND i.season IN (${seasonPlaceholders})
+      WHERE i.person_id IN (${placeholders})
       ORDER BY i.person_id, i.season DESC`,
-  ).bind(...people, ...seasons).all<{ person_id: string; label: string }>();
+  ).bind(...people).all<{ person_id: string; label: string }>();
   const labels = new Map<string, string>();
   for (const row of results ?? []) if (!labels.has(row.person_id)) labels.set(row.person_id, row.label);
   const catalog: PlayerRangeCatalog = { snapshot_id: snapshotId, person_ids: [...labels.keys()].sort(), seasons: [...seasons].sort() };
@@ -387,17 +386,18 @@ export async function playerRangeFacts(
       const metric = request.metric;
       rows.push({ person_id: row.person_id, season: row.season, competition: "PL",
         metric, definition: metric === "goals" ? "goals" : "fpl_assists", total: row[metric],
-        minutes: row.minutes, snapshot_id: row.snapshot_id, lineage: [lineageFor(row.season, metric), lineageFor(row.season, "minutes")] });
+        minutes: row.minutes, snapshot_id: row.snapshot_id, lineage: [...new Set([lineageFor(row.season, metric), lineageFor(row.season, "minutes")])] });
     }
   }
   return { catalog, rows, labels: people.filter((id) => labels.has(id)).map((id) => ({ person_id: id, label: labels.get(id)! })) };
 }
 
 export async function playerRangeIdentityCatalog(env: Env, people: readonly string[], seasons: readonly string[], snapshotId: string): Promise<PlayerRangeCatalog> {
+  void seasons;
   const { results } = await env.DB.prepare(
     `SELECT DISTINCT i.person_id FROM player_identities i JOIN players p ON p.player_id = i.player_id
-      WHERE i.person_id IN (${people.map(() => "?").join(",")}) AND i.season IN (${seasons.map(() => "?").join(",")})`,
-  ).bind(...people, ...seasons).all<{ person_id: string }>();
+      WHERE i.person_id IN (${people.map(() => "?").join(",")})`,
+  ).bind(...people).all<{ person_id: string }>();
   return { snapshot_id: snapshotId, person_ids: (results ?? []).map((row) => row.person_id), seasons: [...seasons] };
 }
 
