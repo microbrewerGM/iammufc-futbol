@@ -192,18 +192,12 @@ const UNSUPPORTED_SEMANTIC_PATTERNS: RegExp[] = [
   /\b(?:europa league|fa cup|league cup|carabao cup|domestic cup|copa doméstica)\b/i,
 ];
 
-/**
- * C0/C1 control characters plus the Unicode bidirectional-override and
- * invisible-formatting characters. The bidi set matters specifically because
- * it can visually reorder a string so that what a human reviewer reads is not
- * what the parser sees -- the Trojan Source class of attack. None of these
- * can be produced by typing a football question.
- */
-const UNSAFE_CHARS =
-  /[\u0000-\u0008\u000B-\u0012\u0013-\u001A\u001B-\u001F\u007F-\u0085\u0086-\u008F\u0090-\u0099\u009A-\u009F\u00AD\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u206F\uFEFF]/;
-
-/** Invisible tag and selector characters can smuggle text or alter display. */
-const UNSAFE_UNICODE_CHARS = /[\u{E0000}-\u{E007F}\u{061C}\u{FE00}-\u{FE0F}\u{E0100}-\u{E01EF}]/u;
+/** Reject concealed/default-ignorable, format, private-use and control text
+ * before normalization. TAB/LF remain ordinary collapsible whitespace.
+ * In Unicode mode Cs matches lone UTF-16 surrogates, not valid astral pairs.
+ * Private-use glyphs have no portable meaning; selectors/ZWJ/tag emoji remain
+ * refused, while plain visible emoji and accented EN/ES text stay supported. */
+const UNSAFE_CHARS = /(?![\t\n])[\p{Cc}\p{Cf}\p{Co}\p{Cs}\p{Default_Ignorable_Code_Point}]/u;
 
 // ---------------------------------------------------------------------------
 // Refusal copy
@@ -368,7 +362,7 @@ export function gateQuestion(
   knownPlayerNames: readonly string[] = [],
   allowArrivalManager = false,
 ): GateVerdict {
-  if (UNSAFE_CHARS.test(raw) || UNSAFE_UNICODE_CHARS.test(raw)) return reject("unsafe_input", locale);
+  if (UNSAFE_CHARS.test(raw)) return reject("unsafe_input", locale);
 
   const question = raw.replace(/\s+/g, " ").trim();
   if (!question) return reject("empty", locale);

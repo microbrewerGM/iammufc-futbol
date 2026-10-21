@@ -272,6 +272,27 @@ describe("honest query contract routes", () => {
     },
   );
 
+  it.each(["\ud800", "\udfff", "\ud800x", "x\udc00", "\udc00\ud800", "\ue000", "\u034f"])(
+    "rejects escaped unsafe JSON text before model inference: %j", async (suffix) => {
+      const aiRun = vi.fn();
+      const response = await app.request("https://site.invalid/api/chat", {
+        method: "POST",
+        headers: { ...auth, "content-type": "application/json" },
+        body: JSON.stringify({ question: `Top goals 2024-25${suffix}` }),
+      }, { ...env, AI_PROPOSALS_ENABLED: "true", AI: { run: aiRun } } as unknown as Env);
+      expect(response.status).toBe(422);
+      expect(await response.json()).toMatchObject({ code: "unsafe_input" });
+      expect(aiRun).not.toHaveBeenCalled();
+      expect(runQuery).not.toHaveBeenCalled();
+      expect(logQueryAggregate).not.toHaveBeenCalled();
+    },
+  );
+
+  it("preserves valid supplementary characters through JSON decoding", async () => {
+    const response = await post("/api/chat", { question: "Top goals 2024-25 \ud83d\ude00" });
+    expect(response.status).toBe(200);
+  });
+
   it("surfaces a finite model status on chat proposals", async () => {
     const response = await post("/api/chat", { question: "Top goals 2024-25" });
     expect(response.status).toBe(200);

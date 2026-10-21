@@ -278,12 +278,13 @@ describe("unsafe character filter compatibility", () => {
   const oldUnsafeChars = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u00AD\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u206F\uFEFF]/;
   const safeQuestion = "top scorers 2024-25";
 
-  it("matches the old set plus the intended additions for every BMP code point", () => {
+  it("preserves every earlier BMP unsafe-character rejection", () => {
     for (let codePoint = 0; codePoint <= 0xffff; codePoint += 1) {
       const character = String.fromCharCode(codePoint);
       const expectedUnsafe = oldUnsafeChars.test(character) || codePoint === 0x061c || (codePoint >= 0xfe00 && codePoint <= 0xfe0f);
+      if (!expectedUnsafe) continue;
       const actual = gateQuestion(`${safeQuestion}${character}`);
-      expect(actual.allowed === false && actual.code === "unsafe_input", `U+${codePoint.toString(16).padStart(4, "0")}`).toBe(expectedUnsafe);
+      expect(actual.allowed === false && actual.code === "unsafe_input", `U+${codePoint.toString(16).padStart(4, "0")}`).toBe(true);
     }
   }, 30_000);
 
@@ -338,6 +339,52 @@ describe("unsafe character filter compatibility", () => {
       const v = gateQuestion(decoded);
       expect(v.allowed).toBe(false);
       expect((v as { code: string }).code).toBe("unsafe_input");
+    }
+  });
+});
+
+
+describe("Unicode concealment and UTF-16 boundaries", () => {
+  // Explicit boundary/gap oracles, independent of the implementation regex.
+  it.each([
+    0x000d, 0xfff9, 0xfffb, 0x034f, 0x0600, 0x0605, 0x061c, 0x06dd, 0x070f, 0x0890, 0x0891, 0x08e2,
+    0x115f, 0x1160, 0x17b4, 0x17b5, 0x180b, 0x180f, 0x200b, 0x200f,
+    0x202a, 0x202e, 0x2060, 0x2065, 0x206f, 0x3164, 0xffa0, 0xfff0, 0xfff8,
+    0x110bd, 0x110cd, 0x13430, 0x1343f, 0x1bca0, 0x1bca3, 0x1d173, 0x1d17a,
+    0xe0000, 0xe00ff, 0xe01f0, 0xe0fff,
+    0xe000, 0xf8ff, 0xf0000, 0xffffd, 0x100000, 0x10fffd,
+    0xd800, 0xdbff, 0xdc00, 0xdfff,
+  ])("rejects unsafe boundary U+%s in both locales and arrivals modes", (codePoint) => {
+    for (const locale of ["en", "es"] as const) {
+      for (const arrivals of [false, true]) {
+        const q = `${String.fromCodePoint(codePoint)}goals 2024-25`;
+        expect(gateQuestion(q, locale, PLAYERS, arrivals)).toMatchObject({ allowed: false, code: "unsafe_input" });
+      }
+    }
+  });
+
+  it.each([0x034e, 0x0350, 0x0606, 0x115e, 0x1161, 0x17b3, 0x17b6,
+    0x180a, 0x1810, 0x200a, 0x2010, 0x2029, 0x202f, 0x3163, 0x3165,
+    0xff9f, 0xffa1, 0xffef, 0xfffc, 0x1bc9f, 0x1bca4, 0x1d172, 0x1d17b,
+    0xd7ff, 0xf900, 0x10000, 0x1f600, 0xe1000, 0xffffe, 0x10fffe])(
+    "does not classify adjacent U+%s as unsafe", (codePoint) => {
+      expect(gateQuestion(`goals 2024-25${String.fromCodePoint(codePoint)}`).allowed).toBe(true);
+    },
+  );
+
+  it.each(["\ud800x", "x\udc00", "\ud800\ud800", "\udc00\udc00", "\udc00\ud800"])(
+    "rejects malformed UTF-16 sequence %j", (suffix) => {
+      expect(gateQuestion(`goals 2024-25${suffix}`)).toMatchObject({ allowed: false, code: "unsafe_input" });
+    },
+  );
+
+  it.each(["\t", "\n"])("preserves whitespace exception %j", (space) => {
+    expect(gateQuestion(`${space}goles${space}2024-25${space}`, "es")).toMatchObject({ allowed: true, question: "goles 2024-25" });
+  });
+
+  it("validates concealed text before trimming or accent normalization", () => {
+    for (const char of ["\ufeff", "\u034f", "\u2065"]) {
+      expect(gateQuestion(`${char}goals 2024-25${char}`)).toMatchObject({ allowed: false, code: "unsafe_input" });
     }
   });
 });
