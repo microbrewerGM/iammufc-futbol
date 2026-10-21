@@ -14,16 +14,6 @@ const playerCompareParams = new URLSearchParams({
   schema_version: '1', competition: 'PL', metric: 'goals', normalization: 'total',
   min_minutes: '0', viz: 'table',
 });
-for (const personId of ['fpl:code:101', 'fpl:code:202']) {
-  playerCompareParams.append('person_ids', personId);
-}
-playerCompareParams.append('seasons', '2024-25');
-const playerCompareQuery = playerCompareParams.toString();
-const playerCompareCanonical = `/players/compare?${playerCompareQuery}`;
-const playerCompareCases = [
-  { path: `/en${playerCompareCanonical}`, marker: 'Compare players', locale: 'en' },
-  { path: `/es${playerCompareCanonical}`, marker: 'Comparar jugadores', locale: 'es' },
-];
 const denialPostCases = [
   { path: '/en/ask', contentType: 'application/x-www-form-urlencoded', body: 'q=Top+assists+2023-24' },
   { path: '/es/ask', contentType: 'application/x-www-form-urlencoded', body: 'q=Top+asistencias+2023-24' },
@@ -213,6 +203,7 @@ export async function smoke(env, request = fetch) {
   ];
   const results = [];
   let queryIdentity = null;
+  let compareIds = null;
   for (const check of cases) {
     const response = await request(origin + check.path, {
       method: check.method ?? 'GET', redirect: 'manual', signal: AbortSignal.timeout(15000),
@@ -247,7 +238,13 @@ export async function smoke(env, request = fetch) {
         ? queryResult !== null && queryIdentity !== null &&
           queryResult.artifactKey === queryIdentity && queryResult.state === 'available'
         : false;
-    if (check.query === 'first' && queryResult) queryIdentity = queryResult.artifactKey;
+    if (check.query === 'first' && queryResult) {
+      queryIdentity = queryResult.artifactKey;
+      try {
+        const payload = JSON.parse(body);
+        compareIds = [...new Set(payload.rows.map((row) => row.route_key))].slice(0, 2);
+      } catch { compareIds = null; }
+    }
     const expectedStatus = check.unsupported ? 422 : 200;
     const contentPass = check.health ? healthState !== null
       : check.chat ? modelStatus !== null
@@ -261,24 +258,28 @@ export async function smoke(env, request = fetch) {
       ...(check.unsupported ? { gate_status: pass ? 'unsupported_semantics' : 'invalid' } : {}) });
     if (check.query) results.at(-1).query_state = pass ? queryResult.state : 'invalid';
   }
-  for (const check of playerCompareCases) {
-    const response = await request(origin + check.path, {
+  if (compareIds?.length === 2) for (const locale of ['en', 'es']) {
+    const params = new URLSearchParams(playerCompareParams);
+    for (const id of compareIds) params.append('person_ids', id);
+    params.append('seasons', '2024-25');
+    const path = `/${locale}/players/compare?${params.toString()}`;
+    const response = await request(origin + path, {
       method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(15000),
       headers: { ...headers, 'Sec-Fetch-Site': 'same-origin' },
     });
     const body = await response.text();
     const canonicalParams = new URLSearchParams({ schema_version: '1', competition: 'PL' });
-    canonicalParams.append('person_ids', 'fpl:code:101');
-    canonicalParams.append('person_ids', 'fpl:code:202');
+    for (const id of compareIds) canonicalParams.append('person_ids', id);
     canonicalParams.append('seasons', '2024-25');
     canonicalParams.set('metric', 'goals');
     canonicalParams.set('normalization', 'total');
+    canonicalParams.set('min_minutes', '0');
     canonicalParams.set('viz', 'table');
-    const canonical = `<link rel="canonical" href="/${check.locale}/players/compare?${canonicalParams.toString().replaceAll('&', '&amp;')}">`;
+    const canonical = `<link rel="canonical" href="/${locale}/players/compare?${canonicalParams.toString().replaceAll('&', '&amp;')}">`;
     const pass = response.status === 200 &&
       response.headers.get('cache-control')?.includes('no-store') &&
-      body.includes(check.marker) && body.includes(canonical);
-    results.push({ path: check.path, status: response.status, pass });
+      body.includes(locale === 'es' ? 'Comparar jugadores' : 'Compare players') && body.includes(canonical);
+    results.push({ path, status: response.status, pass });
   }
   return results;
 }
@@ -300,7 +301,7 @@ const denied = (response) => accessChallenge(response);
 /** Prove that the known dev hostname is closed to anonymous and trivially
  * forged identity requests. Never follow redirects or consume response bodies,
  * and expose only a finite verdict rather than Access response details. */
-export async function denialSmoke(request = fetch) {
+export async function denialSmoke(request = fetch, env = {}) {
   const results = [];
   for (const path of denialCases) {
     for (const method of ['GET', 'HEAD']) {
@@ -330,11 +331,32 @@ export async function denialSmoke(request = fetch) {
     results.push({ mode: 'forged-identity', method: 'GET', path, status: response.status,
       pass: denied(response) });
   }
+  const queryResponse = await request(origin + '/api/query', {
+    method: 'POST', redirect: 'manual', signal: AbortSignal.timeout(15000),
+    headers: { 'CF-Access-Client-Id': env.CF_ACCESS_CLIENT_ID,
+      'CF-Access-Client-Secret': env.CF_ACCESS_CLIENT_SECRET, Origin: origin,
+      'Content-Type': 'application/json' },
+    body: JSON.stringify({ metric: 'goals', entity_type: 'player', entity_id: 'all',
+      season: '2024-25', competition: 'PL', dimensions: [], filters: {}, viz: 'bar', limit: 10 }),
+  });
+  let ids = [];
+  if (queryResponse.status === 200) {
+    try { ids = [...new Set(JSON.parse(await queryResponse.text()).rows.map((row) => row.route_key))]
+      .filter((id) => /^fpl:code:[1-9]\d*$/.test(id)).slice(0, 2); } catch { ids = []; }
+  }
   for (const locale of ['en', 'es']) {
-    const path = `/${locale}${playerCompareCanonical}`;
+    if (ids.length !== 2) {
+      results.push({ mode: 'cross-site', method: 'GET', path: `/${locale}/players/compare`,
+        status: queryResponse.status, pass: false });
+      continue;
+    }
+    const params = new URLSearchParams(playerCompareParams);
+    for (const id of ids) params.append('person_ids', id);
+    params.append('seasons', '2024-25');
+    const path = `/${locale}/players/compare?${params.toString()}`;
     const response = await request(origin + path, {
       method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(15000),
-      headers: { Origin: 'https://foreign.invalid', 'Sec-Fetch-Site': 'cross-site' },
+      headers: { 'CF-Access-Client-Id': env.CF_ACCESS_CLIENT_ID, 'CF-Access-Client-Secret': env.CF_ACCESS_CLIENT_SECRET, Origin: 'https://foreign.invalid', 'Sec-Fetch-Site': 'cross-site' },
     });
     results.push({ mode: 'cross-site', method: 'GET', path, status: response.status,
       pass: response.status === 403 });
@@ -343,7 +365,7 @@ export async function denialSmoke(request = fetch) {
 }
 
 export async function runSmoke(env, request = fetch) {
-  return [...await smoke(env, request), ...await denialSmoke(request)];
+  return [...await smoke(env, request), ...await denialSmoke(request, env)];
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
