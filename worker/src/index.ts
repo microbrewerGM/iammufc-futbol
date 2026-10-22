@@ -386,8 +386,16 @@ function registerLocaleRoutes(code: LocaleCode) {
     let status = 200;
     let snapshot: string | null = null;
     let opponents: { opponent_id: string; label: string }[] = [];
-    const credits = Object.fromEntries(catalog.coverage.map((cell) => [`${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`,
-      locale.code === "es" ? cell.attribution_text_es ?? cell.attribution_text ?? "" : cell.attribution_text ?? ""]));
+    // Season facts carry plain source IDs. Preserve every distinct localized
+    // asset credit for each source instead of overwriting one with another.
+    const sourceCredits = new Map<string, Set<string>>();
+    for (const cell of catalog.coverage) {
+      const credit = (locale.code === "es" ? cell.attribution_text_es ?? cell.attribution_text : cell.attribution_text) ?? cell.source_name;
+      if (!credit?.trim()) continue;
+      if (!sourceCredits.has(cell.source_id)) sourceCredits.set(cell.source_id, new Set());
+      sourceCredits.get(cell.source_id)!.add(credit);
+    }
+    const credits = Object.fromEntries([...sourceCredits].map(([id, texts]) => [id, [...texts].join(" · ")]));
     try {
       request = parseSeasonSplitRequest(raw, availableSeasons);
       if (catalog.outputCapability("season_splits") !== "clear") {

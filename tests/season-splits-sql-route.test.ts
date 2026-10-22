@@ -18,7 +18,7 @@ import app from "../worker/src/index";
 import { Catalog } from "../worker/src/core/feasibility";
 
 const snapshot = "a".repeat(64);
-const headers = { "cf-access-jwt-assertion": "synthetic" };
+const headers = { "cf-access-jwt-assertion": "synthetic", Origin: "https://site.invalid" };
 
 function fakeD1() {
   const sqlite = new DatabaseSync(":memory:");
