@@ -72,7 +72,7 @@ describe("season splits exploration routes", () => {
   it.each(["en", "es"])("blocks cross-site %s season reads before budget or D1", async (locale) => {
     for (const method of ["GET", "HEAD"]) {
       for (const path of [`/${locale}/seasons/explore`, `/${locale}/%73easons/explore`, `/${locale}/seasons/%65xplore`]) {
-        for (const proof of [{ Origin: "https://foreign.invalid" }, { "Sec-Fetch-Site": "cross-site" }, {}]) {
+        for (const proof of [{ Origin: "https://foreign.invalid" }, { "Sec-Fetch-Site": "cross-site" }, {}] as Record<string, string>[]) {
           const prepare = vi.fn(() => { throw new Error("unexpected D1 read"); });
           const response = await app.request(`https://site.invalid${path}?seasons=2024-25`, {
             method, headers: { "cf-access-jwt-assertion": "synthetic", ...proof },
