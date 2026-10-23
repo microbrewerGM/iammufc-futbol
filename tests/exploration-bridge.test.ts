@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+// @ts-expect-error Node's built-in module is available in the configured test runtime.
 import * as nodeCrypto from "node:crypto";
+// @ts-expect-error Node's built-in module is available in the configured test runtime.
 import * as nodeFs from "node:fs";
 declare global {
   interface ImportMeta { url: string }
