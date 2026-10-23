@@ -8,12 +8,12 @@ export interface ChampionsLeagueTotals {
   lost: number;
   goals: number;
   goals_against: number;
-  lineage: readonly string[];
-  partial?: boolean;
+  lineage?: readonly string[] | null;
 }
 
 export type ChampionsLeagueHistoryEntry =
   | { state: "observed"; row: ChampionsLeagueTotals }
+  | { state: "partial"; row: ChampionsLeagueTotals }
   | { state: "gap"; season: string }
   | { state: "out_of_coverage"; season: string };
 
@@ -55,7 +55,7 @@ export function championsLeagueHistoryBody(
   const eligible = model.entries.filter((entry) => entry.state !== "out_of_coverage");
   if (!eligible.length) return `<h1>${esc(strings.heading)}</h1><p role="status">${esc(strings.outsideCoverage)}</p>`;
 
-  const lineage = [...new Set(eligible.flatMap((entry) => entry.state === "observed" ? entry.row.lineage : []))];
+  const lineage = [...new Set(eligible.flatMap((entry) => (entry.state === "observed" || entry.state === "partial") && Array.isArray(entry.row.lineage) ? entry.row.lineage.filter((ref) => typeof ref === "string" && ref.trim()) : []))];
   const creditFor = (ref: string): string | undefined => {
     const value: unknown = Object.hasOwn(model.credits, ref) ? model.credits[ref] : undefined;
     return typeof value === "string" && value.trim() ? value : undefined;
@@ -67,8 +67,14 @@ export function championsLeagueHistoryBody(
       return `<tr><th scope="row">${esc(entry.season)}</th><td colspan="6"><span aria-label="${esc(strings.gap)}">—</span> <span>${esc(strings.gap)}</span></td></tr>`;
     }
     const row = entry.row;
+    const refs = Array.isArray(row.lineage) ? row.lineage.filter((ref) => typeof ref === "string" && ref.trim()) : [];
+    const hasValidLineage = refs.length > 0 && refs.every((ref) => creditFor(ref) !== undefined);
+    const seasonLabel = `${esc(row.season)}${entry.state === "partial" ? ` <span>(${esc(strings.partial)})</span>` : ""}`;
+    if (!hasValidLineage) {
+      return `<tr><th scope="row">${seasonLabel}</th><td colspan="6"><span aria-label="${esc(strings.attributionUnavailable)}">—</span> <span>${esc(strings.attributionUnavailable)}</span></td></tr>`;
+    }
     const values = [row.played, row.won, row.drawn, row.lost, row.goals, row.goals_against];
-    return `<tr><th scope="row">${esc(row.season)}${row.partial ? ` <span>(${esc(strings.partial)})</span>` : ""}</th>${values.map((value) => `<td>${value}</td>`).join("")}</tr>`;
+    return `<tr><th scope="row">${seasonLabel}</th>${values.map((value) => `<td>${value}</td>`).join("")}</tr>`;
   }).join("");
   const table = `<div class="comparison-table" role="region" tabindex="0" aria-label="${esc(strings.heading)}"><table><caption>${esc(strings.caption)}</caption><thead><tr>${headers.map((header) => `<th scope="col">${esc(header)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>`;
   const sourceSection = lineage.length
