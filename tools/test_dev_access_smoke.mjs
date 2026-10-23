@@ -73,7 +73,8 @@ test('fixed dev origin, manual redirects, private response and all checks', asyn
     return new Response(health
       ? JSON.stringify(validHealth)
       : chat ? JSON.stringify(rejected ? unsupported : validChat)
-      : query ? JSON.stringify(validQuery(queryCalls++ === 0 ? 'computable_now_queued' : 'available'))
+      : query ? JSON.stringify({ ...validQuery(queryCalls++ === 0 ? 'computable_now_queued' : 'available'),
+        rows: [...validQuery().rows].reverse() })
       : url.includes('/seasons/explore') ? `<html lang="${new URL(url).pathname.startsWith('/es/') ? 'es' : 'en'}"><link rel="canonical" href="${new URL(url).pathname}">No exploration data</html>`
       : 'Ask about Manchester United Pregunta sobre el Manchester United Data and sources Datos y fuentes League season comparison Comparación de temporadas de liga 62–37 goals 62–37 goles >1.84</td> >1,84</td> 49–35 goals 49–35 goles >1.74</td> >1,74</td> font-family Assists — 2023-24 PL class="dot" aria-current="page">Dots</a> aria-current="page">Gráfico de puntos</a> <table>',
     { status: rejected ? 422 : 200, headers: { 'cache-control': 'private, no-store',
@@ -82,6 +83,10 @@ test('fixed dev origin, manual redirects, private response and all checks', asyn
   assert.equal(calls.length, 21);
   assert.equal(calls.find((call) => new URL(call.url).pathname === '/en/ask').init.method, 'POST');
   assert.equal(calls.find((call) => new URL(call.url).pathname === '/api/health').init.method, 'GET');
+  for (const locale of ['en', 'es']) {
+    const call = calls.find(({ url }) => new URL(url).pathname === `/${locale}/seasons/explore`);
+    assert.equal(call.init.headers['Sec-Fetch-Site'], 'same-origin');
+  }
   assert.ok(results.every((result) => result.pass), JSON.stringify(results.filter((result) => !result.pass)));
   assert.deepEqual(results.at(-6), { path: '/api/chat', status: 200, pass: true,
     model_status: 'accepted' });
@@ -203,6 +208,23 @@ test('snapshot continuity check compares the protected health ID without returni
   assert.equal(validateSnapshotMatch(validHealth, snapshot), true);
   assert.equal(validateSnapshotMatch(validHealth, expectedSnapshot), false);
   assert.equal(JSON.stringify(result).includes(snapshot), false);
+});
+
+test('snapshot continuity retries unsuccessful HTTP statuses before failing', async () => {
+  let calls = 0;
+  const delays = [];
+  const result = await snapshotContinuitySmoke({ ...env, EXPECTED_PRIVATE_SNAPSHOT_ID: snapshot },
+    async () => {
+      calls++;
+      return calls === 1
+        ? new Response('', { status: 429 })
+        : new Response(JSON.stringify(validHealth), { status: 200, headers: {
+          'cache-control': 'private, no-store', 'content-type': 'application/json',
+        } });
+    }, async (ms) => delays.push(ms));
+  assert.equal(result, true);
+  assert.equal(calls, 2);
+  assert.deepEqual(delays, [10000]);
 });
 
 test('snapshot continuity rejects mismatches, malformed payloads and unsafe responses', async () => {

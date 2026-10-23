@@ -113,8 +113,7 @@ export async function snapshotContinuitySmoke(env, request = fetch, delay = (ms)
     } catch (error) {
       if (attempt === 6) throw error;
     }
-    if (attempt < 6 && (response === undefined || response.status >= 500)) await delay(10000);
-    else if (response && response.status < 500) break;
+    if (attempt < 6) await delay(10000);
   }
   const privateResponse = response.headers.get('cache-control')?.includes('no-store');
   const isJson = /^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type') ?? '');
@@ -220,11 +219,12 @@ export async function smoke(env, request = fetch) {
   let compareIds = null;
   for (const check of cases) {
     try {
+    const requestHeaders = { ...headers, ...(check.locale ? { 'Sec-Fetch-Site': 'same-origin' } : {}), ...(check.body ? {
+      'Content-Type': check.contentType ?? 'application/x-www-form-urlencoded',
+    } : {}) };
     const response = await request(origin + check.path, {
       method: check.method ?? 'GET', redirect: 'manual', signal: AbortSignal.timeout(15000),
-      headers: { ...headers, ...(check.body ? {
-        'Content-Type': check.contentType ?? 'application/x-www-form-urlencoded',
-      } : {}) },
+      headers: requestHeaders,
       ...(check.body ? { body: check.body } : {}),
     });
     const privateResponse = response.headers.get('cache-control')?.includes('no-store');
@@ -269,7 +269,8 @@ export async function smoke(env, request = fetch) {
       : check.unsupported ? unsupported
       : check.query ? queryPass
       : (check.markers ?? [check.marker]).every((marker) => body.includes(marker));
-    const pass = response.status === expectedStatus && Boolean(privateResponse) && contentPass;
+    const pass = response.status === expectedStatus && Boolean(privateResponse) &&
+      (!check.locale || requestHeaders['Sec-Fetch-Site'] === 'same-origin') && contentPass;
     results.push({ path: check.path, status: response.status, pass,
       ...(check.health ? { health_state: pass ? healthState : 'invalid' } : {}),
       ...(check.chat ? { model_status: pass ? modelStatus : 'invalid' } : {}),
@@ -295,7 +296,7 @@ export async function smoke(env, request = fetch) {
     });
     const body = await response.text();
     const canonicalParams = new URLSearchParams({ schema_version: '1', competition: 'PL' });
-    for (const id of compareIds) canonicalParams.append('person_ids', id);
+    for (const id of [...compareIds].sort()) canonicalParams.append('person_ids', id);
     canonicalParams.append('seasons', '2024-25');
     canonicalParams.set('metric', 'goals');
     canonicalParams.set('normalization', 'total');
