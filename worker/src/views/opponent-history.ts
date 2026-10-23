@@ -84,7 +84,7 @@ export function opponentHistoryBody(model: OpponentHistoryView, locale: LocaleCo
     const description = rate == null ? (entry.status === "no_matches" ? s.noMatches : s.missing) : `${new Intl.NumberFormat(locale === "es" ? "es-ES" : "en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(rate)} ${s.pointsPerMatch}`;
     const limitation = entry.coverage === "partial" ? s.partial : entry.coverage === "missing" ? s.missing : "";
     return `${entry.season}: ${description}${limitation ? `, ${limitation}` : ""}`;
-  }).join("; ")}`;
+  }).join("; ")}. ${s.combined}: ${result.combined ? `${new Intl.NumberFormat(locale === "es" ? "es-ES" : "en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(result.combined.points_per_match ?? 0)} ${s.pointsPerMatch}` : result.status === "no_matches" ? s.noMatches : s.missing}${partial ? `, ${s.partial}` : ""}.`;
   const chart = `<figure><figcaption>${esc(s.chart)}</figcaption><svg viewBox="0 0 ${Math.max(300, result.seasons.length * 54 + 24)} 100" role="img" aria-labelledby="h2h-chart-title h2h-chart-desc"><title id="h2h-chart-title">${esc(s.chart)}</title><desc id="h2h-chart-desc">${esc(chartDesc)}</desc><line x1="30" y1="74" x2="100%" y2="74" class="zero-axis"/>${plot}</svg></figure>`;
   const lineage = [...new Set(result.seasons.flatMap(entry => entry.record?.lineage ?? []))];
   const credit = (ref: string) => Object.hasOwn(model.credits, ref) && typeof model.credits[ref] === "string" && model.credits[ref]!.trim() ? model.credits[ref] : undefined;

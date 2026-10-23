@@ -11,6 +11,16 @@ const row = (season: string, venue: "home" | "away", won: number, drawn: number,
 const result = queryOpponentHistory(request, catalog, [row(seasons[0]!, "home", 1, 0, 0, 2, 0), row(seasons[1]!, "away", 0, 1, 0, 0, 0)]);
 const render = (locale: "en" | "es") => opponentHistoryBody({ result, opponentLabel: "Arsenal", credits: { "source:league": "League data credit" } }, locale);
 
+const chartRates = (html: string): string[] => {
+  const svg = html.match(/<svg\b[\s\S]*?<\/svg>/)?.[0] ?? "";
+  return [...svg.matchAll(/<(?:rect|circle)\b[^>]*\/><text x="\d+" y="(?:\d+)" text-anchor="middle">([^<]+)<\/text>/g)].map(match => match[1]!);
+};
+
+const tableRates = (html: string): string[] => {
+  const table = html.match(/<table\b[\s\S]*?<\/table>/)?.[0] ?? "";
+  return [...table.matchAll(/<tr><th scope="row">\d{4}-\d{2}<\/th>(?:<td>[^<]*<\/td>){6}<td>([^<]*)<\/td><td>[^<]*<\/td><\/tr>/g)].map(match => match[1]!);
+};
+
 describe("opponent history view", () => {
   it.each(["en", "es"] as const)("renders the table, chart, partial and missing seasons in %s", locale => {
     const html = render(locale);
@@ -26,12 +36,18 @@ describe("opponent history view", () => {
     expect(html).toContain(locale === "en" ? "All venues" : "Todas las localías");
     expect(html).toContain("2023-24, 2024-25, 2025-26");
     expect(html).toContain(locale === "en" ? "Record unavailable; missing matches are not zero" : "Balance no disponible; los partidos ausentes no equivalen a cero");
+    expect(html).toContain(locale === "en" ? "Combined record for selected seasons" : "Balance conjunto de las temporadas seleccionadas");
+    expect(html).toContain(locale === "en" ? "Points / match" : "Puntos / partido");
+    expect(chartRates(html)).toEqual(locale === "en" ? ["3.00", "1.00"] : ["3,00", "1,00"]);
+    expect(tableRates(html)).toEqual(["3", "1"]);
   });
   it("escapes labels, keeps a true zero mark, and distinguishes empty from unavailable", () => {
     const unsafe = opponentHistoryBody({ result, opponentLabel: '<img src=x onerror="x">', credits: {} }, "en");
     expect(unsafe).not.toMatch(/<img\b/); expect(unsafe).toContain("&lt;img");
     expect(unsafe).toContain('width="24" height="46"');
     expect(unsafe).toContain("Source attribution unavailable");
+    const desc = unsafe.match(/<desc id="h2h-chart-desc">([\s\S]*?)<\/desc>/)?.[1] ?? "";
+    expect(desc).toContain("&lt;img src=x onerror=&quot;x&quot;&gt;");
   });
   it("labels an observed zero and describes opponent, venue, values, and coverage states", () => {
     const zeroSeasons = ["2023-24", "2024-25", "2025-26"];
@@ -43,7 +59,21 @@ describe("opponent history view", () => {
     expect(html).toContain('<text x="42" y="65" text-anchor="middle">0.00</text>');
     expect(html).toContain("No completed matches match this selection.");
     expect(html).toContain("Record unavailable; missing matches are not zero");
-    expect(html).toContain("No completed matches match this selection.");
     expect(html).toContain("Arsenal"); expect(html).toContain("All venues");
+    const desc = html.match(/<desc id="h2h-chart-desc">([\s\S]*?)<\/desc>/)?.[1] ?? "";
+    expect(desc).toContain("2023-24: 0.00 Points / match");
+    expect(desc).toContain("2024-25: No completed matches match this selection.");
+    expect(desc).toContain("2025-26: Record unavailable; missing matches are not zero");
+  });
+  it("describes combined partial record and Spanish chart values and limitations", () => {
+    const html = render("es");
+    const desc = html.match(/<desc id="h2h-chart-desc">([\s\S]*?)<\/desc>/)?.[1] ?? "";
+    expect(desc).toContain("Arsenal");
+    expect(desc).toContain("Todas las localías");
+    expect(desc).toContain("2023-24: 3,00 Puntos / partido");
+    expect(desc).toContain("2024-25: 1,00 Puntos / partido, Subtotal registrado; faltan datos seleccionados o son parciales");
+    expect(desc).toContain("Balance conjunto de las temporadas seleccionadas: 2,00 Puntos / partido");
+    expect(desc).toContain("Subtotal registrado; faltan datos seleccionados o son parciales");
+    expect(chartRates(html)).toEqual(["3,00", "1,00"]);
   });
 });
