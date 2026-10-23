@@ -9,6 +9,8 @@ export const MAX_RESPONSE_BYTES = 256 * 1024;
 export const MAX_ATTEMPTS = 3;
 export const LEASE_SECONDS = 900;
 export const RETRY_SECONDS: Readonly<Record<number, number>> = { 1: 300, 2: 1800 };
+/** 0008_exploration_request_links.sql bounds retry_after to claimed_at + one day. */
+export const RETRY_WINDOW_SECONDS = 86_400;
 
 export type JobStatus = "queued" | "running" | "failed" | "published";
 export type FailureReason = "source_unavailable" | "validation_failed" | "publication_failed" | "lease_expired" | "attempts_exhausted";
@@ -260,11 +262,18 @@ export async function claimJob(deps: BridgeDeps, caller: Caller, raw: unknown): 
 }
 
 /** Failure transition shared by ack failure and lease expiry. */
-function failed(j: Job, reason: FailureReason, nowMs: number): Job {
+function failed(j: Job, reason: FailureReason, nowMs: number, claimedAtMs?: number): Job {
   const terminal = j.attempt >= MAX_ATTEMPTS;
+  const proposedRetryAt = nowMs + (RETRY_SECONDS[j.attempt] ?? 1800) * 1000;
+  const retryAt = claimedAtMs === undefined ? proposedRetryAt
+    : Math.min(proposedRetryAt, claimedAtMs + RETRY_WINDOW_SECONDS * 1000);
   return { ...j, status: "failed", lease_id: null, lease_expires_at: null, publication: null,
     failure: terminal ? "attempts_exhausted" : reason,
-    retry_after: terminal ? null : iso(nowMs + (RETRY_SECONDS[j.attempt] ?? 1800) * 1000) };
+    retry_after: terminal ? null : iso(retryAt) };
+}
+
+function claimedAt(j: Job): number | undefined {
+  return j.lease_expires_at === null ? undefined : Date.parse(j.lease_expires_at) - LEASE_SECONDS * 1000;
 }
 
 /** Acknowledge a running job with finite failure or verified publication evidence. */
@@ -303,7 +312,7 @@ export async function ackJob(deps: BridgeDeps, caller: Caller, raw: unknown): Pr
     if (Date.parse(publication.loaded_at) > now || !(await deps.verifier.verify(j, publication))) return outcome("conflict");
     next = { ...j, status: "published", lease_id: null, lease_expires_at: null, retry_after: null, failure: null, publication };
   } else {
-    next = failed(j, reason as AckFailureReason, now);
+    next = failed(j, reason as AckFailureReason, now, claimedAt(j));
   }
   const op: OperationRecord = { service: caller.service, type: "ack", operation_id: p.operation_id,
     body_hash: bodyHash, response: { outcome: "accepted" }, lease_id: p.lease_id };
@@ -312,26 +321,30 @@ export async function ackJob(deps: BridgeDeps, caller: Caller, raw: unknown): Pr
 }
 
 /** Server-owned expiry: expired running jobs become failed attempts with backoff. Returns count moved. */
-export async function sweepExpiredLeases(deps: Pick<BridgeDeps, "store" | "now">): Promise<number> {
+export async function sweepExpiredLeases(deps: Pick<BridgeDeps, "store" | "now">): Promise<{ moved: number; failed: number }> {
   const now = nowMs(deps);
-  let n = 0;
+  let moved = 0, failedCount = 0;
   for (const r of await deps.store.listExpiredLeases(iso(now), SWEEP_BATCH)) {
     const j = r.job;
     if (j.status !== "running" || j.lease_expires_at === null || Date.parse(j.lease_expires_at) > now) continue;
-    if (await deps.store.commit(r.revision, { ...r, job: failed(j, "lease_expired", now), lease_owner: null, revision: r.revision + 1 }, null)) n++;
+    try {
+      if (await deps.store.commit(r.revision, { ...r, job: failed(j, "lease_expired", now, claimedAt(j)), lease_owner: null, revision: r.revision + 1 }, null)) moved++;
+    } catch { failedCount++; }
   }
-  return n;
+  return { moved, failed: failedCount };
 }
 
 /** Server-owned due transition: retryable failed jobs return to queued, attempt kept. Returns count moved. */
-export async function sweepRetryDue(deps: Pick<BridgeDeps, "store" | "now">): Promise<number> {
+export async function sweepRetryDue(deps: Pick<BridgeDeps, "store" | "now">): Promise<{ moved: number; failed: number }> {
   const now = nowMs(deps);
-  let n = 0;
+  let moved = 0, failedCount = 0;
   for (const r of await deps.store.listRetryDue(iso(now), SWEEP_BATCH)) {
     const j = r.job;
     if (j.status !== "failed" || j.failure === "attempts_exhausted" || j.retry_after === null || Date.parse(j.retry_after) > now) continue;
     const queued: Job = { ...j, status: "queued", retry_after: null, lease_id: null, lease_expires_at: null, failure: null };
-    if (await deps.store.commit(r.revision, { ...r, job: queued, lease_owner: null, revision: r.revision + 1 }, null)) n++;
+    try {
+      if (await deps.store.commit(r.revision, { ...r, job: queued, lease_owner: null, revision: r.revision + 1 }, null)) moved++;
+    } catch { failedCount++; }
   }
-  return n;
+  return { moved, failed: failedCount };
 }

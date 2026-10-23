@@ -12,7 +12,7 @@ const { createHash } = nodeCrypto as unknown as { createHash(algorithm: string):
 const { readFileSync } = nodeFs as unknown as { readFileSync(path: URL): Uint8Array & { toString(encoding: "utf8"): string } };
 import {
   ackJob, claimJob, cursorFor, hmacCursorSigner, readJobs, sweepExpiredLeases, sweepRetryDue,
-  MAX_REQUEST_BYTES,
+  MAX_REQUEST_BYTES, RETRY_WINDOW_SECONDS,
 } from "../worker/src/core/exploration-bridge";
 import type {
   BridgeDeps, BridgeResult, BridgeStore, Caller, Job, OperationRecord, Publication, StoredJob,
@@ -445,9 +445,9 @@ describe("attempts, expiry and retry sweeps", () => {
     await ackJob(ctx.deps, runner, ackBody(1, job.lease_id!, 1, failOutcome, "k1"));
     expect(stored().retry_after).toBe("2026-10-22T12:05:00Z");
     expect(payload(await claimJob(ctx.deps, runner, claimBody(1, 1, "early")))).toEqual({ outcome: "conflict" });
-    expect(await sweepRetryDue(ctx.deps)).toBe(0);
+    expect(await sweepRetryDue(ctx.deps)).toEqual({ moved: 0, failed: 0 });
     ctx.advance(300);
-    expect(await sweepRetryDue(ctx.deps)).toBe(1);
+    expect(await sweepRetryDue(ctx.deps)).toEqual({ moved: 1, failed: 0 });
     expect(stored()).toMatchObject({ status: "queued", attempt: 1, failure: null, retry_after: null, lease_id: null, lease_expires_at: null });
     expect(ctx.store.jobs.get(hex(1))!).toMatchObject({ revision: 4, lease_owner: null });
     job = await cycle(ctx, 1, "o2");
@@ -462,7 +462,7 @@ describe("attempts, expiry and retry sweeps", () => {
     await ackJob(ctx.deps, runner, ackBody(1, job.lease_id!, 3, failOutcome, "k3"));
     expect(stored()).toMatchObject({ status: "failed", failure: "attempts_exhausted", retry_after: null, attempt: 3 });
     ctx.advance(100000);
-    expect(await sweepRetryDue(ctx.deps)).toBe(0);
+    expect(await sweepRetryDue(ctx.deps)).toEqual({ moved: 0, failed: 0 });
     expect(payload(await claimJob(ctx.deps, runner, claimBody(1, 2, "o4")))).toEqual({ outcome: "exhausted" });
   });
   it("expiry is a failed attempt with the same backoff, and terminal at attempt 3", async () => {
@@ -471,14 +471,14 @@ describe("attempts, expiry and retry sweeps", () => {
     const stored = () => ctx.store.jobs.get(hex(1))!.job;
     await cycle(ctx, 0, "o1");
     ctx.advance(899);
-    expect(await sweepExpiredLeases(ctx.deps)).toBe(0);
+    expect(await sweepExpiredLeases(ctx.deps)).toEqual({ moved: 0, failed: 0 });
     ctx.advance(1);
-    expect(await sweepExpiredLeases(ctx.deps)).toBe(1);
+    expect(await sweepExpiredLeases(ctx.deps)).toEqual({ moved: 1, failed: 0 });
     expect(stored()).toMatchObject({ status: "failed", failure: "lease_expired", lease_id: null, lease_expires_at: null,
       retry_after: new Date(ctx.deps.now().getTime() + 300_000).toISOString().replace(".000Z", "Z") });
     expect(ctx.store.jobs.get(hex(1))!.lease_owner).toBeNull();
     seed(ctx.store, 2, { status: "running", attempt: 3, lease_id: "lease-9", lease_expires_at: "2026-10-22T12:00:00.000Z" });
-    expect(await sweepExpiredLeases(ctx.deps)).toBe(1);
+    expect(await sweepExpiredLeases(ctx.deps)).toEqual({ moved: 1, failed: 0 });
     expect(ctx.store.jobs.get(hex(2))!.job).toMatchObject({ status: "failed", failure: "attempts_exhausted", retry_after: null });
   });
   it("sweeps lose cleanly to a concurrent CAS write", async () => {
@@ -490,7 +490,7 @@ describe("attempts, expiry and retry sweeps", () => {
       ctx.store.jobs.get(hex(1))!.revision++; // another writer commits between list and commit
       return rows;
     };
-    expect(await sweepExpiredLeases(ctx.deps)).toBe(0);
+    expect(await sweepExpiredLeases(ctx.deps)).toEqual({ moved: 0, failed: 0 });
     expect(ctx.store.jobs.get(hex(1))!.job.status).toBe("running");
   });
   it("never resets attempt, admits jobs or creates records from a sweep", async () => {
@@ -500,6 +500,59 @@ describe("attempts, expiry and retry sweeps", () => {
     expect(ctx.store.jobs.size).toBe(1);
     expect(ctx.store.jobs.get(hex(1))!.job.attempt).toBe(2);
     expect(ctx.store.ops.size).toBe(0);
+  });
+
+  it("clamps late expiry retries to the claimed-at 24-hour bound and recovers the job", async () => {
+    expect(RETRY_WINDOW_SECONDS).toBe(86_400);
+    const ctx = setup();
+    const claimedAt = T0;
+    seed(ctx.store, 1, { status: "running", attempt: 1, lease_id: "lease-1",
+      lease_expires_at: new Date(claimedAt + 900_000).toISOString() });
+    ctx.advance(2 * 86_400);
+    expect(await sweepExpiredLeases(ctx.deps)).toEqual({ moved: 1, failed: 0 });
+    expect(ctx.store.jobs.get(hex(1))!.job.retry_after).toBe(new Date(claimedAt + 86_400_000).toISOString().replace(".000Z", "Z"));
+    expect(Date.parse(ctx.store.jobs.get(hex(1))!.job.retry_after!)).toBeGreaterThan(claimedAt);
+    expect(await sweepRetryDue(ctx.deps)).toEqual({ moved: 1, failed: 0 });
+    expect((payload(await claimJob(ctx.deps, other, claimBody(1, 1, "late-reclaim"))).job as Job).attempt).toBe(2);
+  });
+
+  it("clamps attempt one and two at and just after the one-day boundary", async () => {
+    for (const [id, attempt, elapsed] of [[1, 1, 86_100], [2, 2, 84_300],
+      [3, 1, 86_101], [4, 2, 84_301]] as const) {
+      const ctx = setup();
+      const claimedAt = T0;
+      seed(ctx.store, id, { status: "running", attempt, lease_id: `lease-${id}`,
+        lease_expires_at: new Date(claimedAt + 900_000).toISOString() });
+      ctx.advance(elapsed);
+      expect(await sweepExpiredLeases(ctx.deps)).toEqual({ moved: 1, failed: 0 });
+      const backoffSeconds = attempt === 1 ? 300 : 1800;
+      const expected = new Date(Math.min(claimedAt + (elapsed + backoffSeconds) * 1000,
+        claimedAt + RETRY_WINDOW_SECONDS * 1000)).toISOString().replace(".000Z", "Z");
+      expect(ctx.store.jobs.get(hex(id))!.job.retry_after).toBe(expected);
+    }
+  });
+
+  it("continues after a row commit throws and reports failed count; ack backoff stays exact", async () => {
+    const ctx = setup();
+    seed(ctx.store, 1, { status: "running", attempt: 1, lease_id: "lease-1",
+      lease_expires_at: new Date(T0 + 900_000).toISOString() });
+    seed(ctx.store, 2, { status: "running", attempt: 1, lease_id: "lease-2",
+      lease_expires_at: new Date(T0 + 900_000).toISOString() });
+    ctx.advance(901);
+    const commit = ctx.store.commit.bind(ctx.store);
+    ctx.store.commit = async (...args) => {
+      if (args[1].job.job_id === hex(1)) throw new Error("transient store failure");
+      return commit(...args);
+    };
+    expect(await sweepExpiredLeases(ctx.deps)).toEqual({ moved: 1, failed: 1 });
+    expect(ctx.store.jobs.get(hex(1))!.job.status).toBe("running");
+    expect(ctx.store.jobs.get(hex(2))!.job.retry_after).toBe("2026-10-22T12:20:01Z");
+
+    const ordinary = setup();
+    seed(ordinary.store, 3);
+    const claimed = payload(await claimJob(ordinary.deps, runner, claimBody(3))).job as Job;
+    await ackJob(ordinary.deps, runner, ackBody(3, claimed.lease_id!, 1, failOutcome));
+    expect(ordinary.store.jobs.get(hex(3))!.job.retry_after).toBe("2026-10-22T12:05:00Z");
   });
 });
 
@@ -536,7 +589,7 @@ describe("whole-second bridge storage contract", () => {
     seed(store, 2, { status: "running", attempt: 1, lease_id: "lease-2", lease_expires_at: "2026-10-22T12:00:01Z" });
     let clockCalls = 0;
     deps.now = () => { clockCalls++; return new Date(T0 + 999); };
-    expect(await sweepExpiredLeases(deps)).toBe(1);
+    expect(await sweepExpiredLeases(deps)).toEqual({ moved: 1, failed: 0 });
     expect(clockCalls).toBe(1);
     expect(store.jobs.get(hex(1))!).toMatchObject({ lease_owner: null,
       job: { status: "failed", retry_after: "2026-10-22T12:05:00Z", lease_expires_at: null } });
@@ -548,11 +601,11 @@ describe("whole-second bridge storage contract", () => {
     store.jobs.get(hex(1))!.revision = 3;
     let clockCalls = 0;
     deps.now = () => { clockCalls++; return new Date(T0 + 999); };
-    expect(await sweepRetryDue(deps)).toBe(1);
+    expect(await sweepRetryDue(deps)).toEqual({ moved: 1, failed: 0 });
     expect(clockCalls).toBe(1);
     expect(store.jobs.get(hex(1))!).toMatchObject({ revision: 4, lease_owner: null, job: { status: "queued",
       attempt: 1, retry_after: null, failure: null, lease_id: null, lease_expires_at: null } });
-    expect(await sweepRetryDue(deps)).toBe(0);
+    expect(await sweepRetryDue(deps)).toEqual({ moved: 0, failed: 0 });
     expect(payload(await claimJob(deps, other, claimBody(1, 1, "op-2"))).job.attempt).toBe(2);
     expect(store.jobs.get(hex(1))!.revision).toBe(5);
   });
@@ -566,7 +619,7 @@ describe("whole-second bridge storage contract", () => {
     // Deliberately overbroad store result tests the core guard as well as filtering.
     store.listRetryDue = async () => structuredClone([...store.jobs.values()]);
     deps.now = () => new Date(T0 + 999);
-    expect(await sweepRetryDue(deps)).toBe(0);
+    expect(await sweepRetryDue(deps)).toEqual({ moved: 0, failed: 0 });
     expect([...store.jobs]).toEqual(before);
   });
 });
