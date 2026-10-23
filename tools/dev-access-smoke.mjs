@@ -46,6 +46,8 @@ const exactKeys = (value, expected) => {
 const normalizedIso = (value) => typeof value === 'string' && Number.isFinite(Date.parse(value)) &&
   new Date(value).toISOString() === value;
 const season = (value) => typeof value === 'string' && /^\d{4}-\d{2}$/.test(value);
+const safeErrorClass = (error) => ['AbortError', 'TimeoutError', 'TypeError', 'SyntaxError'].includes(error?.name)
+  ? error.name : 'Error';
 
 /** Independent deployed-wire validator. Returns only a safe finite state; raw
  * publication metadata never reaches CLI output. */
@@ -88,7 +90,7 @@ export function validateSnapshotMatch(value, expectedSnapshotId) {
 }
 
 /** Read the protected deployment health endpoint and return no publication IDs. */
-export async function snapshotContinuitySmoke(env, request = fetch) {
+export async function snapshotContinuitySmoke(env, request = fetch, delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))) {
   const id = env.CF_ACCESS_CLIENT_ID;
   const secret = env.CF_ACCESS_CLIENT_SECRET;
   const expectedSnapshotId = env.EXPECTED_PRIVATE_SNAPSHOT_ID;
@@ -96,14 +98,24 @@ export async function snapshotContinuitySmoke(env, request = fetch) {
   if (typeof expectedSnapshotId !== 'string' || !/^[a-f0-9]{64}$/.test(expectedSnapshotId)) {
     return false;
   }
-  const response = await request(origin + '/api/health', {
+  let response;
+  for (let attempt = 1; attempt <= 6; attempt++) {
+    try {
+      response = await request(origin + '/api/health', {
     method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(15000),
     headers: {
       'CF-Access-Client-Id': id,
       'CF-Access-Client-Secret': secret,
       Origin: origin,
     },
-  });
+      });
+      if (response.status === 200) break;
+    } catch (error) {
+      if (attempt === 6) throw error;
+    }
+    if (attempt < 6 && (response === undefined || response.status >= 500)) await delay(10000);
+    else if (response && response.status < 500) break;
+  }
   const privateResponse = response.headers.get('cache-control')?.includes('no-store');
   const isJson = /^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type') ?? '');
   let payload = null;
@@ -177,6 +189,8 @@ export async function smoke(env, request = fetch) {
     { path: '/es', marker: 'Pregunta sobre el Manchester United' },
     { path: '/en/data', marker: 'Data and sources' },
     { path: '/es/data', marker: 'Datos y fuentes' },
+    { path: '/en/seasons/explore', locale: 'en', canonical: '/en/seasons/explore' },
+    { path: '/es/seasons/explore', locale: 'es', canonical: '/es/seasons/explore' },
     { path: '/en/season/2015-16', markers: ['League season comparison', '49–35 goals', '>1.74</td>'] },
     { path: '/es/season/2015-16', markers: ['Comparación de temporadas de liga', '49–35 goles', '>1,74</td>'] },
     { path: '/en/season/2014-15', markers: ['League season comparison', '62–37 goals', '>1.84</td>'] },
@@ -205,6 +219,7 @@ export async function smoke(env, request = fetch) {
   let queryIdentity = null;
   let compareIds = null;
   for (const check of cases) {
+    try {
     const response = await request(origin + check.path, {
       method: check.method ?? 'GET', redirect: 'manual', signal: AbortSignal.timeout(15000),
       headers: { ...headers, ...(check.body ? {
@@ -246,7 +261,10 @@ export async function smoke(env, request = fetch) {
       } catch { compareIds = null; }
     }
     const expectedStatus = check.unsupported ? 422 : 200;
-    const contentPass = check.health ? healthState !== null
+    const contentPass = check.locale ? body.includes(`lang="${check.locale}"`) &&
+      body.includes(`<link rel="canonical" href="${check.canonical}">`) &&
+      (body.includes('No exploration data') || body.includes('exploration-table'))
+      : check.health ? healthState !== null
       : check.chat ? modelStatus !== null
       : check.unsupported ? unsupported
       : check.query ? queryPass
@@ -257,12 +275,20 @@ export async function smoke(env, request = fetch) {
       ...(check.chat ? { model_status: pass ? modelStatus : 'invalid' } : {}),
       ...(check.unsupported ? { gate_status: pass ? 'unsupported_semantics' : 'invalid' } : {}) });
     if (check.query) results.at(-1).query_state = pass ? queryResult.state : 'invalid';
+    } catch (error) {
+      results.push({ path: check.path, pass: false, error_class: safeErrorClass(error) });
+    }
   }
-  if (compareIds?.length === 2) for (const locale of ['en', 'es']) {
+  for (const locale of ['en', 'es']) {
+    if (compareIds?.length !== 2) {
+      results.push({ path: `/${locale}/players/compare`, pass: false, error_class: 'PrerequisiteError' });
+      continue;
+    }
     const params = new URLSearchParams(playerCompareParams);
-    for (const id of compareIds) params.append('person_ids', id);
+    for (const id of [...compareIds].sort()) params.append('person_ids', id);
     params.append('seasons', '2024-25');
     const path = `/${locale}/players/compare?${params.toString()}`;
+    try {
     const response = await request(origin + path, {
       method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(15000),
       headers: { ...headers, 'Sec-Fetch-Site': 'same-origin' },
@@ -280,6 +306,9 @@ export async function smoke(env, request = fetch) {
       response.headers.get('cache-control')?.includes('no-store') &&
       body.includes(locale === 'es' ? 'Comparar jugadores' : 'Compare players') && body.includes(canonical);
     results.push({ path, status: response.status, pass });
+    } catch (error) {
+      results.push({ path: `/${locale}/players/compare`, pass: false, error_class: safeErrorClass(error) });
+    }
   }
   return results;
 }
@@ -303,63 +332,69 @@ const denied = (response) => accessChallenge(response);
  * and expose only a finite verdict rather than Access response details. */
 export async function denialSmoke(request = fetch, env = {}) {
   const results = [];
+  const probe = async (path, details, options) => {
+    try {
+      const response = await request(origin + path, options);
+      return { ...details, path, status: response.status, pass: denied(response) };
+    } catch (error) {
+      return { ...details, path, pass: false, error_class: safeErrorClass(error) };
+    }
+  };
   for (const path of denialCases) {
     for (const method of ['GET', 'HEAD']) {
-      const response = await request(origin + path, {
+      results.push(await probe(path, { mode: 'anonymous', method }, {
         method, redirect: 'manual', signal: AbortSignal.timeout(15000), headers: {},
-      });
-      results.push({ mode: 'anonymous', method, path, status: response.status,
-        pass: denied(response) });
+      }));
     }
   }
   for (const check of denialPostCases) {
-    const response = await request(origin + check.path, {
+    results.push(await probe(check.path, { mode: 'anonymous', method: 'POST' }, {
       method: 'POST', redirect: 'manual', signal: AbortSignal.timeout(15000),
       headers: { 'Content-Type': check.contentType }, body: check.body,
-    });
-    results.push({ mode: 'anonymous', method: 'POST', path: check.path,
-      status: response.status, pass: denied(response) });
+    }));
   }
   for (const path of ['/en', '/api/health', '/style.css']) {
-    const response = await request(origin + path, {
+    results.push(await probe(path, { mode: 'forged-identity', method: 'GET' }, {
       method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(15000),
       headers: {
         'CF-Access-Jwt-Assertion': 'synthetic-invalid-assertion',
         'CF-Access-Authenticated-User-Email': 'nobody@example.invalid',
       },
-    });
-    results.push({ mode: 'forged-identity', method: 'GET', path, status: response.status,
-      pass: denied(response) });
+    }));
   }
-  const queryResponse = await request(origin + '/api/query', {
+  let queryResponse = null;
+  try { queryResponse = await request(origin + '/api/query', {
     method: 'POST', redirect: 'manual', signal: AbortSignal.timeout(15000),
     headers: { 'CF-Access-Client-Id': env.CF_ACCESS_CLIENT_ID,
       'CF-Access-Client-Secret': env.CF_ACCESS_CLIENT_SECRET, Origin: origin,
       'Content-Type': 'application/json' },
     body: JSON.stringify({ metric: 'goals', entity_type: 'player', entity_id: 'all',
       season: '2024-25', competition: 'PL', dimensions: [], filters: {}, viz: 'bar', limit: 10 }),
-  });
+  }); } catch (error) {
+    results.push({ mode: 'discovery', method: 'POST', path: '/api/query', pass: false,
+      error_class: safeErrorClass(error) });
+  }
   let ids = [];
-  if (queryResponse.status === 200) {
+  if (queryResponse?.status === 200) {
     try { ids = [...new Set(JSON.parse(await queryResponse.text()).rows.map((row) => row.route_key))]
       .filter((id) => /^fpl:code:[1-9]\d*$/.test(id)).slice(0, 2); } catch { ids = []; }
   }
   for (const locale of ['en', 'es']) {
     if (ids.length !== 2) {
       results.push({ mode: 'cross-site', method: 'GET', path: `/${locale}/players/compare`,
-        status: queryResponse.status, pass: false });
+        ...(queryResponse ? { status: queryResponse.status } : {}), pass: false });
       continue;
     }
     const params = new URLSearchParams(playerCompareParams);
-    for (const id of ids) params.append('person_ids', id);
+    for (const id of [...ids].sort()) params.append('person_ids', id);
     params.append('seasons', '2024-25');
     const path = `/${locale}/players/compare?${params.toString()}`;
-    const response = await request(origin + path, {
+    const result = await probe(path, { mode: 'cross-site', method: 'GET' }, {
       method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(15000),
       headers: { 'CF-Access-Client-Id': env.CF_ACCESS_CLIENT_ID, 'CF-Access-Client-Secret': env.CF_ACCESS_CLIENT_SECRET, Origin: 'https://foreign.invalid', 'Sec-Fetch-Site': 'cross-site' },
     });
-    results.push({ mode: 'cross-site', method: 'GET', path, status: response.status,
-      pass: response.status === 403 });
+    if (result.status !== undefined) result.pass = result.status === 403;
+    results.push(result);
   }
   return results;
 }
@@ -383,8 +418,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       const results = await runSmoke(process.env);
       console.log(JSON.stringify(results));
       if (results.some((result) => !result.pass)) process.exitCode = 1;
-    } catch {
-      console.error('Dev Access smoke failed; check credential provisioning and connectivity. Details suppressed.');
+    } catch (error) {
+      console.error(`Dev Access smoke failed; error_class=${safeErrorClass(error)}`);
       process.exitCode = 1;
     }
   }
