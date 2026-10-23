@@ -41,6 +41,12 @@ export interface Locale {
     askPlaceholder: string;
     askButton: string;
     examplesHeading: string;
+    exampleQuestionsHeading: string;
+    exampleGoals: string;
+    exampleAssistsTable: string;
+    exampleMinutesDots: string;
+    examplePointsTable: string;
+    exampleXg: string;
     historyLink: string;
     playerRangeLink: string;
     freshnessHeading: string;
@@ -140,6 +146,12 @@ const EN: Locale = {
     askPlaceholder: "Ask about Manchester United…",
     askButton: "Ask",
     examplesHeading: "Try asking",
+    exampleQuestionsHeading: "Example questions",
+    exampleGoals: "Top goals",
+    exampleAssistsTable: "Top assists table",
+    exampleMinutesDots: "Top minutes dot plot",
+    examplePointsTable: "Top FPL points table",
+    exampleXg: "Expected goals",
     historyLink: "Past questions",
     playerRangeLink: "Compare players across seasons",
     freshnessHeading: "Data freshness",
@@ -243,6 +255,12 @@ const ES: Locale = {
     askPlaceholder: "Pregunta sobre el Manchester United…",
     askButton: "Preguntar",
     examplesHeading: "Prueba preguntando",
+    exampleQuestionsHeading: "Preguntas de ejemplo",
+    exampleGoals: "Máximos goles",
+    exampleAssistsTable: "Máximas asistencias tabla",
+    exampleMinutesDots: "Más minutos gráfico de puntos",
+    examplePointsTable: "Más puntos FPL tabla",
+    exampleXg: "Goles esperados",
     historyLink: "Preguntas anteriores",
     playerRangeLink: "Comparar jugadores entre temporadas",
     freshnessHeading: "Actualización de los datos",

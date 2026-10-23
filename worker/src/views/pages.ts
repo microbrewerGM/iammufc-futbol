@@ -11,6 +11,8 @@ import { columnFeasibility, type Catalog, type FeasibilityResult } from "../core
 import type { QueryIntent } from "../core/intent";
 import { formatNumber, metricLabel, positionLabel, type Locale } from "../core/locale";
 import type { Proposal } from "../core/parser";
+import { parseRuleBased } from "../core/parser";
+import { parseIntent, validateExecutionSupport, validateQuerySemantics } from "../core/validate-intent";
 import { per90 } from "../core/rates";
 import { eligibleLeagueSeasons, type SeasonComparison } from "../core/season-comparison";
 import type { GateRejected } from "../security/askguard";
@@ -698,19 +700,26 @@ export function homeBody(
       : `Compare league seasons · ${teamSeason}`;
     comparisonLinks.push(`<li><a href="${base(locale)}/season/${esc(teamSeason)}#team-seasons">${esc(label)}</a></li>`);
   }
-  const questionExamples = (["goals", "assists", "xg"] as const).flatMap((metric) => {
+  const specs = [
+    ["goals", "bar", t.exampleGoals], ["assists", "table", locale.code === "en" ? "Top assists" : "Máximas asistencias"],
+    ["minutes", "dot_plot", t.exampleMinutesDots], ["points", "table", t.examplePointsTable],
+    ["xg", "bar", t.exampleXg],
+  ] as const;
+  const questionExamples = specs.flatMap(([metric, viz, label]) => {
     const season = catalog.seasonsFor(metric, "player", "box_score").find((candidate) => {
-      const result = catalog.checkFeasibility({
-        metric, entity_type: "player", entity_id: "all", season: candidate,
-        competition: "PL", dimensions: [], filters: {}, viz: "bar", limit: 10,
-      });
+      const question = `${label} ${candidate}`;
+      const proposal = parseRuleBased(question, catalog);
+      const parsed = parseIntent(proposal.intent);
+      if (!parsed.ok || proposal.confidence !== "high" || proposal.notes.length ||
+        validateQuerySemantics(parsed.intent) || validateExecutionSupport(parsed.intent) ||
+        parsed.intent.metric !== metric || parsed.intent.viz !== viz ||
+        parsed.intent.entity_type !== "player" || parsed.intent.entity_id !== "all" ||
+        parsed.intent.season !== candidate || parsed.intent.competition !== "PL" ||
+        parsed.intent.dimensions.length || Object.keys(parsed.intent.filters).length || parsed.intent.limit !== 10) return false;
+      const result = catalog.checkFeasibility(parsed.intent, locale.code);
       return result.state === "available" || result.state === "computable_now_queued";
     });
-    if (!season) return [];
-    const labels = locale.code === "es"
-      ? { goals: "Máximos goles", assists: "Máximas asistencias", xg: "Goles esperados" }
-      : { goals: "Top goals", assists: "Top assists", xg: "Expected goals" };
-    return [exampleQuestion(locale, `${labels[metric]} ${season}`)];
+    return season ? [exampleQuestion(locale, `${label} ${season}`)] : [];
   });
   return `<h1>iammufc</h1>
 <p class="tagline">${esc(t.siteTagline)}</p>
@@ -719,7 +728,7 @@ ${chatForm(locale)}
 <h3>${esc(t.examplesHeading)}</h3>
 <ul class="examples">
 ${comparisonLinks.join("\n")}
-${questionExamples.join("\n")}
+${questionExamples.length ? `<li class="example-heading">${esc(t.exampleQuestionsHeading)}</li>${questionExamples.join("\n")}` : ""}
 </ul>
 <p><a href="${base(locale)}/history">${esc(t.historyLink)}</a></p>
 </div>
