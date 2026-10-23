@@ -29,6 +29,14 @@ describe("exploration bridge publication verifier", () => {
     expect(await createPublicationVerifier(evidence(candidate)).verify(job, candidate)).toBe(true);
   });
 
+  it("rejects a future load timestamp but accepts one exactly at the verifier clock", async () => {
+    const candidate = { ...publication, request_id: (await requestIdFor(request))!, loaded_at: "2026-10-23T12:00:00Z" };
+    const clock = Date.parse(candidate.loaded_at);
+    const verifier = createPublicationVerifier(evidence(candidate), () => clock);
+    expect(await verifier.verify(job, { ...candidate, loaded_at: "2026-10-23T12:00:00.001Z" })).toBe(false);
+    expect(await verifier.verify(job, candidate)).toBe(true);
+  });
+
   it("fails closed for every mismatched candidate reference", async () => {
     const candidate = { ...publication, request_id: (await requestIdFor(request))! };
     const variants: Publication[] = [

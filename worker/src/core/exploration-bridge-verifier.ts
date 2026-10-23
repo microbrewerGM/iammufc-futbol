@@ -59,7 +59,7 @@ export async function requestIdFor(request: unknown): Promise<string | null> {
   } catch { return null; }
 }
 
-export function createPublicationVerifier(reader: PublicationEvidenceReader): PublicationVerifier {
+export function createPublicationVerifier(reader: PublicationEvidenceReader, now: () => number = Date.now): PublicationVerifier {
   return {
     async verify(job: Job, candidate: Publication): Promise<boolean> {
       try {
@@ -67,7 +67,7 @@ export function createPublicationVerifier(reader: PublicationEvidenceReader): Pu
         if (!hash(candidate.artifact_key) || !hash(candidate.request_id)
           || !id(candidate.validation_record_id) || !id(candidate.publication_id)
           || !id(candidate.loaded_snapshot_id) || !id(candidate.coverage_record_id)
-          || !time(candidate.loaded_at) || !ids(candidate.lineage)) return false;
+          || !time(candidate.loaded_at) || Date.parse(candidate.loaded_at) > now() || !ids(candidate.lineage)) return false;
 
         const expectedRequestId = await requestIdFor(job.request);
         if (!expectedRequestId || expectedRequestId !== candidate.request_id) return false;
