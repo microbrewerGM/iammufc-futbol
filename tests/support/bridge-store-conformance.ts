@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { BridgeStore, Job, OperationRecord, StoredJob } from "../../worker/src/core/exploration-bridge";
 
 /** Supply a fresh, isolated store seeded with exactly these records for each test.
- * D1 fixtures can insert directly in setup and release their database in dispose.
+ * D1 fixtures must establish seeded states through legal transitions, then release
+ * their database in dispose. Never disable production constraints for setup.
  * No test relies on private maps, SQL representation or a synchronous factory. */
 export interface BridgeStoreFixture { store: BridgeStore; dispose?(): void | Promise<void> }
 export type BridgeStoreFactory = (rows: StoredJob[]) => BridgeStoreFixture | Promise<BridgeStoreFixture>;
@@ -39,11 +40,11 @@ export function bridgeStoreConformance(name: string, create: BridgeStoreFactory)
         failure: "source_unavailable", retry_after: NOW }), row(8, BEFORE, { status: "failed", attempt: 2,
         failure: "lease_expired", retry_after: BEFORE }), row(9, BEFORE, { status: "failed", attempt: 1,
         failure: "validation_failed", retry_after: AFTER }), row(10, BEFORE, { status: "failed", attempt: 3,
-        failure: "attempts_exhausted", retry_after: null }), row(11, BEFORE, { status: "failed", attempt: 1,
-        failure: "publication_failed", retry_after: null }), row(12, BEFORE, { status: "queued", retry_after: BEFORE }),
-        row(13, BEFORE, { status: "published", retry_after: BEFORE, lease_expires_at: BEFORE }),
-        row(14, BEFORE, { status: "running", attempt: 1, lease_id: "lease-14", lease_expires_at: null }),
-        row(15, BEFORE, { status: "failed", attempt: 3, failure: "attempts_exhausted", retry_after: BEFORE })];
+        failure: "attempts_exhausted", retry_after: null }), row(12, BEFORE, { status: "queued", attempt: 1, retry_after: BEFORE }),
+        row(13, BEFORE, { status: "published", attempt: 1, publication: {
+          artifact_key: id(100), request_id: id(101), validation_record_id: "validation-1", publication_id: "publication-1",
+          loaded_snapshot_id: "snapshot-1", coverage_record_id: "coverage-1", loaded_at: BEFORE, lineage: ["lineage-1"],
+        } })];
       const fixture = await create(structuredClone(rows));
       store = fixture.store;
       return async () => { await fixture.dispose?.(); };
