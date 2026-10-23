@@ -20,11 +20,30 @@ describe("opponent history view", () => {
     expect(html).toContain(locale === "en" ? "Record unavailable" : "Balance no disponible");
     expect(html).toContain("League data credit"); expect(html).toContain(snapshot);
     expect(html).toContain(locale === "en" ? "3.00" : "3,00"); expect(html).toContain(locale === "en" ? "1.00" : "1,00");
+    expect(html).toMatch(/<th scope="col">(?:Status|Estado)<\/th>/);
+    expect(html).toContain('aria-describedby="h2h-summary"');
+    expect(html).toContain("Arsenal");
+    expect(html).toContain(locale === "en" ? "All venues" : "Todas las localías");
+    expect(html).toContain("2023-24, 2024-25, 2025-26");
+    expect(html).toContain(locale === "en" ? "Record unavailable; missing matches are not zero" : "Balance no disponible; los partidos ausentes no equivalen a cero");
   });
   it("escapes labels, keeps a true zero mark, and distinguishes empty from unavailable", () => {
     const unsafe = opponentHistoryBody({ result, opponentLabel: '<img src=x onerror="x">', credits: {} }, "en");
     expect(unsafe).not.toMatch(/<img\b/); expect(unsafe).toContain("&lt;img");
     expect(unsafe).toContain('width="24" height="46"');
     expect(unsafe).toContain("Source attribution unavailable");
+  });
+  it("labels an observed zero and describes opponent, venue, values, and coverage states", () => {
+    const zeroSeasons = ["2023-24", "2024-25", "2025-26"];
+    const zeroRequest = { ...request, seasons: zeroSeasons };
+    const completeCatalog: SeasonSplitCatalog = { snapshot_id: snapshot, seasons: zeroSeasons.map((season, i) => ({ season, coverage: i === 2 ? "missing" as const : "complete" as const })) } as SeasonSplitCatalog;
+    const withZero = queryOpponentHistory(zeroRequest, completeCatalog, [row("2023-24", "home", 0, 0, 1, 0, 1)]);
+    const html = opponentHistoryBody({ result: withZero, opponentLabel: "Arsenal", credits: {} }, "en");
+    expect(html).toContain('<circle cx="42" cy="74" r="3" class="zero-mark"/>');
+    expect(html).toContain('<text x="42" y="65" text-anchor="middle">0.00</text>');
+    expect(html).toContain("No completed matches match this selection.");
+    expect(html).toContain("Record unavailable; missing matches are not zero");
+    expect(html).toContain("No completed matches match this selection.");
+    expect(html).toContain("Arsenal"); expect(html).toContain("All venues");
   });
 });
