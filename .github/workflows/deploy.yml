@@ -156,12 +156,12 @@ jobs:
           accountId: ${{ secrets.CF_ACCOUNT }}
           command: d1 execute iammufc-dev --config infra/wrangler.jsonc --env dev --remote --file infra/migrations/0006_season_splits.sql
 
-      - name: Apply exploration requests migration (dev)
+      - name: Apply exploration request links migration (dev)
         uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
         with:
           apiToken: ${{ secrets.CF_TOKEN_DEV }}
           accountId: ${{ secrets.CF_ACCOUNT }}
-          command: d1 execute iammufc-dev --config infra/wrangler.jsonc --env dev --remote --file infra/migrations/0007_exploration_requests.sql
+          command: d1 execute iammufc-dev --config infra/wrangler.jsonc --env dev --remote --file infra/migrations/0008_exploration_request_links.sql
 
       - name: Deploy Worker (dev)
         uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
@@ -265,12 +265,12 @@ jobs:
           accountId: ${{ secrets.CF_ACCOUNT }}
           command: d1 execute iammufc-dev --config infra/wrangler.jsonc --env dev --remote --file infra/migrations/0006_season_splits.sql
 
-      - name: Apply exploration requests migration (dev)
+      - name: Apply exploration request links migration (dev)
         uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
         with:
           apiToken: ${{ secrets.CF_TOKEN_DEV }}
           accountId: ${{ secrets.CF_ACCOUNT }}
-          command: d1 execute iammufc-dev --config infra/wrangler.jsonc --env dev --remote --file infra/migrations/0007_exploration_requests.sql
+          command: d1 execute iammufc-dev --config infra/wrangler.jsonc --env dev --remote --file infra/migrations/0008_exploration_request_links.sql
 
       - name: Load verified private seed into dev D1
         uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
