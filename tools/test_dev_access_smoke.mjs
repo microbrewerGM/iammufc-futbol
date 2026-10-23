@@ -75,7 +75,7 @@ test('fixed dev origin, manual redirects, private response and all checks', asyn
       : chat ? JSON.stringify(rejected ? unsupported : validChat)
       : query ? JSON.stringify({ ...validQuery(queryCalls++ === 0 ? 'computable_now_queued' : 'available'),
         rows: [...validQuery().rows].reverse() })
-      : url.includes('/seasons/explore') ? `<html lang="${new URL(url).pathname.startsWith('/es/') ? 'es' : 'en'}"><link rel="canonical" href="${new URL(url).pathname}">No exploration data</html>`
+      : url.includes('/seasons/explore') ? `<html lang="${new URL(url).pathname.startsWith('/es/') ? 'es' : 'en'}"><link rel="canonical" href="${new URL(url).pathname}?schema_version=1&amp;competition=PL&amp;seasons=2014-15&amp;group_by=venue">No exploration data</html>`
       : 'Ask about Manchester United Pregunta sobre el Manchester United Data and sources Datos y fuentes League season comparison Comparación de temporadas de liga 62–37 goals 62–37 goles >1.84</td> >1,84</td> 49–35 goals 49–35 goles >1.74</td> >1,74</td> font-family Assists — 2023-24 PL class="dot" aria-current="page">Dots</a> aria-current="page">Gráfico de puntos</a> <table>',
     { status: rejected ? 422 : 200, headers: { 'cache-control': 'private, no-store',
       ...((health || chat || query) ? { 'content-type': 'application/json; charset=UTF-8' } : {}) } });
@@ -85,6 +85,11 @@ test('fixed dev origin, manual redirects, private response and all checks', asyn
   assert.equal(calls.find((call) => new URL(call.url).pathname === '/api/health').init.method, 'GET');
   for (const locale of ['en', 'es']) {
     const call = calls.find(({ url }) => new URL(url).pathname === `/${locale}/seasons/explore`);
+    const url = new URL(call.url);
+    assert.deepEqual([...url.searchParams.entries()], [
+      ['schema_version', '1'], ['competition', 'PL'], ['seasons', '2014-15'], ['group_by', 'venue'],
+    ]);
+    assert.equal(call.init.headers.Origin, url.origin);
     assert.equal(call.init.headers['Sec-Fetch-Site'], 'same-origin');
   }
   assert.ok(results.every((result) => result.pass), JSON.stringify(results.filter((result) => !result.pass)));
@@ -405,7 +410,7 @@ test('combined smoke requires authenticated success and denial success', async (
       chat ? JSON.stringify(rejected ? unsupported : validChat) :
       query ? JSON.stringify(validQuery(queryCalls++ === 0 ? 'computable_now_queued' : 'available')) :
       (path === '/en/seasons/explore' || path === '/es/seasons/explore')
-        ? `<html lang="${path.startsWith('/es/') ? 'es' : 'en'}"><link rel="canonical" href="${path}">No exploration data</html>` :
+        ? `<html lang="${path.startsWith('/es/') ? 'es' : 'en'}"><link rel="canonical" href="${path}?schema_version=1&amp;competition=PL&amp;seasons=2014-15&amp;group_by=venue">No exploration data</html>` :
       'Ask about Manchester United Pregunta sobre el Manchester United Data and sources Datos y fuentes League season comparison Comparación de temporadas de liga 62–37 goals 62–37 goles >1.84</td> >1,84</td> 49–35 goals 49–35 goles >1.74</td> >1,74</td> font-family Assists — 2023-24 PL class="dot" aria-current="page">Dots</a> aria-current="page">Gráfico de puntos</a> <table>',
     { status: rejected ? 422 : 200, headers: { 'cache-control': 'private, no-store',
       ...((health || chat || query) ? { 'content-type': 'application/json' } : {}) } });
