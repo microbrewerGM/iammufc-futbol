@@ -63,8 +63,10 @@ class SQLiteStatement implements D1PreparedStatement {
   }
   execute<T>(): D1Result<T> {
     const statement = this.binding.sqlite.prepare(this.sql);
+    const before = Number(this.binding.sqlite.prepare("SELECT total_changes() AS n").get().n);
     const results = statement.all(...this.values) as T[];
-    const changes = Number(this.binding.sqlite.prepare("SELECT changes() AS n").get().n);
+    // D1 metadata counts trigger/cascade writes, unlike SQLite changes().
+    const changes = Number(this.binding.sqlite.prepare("SELECT total_changes() AS n").get().n) - before;
     return { results, success: true, meta: { changes, duration: 0, size_after: 0, rows_read: results.length,
       rows_written: changes, last_row_id: 0, changed_db: changes > 0 } };
   }

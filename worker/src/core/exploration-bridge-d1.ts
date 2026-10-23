@@ -97,7 +97,9 @@ export class D1BridgeStore implements BridgeStore {
         WHERE service = ? AND operation_type = ? AND operation_id = ?)`;
       values.push(operation.service, operation.type, operation.operation_id);
     }
-    const statements = [this.db.prepare(sql).bind(...values)];
+    // RETURNING reports the directly matched job even when AFTER triggers also
+    // collect an orphan. D1 meta.changes includes trigger/FK side effects.
+    const statements = [this.db.prepare(sql + " RETURNING job_id").bind(...values)];
     if (operation !== null) {
       statements.push(this.db.prepare(`INSERT INTO exploration_bridge_operations
         (service, scope_key, operation_type, operation_id, body_hash, response_json, lease_id, created_at, expires_at)
@@ -110,6 +112,6 @@ export class D1BridgeStore implements BridgeStore {
     // update. changes() binds the insert to THIS update, including the no-op case.
     // Storage errors propagate; they must never be reported as a successful CAS.
     const result = await this.db.batch(statements);
-    return result[0]!.meta.changes === 1;
+    return result[0]!.results.length === 1;
   }
 }
