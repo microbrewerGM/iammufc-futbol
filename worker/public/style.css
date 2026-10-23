@@ -2,6 +2,17 @@
    inline exception. Static-asset requests are free and unmetered on Workers. */
 
 :root {
+  /* Four-point spacing scale (design-principles.md section 3).
+     4px scale expressed in rem (16px root). */
+  --space-1: .25rem;
+  --space-2: .5rem;
+  --space-3: .75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
   --bg: #fbfbfa;
   --fg: #1a1a1a;
   --muted: #5f6368;
@@ -67,7 +78,7 @@ select:focus-visible {
 
 body {
   margin: 0;
-  padding: 2rem 1.25rem 4rem;
+  padding: var(--space-8) var(--space-5) var(--space-16);
   background: var(--bg);
   color: var(--fg);
   font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -77,16 +88,16 @@ main { max-width: 780px; margin: 0 auto; }
 
 .analysis-nav {
   max-width: 780px;
-  margin: .5rem auto 1rem;
+  margin: var(--space-2) auto var(--space-4);
   font-size: .9rem;
   display: flex;
   flex-wrap: wrap;
-  gap: .5rem 1rem;
+  gap: var(--space-2) var(--space-4);
 }
 
 .session-nav {
   max-width: 780px;
-  margin: -.5rem auto 1rem;
+  margin: calc(-1 * var(--space-2)) auto var(--space-4);
   font-size: .9rem;
   display: flex;
   justify-content: flex-end;
@@ -121,14 +132,14 @@ main { max-width: 780px; margin: 0 auto; }
 .lang-toggle {
   max-width: 780px;
   margin: 0 auto;
-  padding: .75rem 1.25rem 0;
+  padding: var(--space-3) var(--space-5) 0;
   display: flex;
   justify-content: flex-end;
-  gap: .25rem;
+  gap: var(--space-1);
   font-size: .82rem;
 }
 .lang-toggle a {
-  padding: .25rem .5rem;
+  padding: var(--space-1) var(--space-2);
   border-radius: 5px;
   color: var(--muted);
   text-decoration: none;
@@ -141,32 +152,32 @@ main { max-width: 780px; margin: 0 auto; }
   text-underline-offset: 2px;
 }
 
-h1 { font-size: 1.45rem; margin: 0 0 .25rem; letter-spacing: -.01em; }
-h2 { font-size: 1.05rem; margin: 2rem 0 .5rem; }
-h3 { font-size: .85rem; margin: 1.5rem 0 .5rem; text-transform: uppercase;
+h1 { font-size: 1.45rem; margin: 0 0 var(--space-1); letter-spacing: -.01em; }
+h2 { font-size: 1.05rem; margin: var(--space-8) 0 var(--space-2); }
+h3 { font-size: .85rem; margin: var(--space-6) 0 var(--space-2); text-transform: uppercase;
      letter-spacing: .06em; color: var(--muted); }
 
 a { color: var(--accent); text-decoration-thickness: 1px; }
 a:hover { color: var(--accent-hover); }
-p { margin: .5rem 0; }
+p { margin: var(--space-2) 0; }
 
-.tagline { color: var(--muted); margin: 0 0 1.5rem; font-size: .92rem; }
+.tagline { color: var(--muted); margin: 0 0 var(--space-6); font-size: .92rem; }
 
 .card {
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 10px;
-  padding: 1rem 1.25rem;
-  margin: 1rem 0;
+  padding: var(--space-4) var(--space-5);
+  margin: var(--space-4) 0;
   box-shadow: var(--shadow); /* subtle -- if you notice it first, it's wrong (§7) */
 }
 
-form { display: flex; gap: .5rem; flex-wrap: wrap; }
+form { display: flex; gap: var(--space-2); flex-wrap: wrap; }
 
 input[type="text"], input[type="number"], select {
   flex: 1 1 16rem;
   min-width: 0;
-  padding: .5rem .75rem;
+  padding: var(--space-2) var(--space-3);
   font: inherit;
   color: var(--fg);
   background: var(--bg);
@@ -178,7 +189,7 @@ input[type="text"]:hover, input[type="number"]:hover, select:hover { border-colo
 input[type="text"]:focus-visible, input[type="number"]:focus-visible, select:focus-visible { border-color: var(--focus-ring); }
 
 button {
-  padding: .5rem 1rem;
+  padding: var(--space-2) var(--space-4);
   font: inherit;
   font-weight: 600;
   color: #fff;
@@ -205,9 +216,9 @@ button.secondary {
 button.secondary:hover { background: var(--accent-soft); color: var(--accent-hover); }
 button.secondary:disabled { background: transparent; border-color: var(--line); color: var(--muted); }
 
-.examples { list-style: none; padding: 0; margin: .75rem 0 0;
+.examples { list-style: none; padding: 0; margin: var(--space-3) 0 0;
             font-size: .88rem; color: var(--muted); }
-.examples li { margin: .25rem 0; }
+.examples li { margin: var(--space-1) 0; }
 
 /* Provenance, not the answer -- deliberately quiet (design-principles.md §2).
    A pink/accent background here would out-shout the chart it describes, which
@@ -219,13 +230,13 @@ button.secondary:disabled { background: transparent; border-color: var(--line); 
   background: transparent;
   border: 1px solid var(--line);
   border-radius: 7px;
-  padding: .5rem .75rem;
+  padding: var(--space-2) var(--space-3);
   overflow-x: auto;
   white-space: pre;
 }
 
 .note { background: var(--warn-bg); border: 1px solid var(--warn-line);
-        border-radius: 7px; padding: .75rem; font-size: .88rem; }
+        border-radius: 7px; padding: var(--space-3); font-size: .88rem; }
 /* A refusal is semantic danger, not brand -- --danger is intentionally a
    different hue from --accent so the two never get confused (§5). */
 .stop {
@@ -233,15 +244,15 @@ button.secondary:disabled { background: transparent; border-color: var(--line); 
   border: 1px solid var(--stop-line);
   border-left: 3px solid var(--danger);
   border-radius: 7px;
-  padding: 1rem;
+  padding: var(--space-4);
 }
 .stop .state { font-family: ui-monospace, monospace; font-size: .78rem;
                text-transform: uppercase; letter-spacing: .05em; color: var(--danger); }
 
-.viz-choices { display: flex; flex-wrap: wrap; gap: .5rem; margin: .5rem 0; }
-.viz-choices a { border: 1px solid var(--line); border-radius: 999px; padding: .25rem .65rem; text-decoration: none; }
+.viz-choices { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: var(--space-2) 0; }
+.viz-choices a { border: 1px solid var(--line); border-radius: 999px; padding: var(--space-1) var(--space-3); text-decoration: none; }
 .viz-choices a[aria-current="page"] { background: var(--accent-soft); font-weight: 700; text-decoration: underline; }
-.chart-region { max-width: 100%; overflow-x: auto; margin: .5rem 0 1rem; }
+.chart-region { max-width: 100%; overflow-x: auto; margin: var(--space-2) 0 var(--space-4); }
 .chart-region:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .chart { display: block; overflow: visible; }
 .chart .bar { fill: var(--accent); }
@@ -252,13 +263,13 @@ button.secondary:disabled { background: transparent; border-color: var(--line); 
 .chart .val { fill: var(--muted); font-size: 12px; font-family: ui-monospace, monospace; }
 
 table { border-collapse: collapse; width: 100%; font-size: .9rem; }
-th, td { text-align: left; padding: .5rem; border-bottom: 1px solid var(--line); }
+th, td { text-align: left; padding: var(--space-2); border-bottom: 1px solid var(--line); }
 tbody tr:hover { background: var(--card-hover); }
 th { color: var(--muted); font-weight: 600; font-size: .8rem;
      text-transform: uppercase; letter-spacing: .04em; }
 td.num, th.num { text-align: right; font-family: ui-monospace, monospace; }
 
-.matrix td, .matrix th { font-size: .82rem; padding: .25rem .5rem; }
+.matrix td, .matrix th { font-size: .82rem; padding: var(--space-1) var(--space-2); }
 .yes { color: var(--accent); font-weight: 700; }
 .no  { color: var(--muted); }
 
@@ -270,7 +281,7 @@ tbody tr.current:hover td:first-child { background: var(--accent-soft); }
 tr.current td:first-child { font-weight: 700; }
 
 footer {
-  max-width: 780px; margin: 3rem auto 0; padding-top: 1.25rem;
+  max-width: 780px; margin: var(--space-12) auto 0; padding-top: var(--space-5);
   border-top: 1px solid var(--line);
   font-size: .8rem; color: var(--muted);
 }
