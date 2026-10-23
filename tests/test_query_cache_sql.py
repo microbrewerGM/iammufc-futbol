@@ -77,6 +77,31 @@ def test_cache_write_is_bounded_direct_mapped_and_snapshot_guarded():
     assert write(KEY_COLLISION, SNAPSHOT_NEW, "no publication") == 0
 
 
+def test_guard_follows_newest_created_at_not_insertion_order():
+    source = (ROOT / "worker/src/core/db.ts").read_text()
+    sql = re.search(r"`(INSERT INTO query_result_cache_slots.*?)`", source, re.S).group(1)
+    db = sqlite3.connect(":memory:")
+    db.executescript((ROOT / "infra/migrations/0001_schema.sql").read_text())
+    db.executescript((ROOT / "infra/migrations/0004_cache_slots.sql").read_text())
+    # The newer publication is inserted first; the older one is inserted last.
+    db.execute("INSERT INTO snapshots VALUES (?, ?, ?, ?)", (SNAPSHOT_NEW, "2026-10-02", "{}", "{}"))
+    db.execute("INSERT INTO snapshots VALUES (?, ?, ?, ?)", (SNAPSHOT_OLD, "2026-10-01", "{}", "{}"))
+
+    def write(snapshot: str) -> int:
+        return db.execute(
+            sql, (cache_slot(KEY_FIRST), KEY_FIRST, snapshot, "payload", snapshot)
+        ).rowcount
+
+    assert write(SNAPSHOT_OLD) == 0
+    assert db.execute("SELECT COUNT(*) FROM query_result_cache_slots").fetchone() == (0,)
+    assert write(SNAPSHOT_NEW) == 1
+    # A superseded writer cannot replace the current entry in the same slot.
+    assert write(SNAPSHOT_OLD) == 0
+    assert db.execute(
+        "SELECT snapshot_id, result_json FROM query_result_cache_slots"
+    ).fetchone() == (SNAPSHOT_NEW, "payload")
+
+
 def test_slot_table_rejects_non_integer_and_out_of_range_slots():
     db = sqlite3.connect(":memory:")
     db.executescript((ROOT / "infra/migrations/0001_schema.sql").read_text())
