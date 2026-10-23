@@ -113,11 +113,14 @@ describe("read", () => {
     const { store, deps } = setup();
     seed(store, 3, {}, "2026-10-22T09:00:00.000Z");
     seed(store, 2, {}, "2026-10-22T10:00:00.000Z");
-    seed(store, 1, {}, "2026-10-22T10:00:00.000Z");
+    const firstId = hex(1);
+    store.jobs.set(firstId, { job: { job_id: firstId, request, status: "queued", attempt: 0, lease_id: null,
+      lease_expires_at: null, retry_after: null, failure: null, publication: null }, admitted_at: "2026-10-22T10:00:00.000Z",
+      lease_owner: null, revision: 1 });
     const before = JSON.stringify([...store.jobs]);
     const p1 = payload(await readJobs(deps, runner, env("read", { cursor: null, limit: 2 })));
     expect(p1.jobs.map((j: Job) => j.job_id)).toEqual([hex(3), hex(1)]);
-    expect(p1.next_cursor).toMatch(/^c2:[A-Za-z0-9_-]{43}:[0-9a-z]+:[A-Za-z0-9_-]{43}$/);
+    expect(p1.next_cursor).toMatch(/^c3:[0-9a-f]{32}:[0-9a-z]+:[0-9a-z]+$/);
     const p2 = payload(await readJobs(deps, runner, env("read", { cursor: p1.next_cursor, limit: 2 })));
     expect(p2.jobs.map((j: Job) => j.job_id)).toEqual([hex(2)]);
     expect(p2.next_cursor).toBeNull();
@@ -185,6 +188,24 @@ describe("read", () => {
     store.jobs.delete(a);
     const second = payload(await readJobs(deps, runner, env("read", { cursor: first.next_cursor, limit: 1 })));
     expect(second.jobs.map((j: Job) => j.job_id)).toEqual([hex(2)]);
+  });
+  it("emits a schema-valid next cursor and accepts it as the next read cursor at current time and max job id", async () => {
+    const { store, deps } = setup();
+    const longId = "f".repeat(64);
+    const firstId = hex(1);
+    store.jobs.set(firstId, { job: { job_id: firstId, request, status: "queued", attempt: 0, lease_id: null,
+      lease_expires_at: null, retry_after: null, failure: null, publication: null }, admitted_at: "2026-10-22T10:00:00.000Z",
+      lease_owner: null, revision: 1 });
+    const second: Job = { ...store.jobs.get(firstId)!.job, job_id: longId };
+    store.jobs.set(longId, { job: second, admitted_at: "2026-10-22T12:00:00.000Z", lease_owner: null, revision: 1 });
+    const first = payload(await readJobs(deps, runner, env("read", { cursor: null, limit: 1 })));
+    expect(first.next_cursor).not.toBeNull();
+    expect(first.next_cursor.length).toBeLessThanOrEqual(96);
+    expect(schemaValid("read_result", { ...first, next_cursor: null })).toBe(true);
+    expect(first.next_cursor).toMatch(/^[a-z0-9][a-z0-9:_-]{0,95}$/);
+    expect(schemaValid("read", { cursor: null, limit: 1 })).toBe(true);
+    const next = payload(await readJobs(deps, runner, env("read", { cursor: first.next_cursor, limit: 1 })));
+    expect(next.jobs[0].job_id).toBe(longId);
   });
   it("skips malformed and oversized stored requests while returning valid rows", async () => {
     const { store, deps } = setup();

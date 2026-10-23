@@ -61,12 +61,15 @@ export interface CursorSigner { sign(message: string): Promise<string>; verify(m
 export function hmacCursorSigner(key: Uint8Array): CursorSigner {
   const bytes = new Uint8Array(key);
   const imported = crypto.subtle.importKey("raw", bytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
-  const enc = (b: Uint8Array) => btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  const enc = (b: Uint8Array) => [...b].map(x => x.toString(16).padStart(2, "0")).join("");
   return {
-    async sign(message) { return enc(new Uint8Array(await crypto.subtle.sign("HMAC", await imported, new TextEncoder().encode(message)))); },
+    async sign(message) { return enc(new Uint8Array(await crypto.subtle.sign("HMAC", await imported, new TextEncoder().encode(message))).slice(0, 16)); },
     async verify(message, tag) {
-      try { const raw = atob(tag.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - tag.length % 4) % 4));
-        return await crypto.subtle.verify("HMAC", await imported, Uint8Array.from(raw, c => c.charCodeAt(0)), new TextEncoder().encode(message));
+      try { const raw = Uint8Array.from(tag.match(/../g) ?? [], x => parseInt(x, 16));
+        if (raw.length !== 16 || !/^[0-9a-f]{32}$/.test(tag)) return false;
+        const expected = new Uint8Array(await crypto.subtle.sign("HMAC", await imported, new TextEncoder().encode(message))).slice(0, 16);
+        const actual = raw;
+        return actual.length === expected.length && actual.every((b, i) => b === expected[i]);
       } catch { return false; }
     },
   };
@@ -80,7 +83,7 @@ export type BridgeResult = { ok: true; body: string } | { ok: false; error: Brid
 const ID = /^[a-z0-9][a-z0-9:_-]{0,95}$/;
 const HASH = /^[0-9a-f]{64}$/;
 const TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
-const CURSOR = /^c2:([A-Za-z0-9_-]{43}):([0-9a-z]+):([A-Za-z0-9_-]{43})$/;
+const CURSOR = /^c3:([0-9a-f]{32}):([0-9a-z]+):([0-9a-z]+)$/;
 const PAGE_MAX = 20;
 const SWEEP_BATCH = 100;
 const FAIL_REASONS: readonly string[] = ["source_unavailable", "validation_failed", "publication_failed"];
@@ -160,15 +163,15 @@ export async function cursorFor(signer: CursorSigner, caller: Caller, jobId: str
 
 function encodePosition(position: PagePosition): string {
   const timestamp = Date.parse(position.admitted_at);
-  const bytes = Uint8Array.from(position.job_id.match(/.{2}/g)!, byte => parseInt(byte, 16));
-  return `${timestamp.toString(36)}:${btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "")}`;
+  return `${timestamp.toString(36)}:${BigInt(`0x${position.job_id}`).toString(36)}`;
 }
 function decodePosition(timestamp: string, encoded: string): PagePosition | null {
   try {
-    const binary = atob(encoded.replace(/-/g, "+").replace(/_/g, "/"));
-    const job_id = [...binary].map(c => c.charCodeAt(0).toString(16).padStart(2, "0")).join("");
+    if (!/^(0|[1-9a-z][0-9a-z]*)$/.test(encoded)) return null;
+    let n = 0n; for (const c of encoded) n = n * 36n + BigInt(parseInt(c, 36));
+    const job_id = n.toString(16).padStart(64, "0");
     const ms = parseInt(timestamp, 36);
-    if (binary.length !== 32 || !Number.isSafeInteger(ms) || ms < 0 || !isHash(job_id)) return null;
+    if (n >= (1n << 256n) || !Number.isSafeInteger(ms) || ms < 0 || !isHash(job_id)) return null;
     return { admitted_at: new Date(ms).toISOString(), job_id };
   } catch { return null; }
 }
@@ -204,7 +207,7 @@ function validStoredRequest(v: unknown): boolean {
 }
 async function pageCursor(signer: CursorSigner, caller: Caller, position: PagePosition): Promise<string> {
   const [timestamp, jobId] = encodePosition(position).split(":");
-  return `c2:${await signer.sign(cursorMessage(caller, position))}:${timestamp}:${jobId}`;
+  return `c3:${await signer.sign(cursorMessage(caller, position))}:${timestamp}:${jobId}`;
 }
 function cursorMessage(caller: Caller, position: PagePosition): string {
   return `${caller.service}\n${caller.capability}\n${new Date(Date.parse(position.admitted_at)).toISOString()}\n${position.job_id}`;
