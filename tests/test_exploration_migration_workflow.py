@@ -1,9 +1,13 @@
 """Exploration storage migration stays ordered in deploy and local publication paths."""
 
 import json
+import sqlite3
 from pathlib import Path
 
 import yaml
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_deploy() -> dict:
@@ -77,6 +81,88 @@ def test_season_migration_is_ordered_before_worker_and_private_seed() -> None:
     assert "--remote" not in local_seed
     assert local_seed.index("0005_account_question_history.sql") < local_seed.index("0006_season_splits.sql") < local_seed.index("0002_seed.sql")
     assert local_seed.index("0006_season_splits.sql") < local_seed.index("0007_exploration_requests.sql") < local_seed.index("0002_seed.sql")
+    assert local_seed.index("0007_exploration_requests.sql") < local_seed.index("0008_exploration_request_links.sql") < local_seed.index("0002_seed.sql")
 
     assert deploy["permissions"] == {"contents": "read"}
     assert all(job["permissions"] == {"contents": "read"} for job in deploy["jobs"].values())
+
+
+def test_request_account_links_migration_is_idempotent_with_and_without_legacy_data() -> None:
+    migration = (ROOT / "infra/migrations/0008_exploration_request_links.sql").read_text(encoding="utf-8")
+    migrations = (
+        "0001_schema.sql",
+        "0003_p16_dot_plot.sql",
+        "0004_cache_slots.sql",
+        "0005_account_question_history.sql",
+        "0006_season_splits.sql",
+        "0007_exploration_requests.sql",
+        "0008_exploration_request_links.sql",
+    )
+
+    def database_state(db: sqlite3.Connection) -> tuple[list[tuple], list[tuple], list[tuple]]:
+        schema = db.execute(
+            """SELECT type, name, sql FROM sqlite_master
+            WHERE name LIKE 'exploration_request%' OR name LIKE 'idx_exploration_request%'
+            ORDER BY type, name"""
+        ).fetchall()
+        requests = db.execute("SELECT * FROM exploration_requests ORDER BY request_id").fetchall()
+        legacy_links = db.execute(
+            "SELECT * FROM exploration_request_accounts ORDER BY request_id, account_sub"
+        ).fetchall()
+        links = db.execute(
+            "SELECT * FROM exploration_request_links ORDER BY request_id, account_sub"
+        ).fetchall()
+        return schema, requests, legacy_links + links
+
+    clean_db = sqlite3.connect(":memory:")
+    try:
+        for name in migrations:
+            clean_db.executescript((ROOT / "infra/migrations" / name).read_text(encoding="utf-8"))
+        clean_once = database_state(clean_db)
+        clean_db.executescript(migration)
+        assert database_state(clean_db) == clean_once
+    finally:
+        clean_db.close()
+
+    db = sqlite3.connect(":memory:")
+    try:
+        for name in migrations[:-1]:
+            db.executescript((ROOT / "infra/migrations" / name).read_text(encoding="utf-8"))
+
+        request_id = "a" * 64
+        request_json = json.dumps({
+            "version": 1,
+            "family": "arrival_manager",
+            "as_of": "2026-10-20",
+            "population": "first_team_available",
+            "joining_basis": "effective_first_team_spell_entry",
+            "academy_basis": "documented_first_team_promotion",
+            "visualization": "table",
+        })
+        created_at = "2026-10-20T00:00:00Z"
+        expires_at = "2027-01-18T00:00:00Z"
+        db.execute(
+            """INSERT INTO exploration_requests
+            (request_id, account_sub, contract_version, request_json, created_at, expires_at)
+            VALUES (?, 'account-a', 1, ?, ?, ?)""",
+            (request_id, request_json, created_at, expires_at),
+        )
+        db.execute(
+            """INSERT INTO exploration_request_accounts
+            (request_id, account_sub, created_at, expires_at) VALUES (?, 'account-a', ?, ?)""",
+            (request_id, created_at, expires_at),
+        )
+        db.executescript(migration)
+        once = database_state(db)
+        db.executescript(migration)
+        assert database_state(db) == once
+        assert db.execute("PRAGMA table_info(exploration_requests)").fetchall()[1][1] == "account_sub"
+        assert db.execute(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='exploration_request_accounts'"
+        ).fetchone() == (1,)
+        assert once[1] == [(request_id, "account-a", 1, request_json, created_at, expires_at)]
+        assert db.execute("SELECT * FROM exploration_request_links").fetchall() == [
+            (request_id, "account-a", created_at, expires_at)
+        ]
+    finally:
+        db.close()

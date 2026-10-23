@@ -24,9 +24,10 @@ describe("exploration request account links migration", () => {
       db.prepare(`INSERT INTO exploration_request_accounts (request_id, account_sub, created_at, expires_at)
         VALUES (?, 'account-a', ?, '2027-01-18T00:00:00Z')`).run(requestId, now);
       db.exec(readFileSync("infra/migrations/0008_exploration_request_links.sql", "utf8"));
+      db.exec(readFileSync("infra/migrations/0008_exploration_request_links.sql", "utf8"));
       const insertRequest = `INSERT INTO exploration_requests
-        (request_id, contract_version, request_json, created_at, expires_at)
-        VALUES (?, 1, ?, ?, '2027-01-18T00:00:00Z')
+        (request_id, account_sub, contract_version, request_json, created_at, expires_at)
+        VALUES (?, 'legacy-unused', 1, ?, ?, '2027-01-18T00:00:00Z')
         ON CONFLICT(request_id) DO NOTHING`;
       db.prepare(insertRequest).run(requestId, requestJson, now);
       db.prepare(insertRequest).run(requestId, requestJson, now); // canonical replay is idempotent
@@ -44,22 +45,22 @@ describe("exploration request account links migration", () => {
       expect(() => db.prepare(`INSERT INTO exploration_jobs
         (job_id, request_id, status, attempt, admitted_at, created_at, updated_at, expires_at)
         VALUES (?, ?, 'queued', 0, ?, ?, ?, '2026-11-19T00:00:00Z')`).run("c".repeat(64), requestId, now, now, now)).toThrow();
-      db.prepare(`INSERT INTO exploration_request_accounts (request_id, account_sub, created_at, expires_at)
+      db.prepare(`INSERT INTO exploration_request_links (request_id, account_sub, created_at, expires_at)
         VALUES (?, 'account-b', ?, '2027-01-19T00:00:00Z')`).run(requestId, "2026-10-21T00:00:00Z");
-      expect(db.prepare(`SELECT account_sub, created_at, expires_at FROM exploration_request_accounts
+      expect(db.prepare(`SELECT account_sub, created_at, expires_at FROM exploration_request_links
         WHERE request_id=? ORDER BY account_sub`).all(requestId)).toEqual([
         { account_sub: "account-a", created_at: now, expires_at: "2027-01-18T00:00:00Z" },
         { account_sub: "account-b", created_at: "2026-10-21T00:00:00Z", expires_at: "2027-01-19T00:00:00Z" },
       ]);
-      expect(() => db.prepare(`INSERT INTO exploration_request_accounts
+      expect(() => db.prepare(`INSERT INTO exploration_request_links
         (request_id, account_sub, created_at, expires_at) VALUES (?, 'account-a', ?, '2027-01-18T00:00:00Z')`)
         .run(requestId, now)).toThrow();
-      expect(() => db.prepare(`UPDATE exploration_request_accounts SET account_sub='account-c'
+      expect(() => db.prepare(`UPDATE exploration_request_links SET account_sub='account-c'
         WHERE request_id=? AND account_sub='account-a'`).run(requestId)).toThrow();
       expect(db.prepare("SELECT count(*) AS n FROM exploration_requests WHERE request_id=?").get(requestId))
         .toEqual({ n: 1 });
-      db.prepare("DELETE FROM exploration_request_accounts WHERE request_id=? AND account_sub='account-a'").run(requestId);
-      expect(db.prepare("SELECT account_sub FROM exploration_request_accounts WHERE request_id=?").all(requestId))
+      db.prepare("DELETE FROM exploration_request_links WHERE request_id=? AND account_sub='account-a'").run(requestId);
+      expect(db.prepare("SELECT account_sub FROM exploration_request_links WHERE request_id=?").all(requestId))
         .toEqual([{ account_sub: "account-b" }]);
       expect(db.prepare("SELECT status, lease_id FROM exploration_jobs WHERE request_id=?").all(requestId))
         .toEqual([{ status: "running", lease_id: "worker:1" }]);
