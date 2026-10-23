@@ -5,7 +5,9 @@
 -- account deletion), so a second account asking the same request, or the first
 -- account deleting its history, could not share or preserve the job and result.
 -- No worker code reads or writes the 0007 tables and the dev tables are empty,
--- so this migration drops those legacy objects and creates new account-neutral
+-- confirmed in the repository at redesign HEAD da4d6d4; the lead ruling accepts
+-- dropping those legacy objects because no code path writes them yet. This
+-- migration drops those legacy objects and creates new account-neutral
 -- tables under new names (exploration_shared_*, exploration_bridge_operations,
 -- exploration_request_links) that carry every 0007 constraint, trigger and
 -- index. 0007 itself is unedited and is no longer applied by deploy.yml or
@@ -57,7 +59,7 @@ CREATE TABLE IF NOT EXISTS exploration_shared_requests (
     json_type(request_json, '$.visualization') IS NOT NULL AND json_extract(request_json, '$.visualization') = 'table' AND
     json_type(request_json, '$.as_of') = 'text'
   ),
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL CHECK (length(created_at) = 20 AND strftime('%Y-%m-%dT%H:%M:%SZ', created_at) = created_at)
 );
 
 CREATE TRIGGER IF NOT EXISTS exploration_shared_requests_closed_insert
@@ -85,8 +87,8 @@ END;
 CREATE TABLE IF NOT EXISTS exploration_request_links (
   request_id TEXT NOT NULL REFERENCES exploration_shared_requests(request_id) ON DELETE CASCADE,
   account_sub TEXT NOT NULL CHECK (length(account_sub) BETWEEN 1 AND 512),
-  created_at TEXT NOT NULL,
-  expires_at TEXT NOT NULL CHECK (expires_at = strftime('%Y-%m-%dT%H:%M:%SZ', created_at, '+90 days')),
+  created_at TEXT NOT NULL CHECK (length(created_at) = 20 AND strftime('%Y-%m-%dT%H:%M:%SZ', created_at) = created_at),
+  expires_at TEXT NOT NULL CHECK (length(expires_at) = 20 AND expires_at = strftime('%Y-%m-%dT%H:%M:%SZ', created_at, '+90 days')),
   PRIMARY KEY (request_id, account_sub)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS idx_exploration_request_links_account_recent
@@ -122,8 +124,8 @@ CREATE TABLE IF NOT EXISTS exploration_shared_results (
   assigned_json TEXT NOT NULL CHECK (length(assigned_json) BETWEEN 2 AND 196608 AND json_valid(assigned_json) AND json_type(assigned_json) = 'array' AND json_array_length(assigned_json) <= 100),
   unknown_json TEXT NOT NULL CHECK (length(unknown_json) BETWEEN 2 AND 98304 AND json_valid(unknown_json) AND json_type(unknown_json) = 'array' AND json_array_length(unknown_json) <= 100),
   lineage_json TEXT NOT NULL CHECK (length(lineage_json) BETWEEN 2 AND 4096 AND json_valid(lineage_json) AND json_type(lineage_json) = 'array' AND json_array_length(lineage_json) <= 32),
-  created_at TEXT NOT NULL,
-  expires_at TEXT NOT NULL CHECK (expires_at = strftime('%Y-%m-%dT%H:%M:%SZ', created_at, '+30 days')),
+  created_at TEXT NOT NULL CHECK (length(created_at) = 20 AND strftime('%Y-%m-%dT%H:%M:%SZ', created_at) = created_at),
+  expires_at TEXT NOT NULL CHECK (length(expires_at) = 20 AND expires_at = strftime('%Y-%m-%dT%H:%M:%SZ', created_at, '+30 days')),
   CHECK (json_array_length(assigned_json) + json_array_length(unknown_json) = population_count),
   CHECK (feasibility != 'available' OR (coverage != 'missing' AND roster_snapshot_id IS NOT NULL))
 );
@@ -220,19 +222,19 @@ CREATE TABLE IF NOT EXISTS exploration_shared_jobs (
   lease_id TEXT CHECK (lease_id IS NULL OR (length(lease_id) BETWEEN 1 AND 96 AND lease_id NOT GLOB '*[^a-z0-9:_-]*')),
   lease_owner TEXT CHECK (lease_owner IS NULL OR length(lease_owner) BETWEEN 1 AND 96),
   revision INTEGER NOT NULL DEFAULT 1 CHECK (typeof(revision) = 'integer' AND revision >= 1),
-  lease_expires_at TEXT,
-  claimed_at TEXT,
-  retry_after TEXT,
+  lease_expires_at TEXT CHECK (lease_expires_at IS NULL OR (length(lease_expires_at) = 20 AND strftime('%Y-%m-%dT%H:%M:%SZ', lease_expires_at) = lease_expires_at)),
+  claimed_at TEXT CHECK (claimed_at IS NULL OR (length(claimed_at) = 20 AND strftime('%Y-%m-%dT%H:%M:%SZ', claimed_at) = claimed_at)),
+  retry_after TEXT CHECK (retry_after IS NULL OR (length(retry_after) = 20 AND strftime('%Y-%m-%dT%H:%M:%SZ', retry_after) = retry_after)),
   failure TEXT CHECK (failure IS NULL OR failure IN ('source_unavailable','validation_failed','publication_failed','lease_expired','attempts_exhausted')),
   publication_json TEXT CHECK (publication_json IS NULL OR (length(publication_json) BETWEEN 2 AND 16384 AND json_valid(publication_json) AND json_type(publication_json) = 'object')),
-  admitted_at TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
+  admitted_at TEXT NOT NULL CHECK (length(admitted_at) = 20 AND strftime('%Y-%m-%dT%H:%M:%SZ', admitted_at) = admitted_at),
+  created_at TEXT NOT NULL CHECK (length(created_at) = 20 AND strftime('%Y-%m-%dT%H:%M:%SZ', created_at) = created_at),
+  updated_at TEXT NOT NULL CHECK (length(updated_at) = 20 AND strftime('%Y-%m-%dT%H:%M:%SZ', updated_at) = updated_at),
   expires_at TEXT NOT NULL CHECK (expires_at = strftime('%Y-%m-%dT%H:%M:%SZ', admitted_at, '+30 days')),
   CHECK ((status = 'queued' AND lease_id IS NULL AND lease_owner IS NULL AND lease_expires_at IS NULL AND failure IS NULL AND publication_json IS NULL) OR
          (status = 'running' AND attempt BETWEEN 1 AND 3 AND lease_id IS NOT NULL AND lease_expires_at IS NOT NULL AND lease_expires_at > claimed_at AND failure IS NULL AND publication_json IS NULL) OR
-         (status = 'failed' AND attempt BETWEEN 1 AND 3 AND claimed_at IS NOT NULL AND lease_id IS NULL AND lease_owner IS NULL AND lease_expires_at IS NULL AND failure IS NOT NULL AND publication_json IS NULL) OR
-         (status = 'published' AND attempt BETWEEN 1 AND 3 AND claimed_at IS NOT NULL AND lease_id IS NULL AND lease_expires_at IS NULL AND retry_after IS NULL AND failure IS NULL AND publication_json IS NOT NULL))
+         (status = 'failed' AND attempt BETWEEN 1 AND 3 AND claimed_at IS NOT NULL AND lease_id IS NOT NULL AND lease_owner IS NOT NULL AND lease_expires_at IS NULL AND failure IS NOT NULL AND publication_json IS NULL) OR
+         (status = 'published' AND attempt BETWEEN 1 AND 3 AND claimed_at IS NOT NULL AND lease_id IS NOT NULL AND lease_owner IS NOT NULL AND lease_expires_at IS NULL AND retry_after IS NULL AND failure IS NULL AND publication_json IS NOT NULL))
 );
 -- Opaque deletion markers keep a collected job's IDs from being reset or
 -- reinserted for 30 days (the idempotency-row window) while unlink and orphan
@@ -240,9 +242,25 @@ CREATE TABLE IF NOT EXISTS exploration_shared_jobs (
 CREATE TABLE IF NOT EXISTS exploration_shared_job_tombstones (
   job_id TEXT NOT NULL CHECK (length(job_id) = 64 AND job_id NOT GLOB '*[^0-9a-f]*'),
   request_id TEXT NOT NULL CHECK (length(request_id) = 64 AND request_id NOT GLOB '*[^0-9a-f]*'),
-  deleted_at TEXT NOT NULL,
+  deleted_at TEXT NOT NULL CHECK (length(deleted_at) = 20 AND strftime('%Y-%m-%dT%H:%M:%SZ', deleted_at) = deleted_at),
   PRIMARY KEY (job_id, request_id)
 );
+CREATE TRIGGER IF NOT EXISTS exploration_shared_job_tombstones_immutable
+BEFORE UPDATE ON exploration_shared_job_tombstones
+BEGIN
+  SELECT RAISE(ABORT, 'job tombstones are immutable during retention');
+END;
+CREATE TRIGGER IF NOT EXISTS exploration_shared_job_tombstones_retention_monotonic
+BEFORE INSERT ON exploration_shared_job_tombstones
+WHEN EXISTS (
+  SELECT 1 FROM exploration_shared_job_tombstones existing
+  WHERE existing.job_id = NEW.job_id AND existing.request_id = NEW.request_id AND
+    existing.deleted_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-30 days') AND
+    NEW.deleted_at < existing.deleted_at
+)
+BEGIN
+  SELECT RAISE(ABORT, 'job tombstone retention cannot be shortened');
+END;
 CREATE INDEX IF NOT EXISTS idx_exploration_shared_job_tombstones_deleted
   ON exploration_shared_job_tombstones(deleted_at);
 CREATE TRIGGER IF NOT EXISTS exploration_shared_job_tombstones_retained
@@ -274,19 +292,19 @@ CREATE TRIGGER IF NOT EXISTS exploration_shared_jobs_state_machine
 BEFORE UPDATE ON exploration_shared_jobs
 WHEN NEW.job_id IS NOT OLD.job_id OR NEW.request_id IS NOT OLD.request_id OR
   NEW.admitted_at IS NOT OLD.admitted_at OR NEW.created_at IS NOT OLD.created_at OR
-  NEW.expires_at IS NOT OLD.expires_at OR NEW.revision <= OLD.revision OR NOT (
+  NEW.expires_at IS NOT OLD.expires_at OR NEW.revision != OLD.revision + 1 OR NOT (
   (OLD.status = 'queued' AND NEW.status = 'running' AND NEW.attempt = OLD.attempt + 1 AND NEW.attempt <= 3 AND
    NEW.claimed_at IS NOT NULL AND NEW.lease_id IS NOT NULL AND NEW.lease_expires_at > NEW.claimed_at AND
    NEW.failure IS NULL AND NEW.publication_json IS NULL) OR
   (OLD.status = 'running' AND NEW.status = 'failed' AND NEW.attempt = OLD.attempt AND
-   NEW.claimed_at = OLD.claimed_at AND NEW.lease_id IS NULL AND NEW.lease_owner IS NULL AND NEW.lease_expires_at IS NULL AND
+   NEW.claimed_at = OLD.claimed_at AND NEW.lease_id IS OLD.lease_id AND NEW.lease_owner IS OLD.lease_owner AND NEW.lease_expires_at IS NULL AND
    NEW.failure IS NOT NULL AND NEW.publication_json IS NULL AND
    ((NEW.failure = 'attempts_exhausted' AND NEW.retry_after IS NULL) OR
     (NEW.failure IN ('source_unavailable','validation_failed','publication_failed','lease_expired') AND
      NEW.retry_after IS NOT NULL AND NEW.retry_after > NEW.claimed_at AND
      NEW.retry_after <= strftime('%Y-%m-%dT%H:%M:%SZ', NEW.claimed_at, '+1 day')))) OR
   (OLD.status = 'running' AND NEW.status = 'published' AND NEW.attempt = OLD.attempt AND
-   NEW.claimed_at = OLD.claimed_at AND NEW.lease_id IS NULL AND NEW.lease_owner IS OLD.lease_owner AND NEW.lease_expires_at IS NULL AND
+   NEW.claimed_at = OLD.claimed_at AND NEW.lease_id IS OLD.lease_id AND NEW.lease_owner IS OLD.lease_owner AND NEW.lease_expires_at IS NULL AND
    NEW.failure IS NULL AND NEW.publication_json IS NOT NULL) OR
   (OLD.status = 'failed' AND NEW.status = 'queued' AND NEW.attempt = OLD.attempt AND
    OLD.attempt < 3 AND OLD.failure != 'attempts_exhausted' AND OLD.retry_after IS NOT NULL AND
@@ -296,6 +314,19 @@ WHEN NEW.job_id IS NOT OLD.job_id OR NEW.request_id IS NOT OLD.request_id OR
 )
 BEGIN
   SELECT RAISE(ABORT, 'invalid exploration job state transition');
+END;
+-- Any running-job mutation is fenced by the exact prior revision and lease
+-- identity; a transition out of running must carry both lease values through
+-- the update. Terminal rows retain the lease values as fencing and audit data,
+-- while lease_expires_at is cleared so they do not represent a live lease.
+CREATE TRIGGER IF NOT EXISTS exploration_shared_jobs_running_lease_fence
+BEFORE UPDATE ON exploration_shared_jobs
+WHEN OLD.status = 'running' AND (
+  NEW.revision != OLD.revision + 1 OR
+  NEW.lease_id IS NOT OLD.lease_id OR NEW.lease_owner IS NOT OLD.lease_owner
+)
+BEGIN
+  SELECT RAISE(ABORT, 'running job update must match lease and revision');
 END;
 CREATE TRIGGER IF NOT EXISTS exploration_shared_jobs_publication_shape_insert
 BEFORE INSERT ON exploration_shared_jobs
@@ -331,11 +362,13 @@ CREATE INDEX IF NOT EXISTS idx_exploration_shared_jobs_due
   ON exploration_shared_jobs(status, retry_after, admitted_at, job_id);
 CREATE INDEX IF NOT EXISTS idx_exploration_shared_jobs_expiry ON exploration_shared_jobs(expires_at);
 
--- Operation IDs are service-scoped opaque references. Never persist credentials
--- or service identity values; the bridge supplies a stable non-secret scope key.
+-- Operation IDs are service-scoped opaque references. `service` is the stable,
+-- non-secret BridgeStore service key; `scope_key` is a separate non-secret
+-- grouping value. Never persist credentials.
 -- Rows are account-neutral and independent of request lifetime, so replay
 -- protection survives orphan collection until each row's own expiry.
 CREATE TABLE IF NOT EXISTS exploration_bridge_operations (
+  service TEXT NOT NULL CHECK (length(service) BETWEEN 1 AND 96),
   scope_key TEXT NOT NULL CHECK (length(scope_key) BETWEEN 1 AND 96),
   operation_type TEXT NOT NULL CHECK (operation_type IN ('claim','ack')),
   operation_id TEXT NOT NULL CHECK (length(operation_id) BETWEEN 1 AND 96 AND operation_id NOT GLOB '*[^a-z0-9:_-]*'),
@@ -348,9 +381,9 @@ CREATE TABLE IF NOT EXISTS exploration_bridge_operations (
     json_extract(response_json, '$.kind') IN ('read_result','claim_result','ack_result') AND
     json_type(response_json, '$.payload') IS NOT NULL AND json_type(response_json, '$.payload') = 'object'),
   lease_id TEXT CHECK (lease_id IS NULL OR (length(lease_id) BETWEEN 1 AND 96 AND lease_id NOT GLOB '*[^a-z0-9:_-]*')),
-  created_at TEXT NOT NULL,
-  expires_at TEXT NOT NULL CHECK (expires_at = strftime('%Y-%m-%dT%H:%M:%SZ', created_at, '+30 days')),
-  PRIMARY KEY (scope_key, operation_type, operation_id)
+  created_at TEXT NOT NULL CHECK (length(created_at) = 20 AND strftime('%Y-%m-%dT%H:%M:%SZ', created_at) = created_at),
+  expires_at TEXT NOT NULL CHECK (length(expires_at) = 20 AND expires_at = strftime('%Y-%m-%dT%H:%M:%SZ', created_at, '+30 days')),
+  PRIMARY KEY (service, operation_type, operation_id)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS idx_exploration_bridge_operations_expiry
   ON exploration_bridge_operations(expires_at);
@@ -376,7 +409,7 @@ CREATE TRIGGER IF NOT EXISTS exploration_bridge_operations_duplicate_insert
 BEFORE INSERT ON exploration_bridge_operations
 WHEN EXISTS (
   SELECT 1 FROM exploration_bridge_operations existing
-  WHERE existing.scope_key = NEW.scope_key AND existing.operation_type = NEW.operation_type AND
+  WHERE existing.service = NEW.service AND existing.operation_type = NEW.operation_type AND
     existing.operation_id = NEW.operation_id
 )
 BEGIN
@@ -409,12 +442,20 @@ WHEN EXISTS (SELECT 1 FROM exploration_collectable_requests WHERE request_id = O
 BEGIN
   DELETE FROM exploration_shared_requests WHERE request_id = OLD.request_id;
 END;
+CREATE TRIGGER IF NOT EXISTS exploration_shared_jobs_orphan_collect
+AFTER UPDATE ON exploration_shared_jobs
+WHEN NOT EXISTS (SELECT 1 FROM exploration_request_links WHERE request_id = NEW.request_id)
+  AND NOT (NEW.status = 'running' AND NEW.lease_expires_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+BEGIN
+  DELETE FROM exploration_shared_requests WHERE request_id = NEW.request_id;
+END;
 
 -- COLLECTOR statements (run on a schedule; the migration test executes exactly
 -- the text between the markers, so this block and the tested SQL cannot drift).
 -- 1. Purge expired per-account links (bounded); the trigger then collects any
 --    request this leaves orphaned.
--- 2. Sweep requests the trigger had to leave in place (live lease at unlink time).
+-- 2. Sweep requests the trigger had to leave in place while a lease was live,
+--    after that lease expires.
 -- 3. Purge job tombstones older than their 30-day window.
 -- COLLECTOR-BEGIN
 -- DELETE FROM exploration_request_links WHERE (request_id, account_sub) IN (SELECT request_id, account_sub FROM exploration_request_links WHERE expires_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now') ORDER BY expires_at, request_id, account_sub LIMIT 100);

@@ -12,13 +12,14 @@ const link = "0008_exploration_request_links.sql";
 const sharedTables = ["exploration_shared_requests", "exploration_shared_results", "exploration_shared_result_groups",
   "exploration_shared_jobs", "exploration_shared_job_tombstones", "exploration_bridge_operations"];
 
-// Timestamps. Past values are always expired; 2099 values are always live.
-const now = "2026-10-20T00:00:00Z";
+// ISO-8601 UTC timestamps around the actual test run time.
+const now = new Date(Math.floor(Date.now() / 1000) * 1000).toISOString().replace(".000Z", "Z");
 const plus = (iso: string, days: number) => new Date(Date.parse(iso) + days * 86_400_000).toISOString().replace(".000Z", "Z");
-const past = "2020-01-01T00:00:00Z";
-const future = "2099-01-01T00:00:00Z";
+const minutes = (iso: string, amount: number) => new Date(Date.parse(iso) + amount * 60_000).toISOString().replace(".000Z", "Z");
+const past = plus(now, -120);
+const future = minutes(now, 15);
 const rid = (c: string) => c.repeat(64);
-const request = JSON.stringify({ version: 1, family: "arrival_manager", as_of: "2026-10-20",
+const request = JSON.stringify({ version: 1, family: "arrival_manager", as_of: now.slice(0, 10),
   population: "first_team_available", joining_basis: "effective_first_team_spell_entry",
   academy_basis: "documented_first_team_promotion", visualization: "table" });
 const publication = JSON.stringify({ artifact_key: rid("c"), request_id: rid("a"), validation_record_id: "validation:v1",
@@ -53,7 +54,7 @@ function addJob(db: Db, jobId: string, requestId: string, admitted = now) {
 function setJob(db: Db, jobId: string, set: string, ...args: unknown[]) {
   db.prepare(`UPDATE exploration_shared_jobs SET ${set}, revision = revision + 1 WHERE job_id = ?`).run(...args, jobId);
 }
-function claim(db: Db, jobId: string, claimedAt = future, lease = "2099-01-01T00:15:00Z", owner = "runner:a") {
+function claim(db: Db, jobId: string, claimedAt = future, lease = minutes(future, 15), owner = "runner:a") {
   setJob(db, jobId, "status='running', attempt=attempt+1, claimed_at=?, lease_id='lease:1', lease_owner=?, lease_expires_at=?",
     claimedAt, owner, lease);
 }
@@ -66,10 +67,10 @@ function addResult(db: Db, id: string) {
   db.prepare(`INSERT INTO exploration_shared_result_groups (request_id, manager_id, member_count, members_json, lineage_json)
     VALUES (?, 'manager:1', 1, ?, '["source:fpl"]')`).run(id, assigned);
 }
-const operation = (db: Db, operationId: string, at = now) => db.prepare(`INSERT INTO exploration_bridge_operations
-  (scope_key, operation_type, operation_id, body_hash, response_json, lease_id, created_at, expires_at)
-  VALUES ('bridge:v1', 'claim', ?, ?, '{"version":1,"kind":"claim_result","payload":{"outcome":"claimed"}}', 'lease:1', ?, ?)`)
-  .run(operationId, rid("e"), at, plus(at, 30));
+const operation = (db: Db, operationId: string, at = now, service = "service:a") => db.prepare(`INSERT INTO exploration_bridge_operations
+  (service, scope_key, operation_type, operation_id, body_hash, response_json, lease_id, created_at, expires_at)
+  VALUES (?, 'bridge:v1', 'claim', ?, ?, '{"version":1,"kind":"claim_result","payload":{"outcome":"claimed"}}', 'lease:1', ?, ?)`)
+  .run(service, operationId, rid("e"), at, plus(at, 30));
 function dump(db: Db): unknown {
   const schema = db.prepare("SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name").all();
   const rows = Object.fromEntries([...sharedTables, "exploration_request_links"].map((table) =>
@@ -143,7 +144,7 @@ describe("account-neutral exploration storage (0008)", () => {
     const db = fresh();
     try {
       addRequest(db, rid("a"), ["account-a"], now);
-      addLink(db, rid("a"), "account-b", "2026-10-25T00:00:00Z");
+      addLink(db, rid("a"), "account-b", plus(now, 1));
       addJob(db, rid("b"), rid("a"));
       claim(db, rid("b"));
       addResult(db, rid("a"));
@@ -151,7 +152,7 @@ describe("account-neutral exploration storage (0008)", () => {
       expect(db.prepare("SELECT account_sub, created_at, expires_at FROM exploration_request_links ORDER BY account_sub").all())
         .toEqual([
           { account_sub: "account-a", created_at: now, expires_at: plus(now, 90) },
-          { account_sub: "account-b", created_at: "2026-10-25T00:00:00Z", expires_at: plus("2026-10-25T00:00:00Z", 90) },
+          { account_sub: "account-b", created_at: plus(now, 1), expires_at: plus(plus(now, 1), 90) },
         ]);
       // Account deletion / unlink removes only that account's links.
       db.prepare("DELETE FROM exploration_request_links WHERE account_sub = 'account-a'").run();
@@ -163,10 +164,10 @@ describe("account-neutral exploration storage (0008)", () => {
       expect(count(db, "exploration_shared_result_groups")).toBe(1);
       expect(count(db, "exploration_shared_job_tombstones")).toBe(0);
       // The remaining account is unaffected by re-linking and unlinking the first.
-      addLink(db, rid("a"), "account-a", "2026-10-26T00:00:00Z");
+      addLink(db, rid("a"), "account-a", plus(now, 2));
       db.prepare("DELETE FROM exploration_request_links WHERE account_sub = 'account-a'").run();
       expect(db.prepare("SELECT account_sub, created_at FROM exploration_request_links").all())
-        .toEqual([{ account_sub: "account-b", created_at: "2026-10-25T00:00:00Z" }]);
+        .toEqual([{ account_sub: "account-b", created_at: plus(now, 1) }]);
       expect(count(db, "exploration_shared_requests")).toBe(1);
     } finally { db.close(); }
   });
@@ -190,9 +191,9 @@ describe("account-neutral exploration storage (0008)", () => {
       expect(count(db, "exploration_shared_requests")).toBe(1);
       expect(db.prepare("SELECT request_id FROM exploration_collectable_requests").all()).toEqual([]);
       // Releasing the lease makes the orphan collectable by the sweep statement.
-      setJob(db, rid("b"), "status='failed', lease_id=NULL, lease_owner=NULL, lease_expires_at=NULL, failure='source_unavailable', retry_after=?",
-        "2099-01-01T00:05:00Z");
-      expect(db.prepare("SELECT request_id FROM exploration_collectable_requests").all()).toEqual([{ request_id: rid("a") }]);
+      setJob(db, rid("b"), "status='failed', lease_expires_at=NULL, failure='source_unavailable', retry_after=?",
+        minutes(future, 5));
+      expect(count(db, "exploration_shared_requests")).toBe(0);
       db.exec(sweep!);
       for (const table of ["exploration_shared_requests", "exploration_shared_jobs", "exploration_shared_results",
         "exploration_shared_result_groups"]) expect(count(db, table), table).toBe(0);
@@ -201,10 +202,10 @@ describe("account-neutral exploration storage (0008)", () => {
       // Replay records are independent of request lifetime.
       expect(count(db, "exploration_bridge_operations")).toBe(1);
 
-      // Expired lease on the last unlink: collected immediately by the trigger.
+      // A lease that has naturally expired is collected by the scheduled backstop.
       addRequest(db, rid("3"), ["account-c"]);
       addJob(db, rid("4"), rid("3"), past);
-      claim(db, rid("4"), past, "2020-01-01T00:15:00Z");
+      claim(db, rid("4"), past, plus(past, 30));
       db.prepare("DELETE FROM exploration_request_links WHERE account_sub = 'account-c'").run();
       expect(count(db, "exploration_shared_requests")).toBe(0);
 
@@ -246,11 +247,14 @@ describe("account-neutral exploration storage (0008)", () => {
       // Tombstones are retained for 30 days, then purged.
       expect(count(db, "exploration_shared_job_tombstones")).toBe(1);
       reject(() => db.prepare("DELETE FROM exploration_shared_job_tombstones").run());
+      reject(() => db.prepare(`INSERT OR REPLACE INTO exploration_shared_job_tombstones (job_id, request_id, deleted_at)
+        VALUES (?, ?, ?)`).run(rid("2"), rid("1"), past));
       db.exec(tombstones!);
       expect(count(db, "exploration_shared_job_tombstones")).toBe(1);
-      db.prepare("UPDATE exploration_shared_job_tombstones SET deleted_at = ?").run(past);
+      db.prepare("INSERT INTO exploration_shared_job_tombstones (job_id, request_id, deleted_at) VALUES (?, ?, ?)")
+        .run(rid("c"), rid("d"), past);
       db.exec(tombstones!);
-      expect(count(db, "exploration_shared_job_tombstones")).toBe(0);
+      expect(count(db, "exploration_shared_job_tombstones")).toBe(1);
     } finally { db.close(); }
   });
 
@@ -266,8 +270,10 @@ describe("account-neutral exploration storage (0008)", () => {
       reject(() => addJob(db, rid("9"), rid("a")));
       addRequest(db, rid("8"), ["account-b"]);
       reject(() => addJob(db, rid("b"), rid("8")));
-      db.prepare("UPDATE exploration_shared_job_tombstones SET deleted_at = ?").run(past);
-      addJob(db, rid("b"), rid("a"));
+      reject(() => db.prepare("UPDATE exploration_shared_job_tombstones SET deleted_at = ?").run(past));
+      db.prepare("INSERT INTO exploration_shared_job_tombstones (job_id, request_id, deleted_at) VALUES (?, ?, ?)")
+        .run(rid("c"), rid("8"), past);
+      addJob(db, rid("c"), rid("8"));
       expect(count(db, "exploration_shared_jobs")).toBe(1);
     } finally { db.close(); }
   });
@@ -289,7 +295,7 @@ describe("account-neutral exploration storage (0008)", () => {
           .run(...(Object.values(row) as never[]));
       };
       for (const over of [{ status: "running" }, { attempt: 1 }, { lease_id: "lease:x" }, { lease_owner: "runner:a" },
-        { failure: "source_unavailable" }, { publication_json: publication }, { retry_after: "2026-10-21T00:00:00Z" },
+        { failure: "source_unavailable" }, { publication_json: publication }, { retry_after: minutes(now, 5) },
         { claimed_at: now }, { lease_expires_at: future }, { expires_at: now }]) reject(() => initial(over));
       initial({});
       for (const column of ["lease_id = 'x'", "lease_owner = 'x'", "failure = 'no_data'", "publication_json = '{}'"]) {
@@ -297,32 +303,33 @@ describe("account-neutral exploration storage (0008)", () => {
       }
       // Fencing: no update may leave the revision unchanged or lower it.
       reject(() => db.prepare("UPDATE exploration_shared_jobs SET updated_at = ? WHERE job_id = ?").run(now, rid("b")));
-      reject(() => db.prepare("UPDATE exploration_shared_jobs SET status='running', attempt=1, claimed_at=?, lease_id='lease:1', lease_expires_at=? WHERE job_id = ?")
-        .run(future, "2099-01-01T00:15:00Z", rid("b")));
+      reject(() => db.prepare("UPDATE exploration_shared_jobs SET status='running', attempt=1, claimed_at=?, lease_id='lease:1', lease_owner='runner:a', lease_expires_at=? WHERE job_id = ?")
+        .run(now, future, rid("b")));
+      reject(() => db.prepare("UPDATE exploration_shared_jobs SET updated_at=?, revision=revision+2 WHERE job_id=?").run(now, rid("b")));
       // Claim: queued -> running only, with a lease that outlives the claim.
       reject(() => setJob(db, rid("b"), "status='published', attempt=1, publication_json=?", publication));
       reject(() => claim(db, rid("b"), future, future));
-      claim(db, rid("b"));
+      claim(db, rid("b"), now, future);
       expect(db.prepare("SELECT status, attempt, revision FROM exploration_shared_jobs WHERE job_id = ?").get(rid("b")))
         .toEqual({ status: "running", attempt: 1, revision: 2 });
       // A running job cannot be re-claimed, renewed, or reset to queued.
       reject(() => claim(db, rid("b")));
-      reject(() => setJob(db, rid("b"), "lease_expires_at='2099-02-01T00:00:00Z'"));
+      reject(() => setJob(db, rid("b"), "lease_expires_at=?", minutes(future, 15)));
       reject(() => setJob(db, rid("b"), "status='queued', lease_id=NULL, lease_owner=NULL, lease_expires_at=NULL"));
       // Publication: shape-checked and the owner survives, the lease clears.
-      reject(() => setJob(db, rid("b"), "status='published', lease_id=NULL, lease_expires_at=NULL, publication_json=?",
+      reject(() => setJob(db, rid("b"), "status='published', lease_id='lease:other', lease_expires_at=NULL, publication_json=?",
         JSON.stringify({ ...JSON.parse(publication), question_text: "raw" })));
-      reject(() => setJob(db, rid("b"), "status='published', lease_id=NULL, lease_owner=NULL, lease_expires_at=NULL, publication_json=?", publication));
-      reject(() => setJob(db, rid("b"), "status='published', lease_id=NULL, lease_expires_at=NULL, publication_json=NULL"));
-      setJob(db, rid("b"), "status='published', lease_id=NULL, lease_expires_at=NULL, publication_json=?", publication);
+      reject(() => setJob(db, rid("b"), "status='published', lease_id='lease:1', lease_owner='runner:b', lease_expires_at=NULL, publication_json=?", publication));
+      reject(() => setJob(db, rid("b"), "status='published', lease_expires_at=NULL, publication_json=NULL"));
+      setJob(db, rid("b"), "status='published', lease_expires_at=NULL, publication_json=?", publication);
       expect(db.prepare("SELECT lease_owner FROM exploration_shared_jobs WHERE job_id = ?").get(rid("b"))).toEqual({ lease_owner: "runner:a" });
       for (const to of ["queued", "running", "failed"]) {
         reject(() => setJob(db, rid("b"), `status='${to}'`));
       }
       reject(() => setJob(db, rid("b"), "publication_json=?", JSON.stringify({ ...JSON.parse(publication), extra: "x" })));
       // Identity and admission fields are immutable.
-      for (const [column, value] of [["job_id", rid("9")], ["request_id", rid("7")], ["admitted_at", "2026-10-21T00:00:00Z"],
-        ["created_at", "2026-10-21T00:00:00Z"], ["expires_at", "2026-12-01T00:00:00Z"]] as const) {
+      for (const [column, value] of [["job_id", rid("9")], ["request_id", rid("7")], ["admitted_at", minutes(now, 5)],
+        ["created_at", minutes(now, 5)], ["expires_at", plus(now, 31)]] as const) {
         reject(() => setJob(db, rid("b"), `${column} = ?`, value));
       }
     } finally { db.close(); }
@@ -337,32 +344,32 @@ describe("account-neutral exploration storage (0008)", () => {
         const jobId = ("d" + index).padEnd(64, "d");
         addRequest(db, request, ["account-a"]);
         addJob(db, jobId, request);
-        claim(db, jobId, now, "2026-10-20T00:15:00Z");
-        const fail = (retry: string | null, owner: string | null = null) => setJob(db, jobId,
-          "status='failed', lease_id=NULL, lease_owner=?, lease_expires_at=NULL, failure=?, retry_after=?", owner, failure, retry);
+        claim(db, jobId, now, minutes(now, 15));
+        const fail = (retry: string | null, leaseId = "lease:1", owner = "runner:a") => setJob(db, jobId,
+          "status='failed', lease_id=?, lease_owner=?, lease_expires_at=NULL, failure=?, retry_after=?", leaseId, owner, failure, retry);
         const exhausted = failure === "attempts_exhausted";
-        reject(() => fail(exhausted ? "2026-10-20T00:05:00Z" : null));
+        reject(() => fail(exhausted ? now : null));
         if (!exhausted) {
           reject(() => fail(now));
-          reject(() => fail("2026-10-22T00:00:00Z"));
+          reject(() => fail(minutes(now, 60 * 24 * 2)));
         }
-        reject(() => fail(exhausted ? null : "2026-10-20T00:05:00Z", "runner:a"));
-        fail(exhausted ? null : "2026-10-20T00:05:00Z");
+        reject(() => fail(exhausted ? null : minutes(now, 5), "lease:other", "runner:a"));
+        reject(() => fail(exhausted ? null : minutes(now, 5), "lease:1", "runner:b"));
+        fail(exhausted ? null : minutes(now, 5));
         // Only a retryable failure returns to queued, never an exhausted one.
-        const requeue = () => setJob(db, jobId, "status='queued', retry_after=NULL, failure=NULL");
+        const requeue = () => setJob(db, jobId, "status='queued', lease_id=NULL, lease_owner=NULL, lease_expires_at=NULL, retry_after=NULL, failure=NULL");
         if (exhausted) reject(requeue); else requeue();
       }
       // The final attempt cannot be requeued: attempt 3 failure is terminal.
       addRequest(db, rid("e"), ["account-a"]);
       addJob(db, rid("f"), rid("e"));
       for (let attempt = 1; attempt <= 3; attempt++) {
-        claim(db, rid("f"), now, "2026-10-20T00:15:00Z");
-        setJob(db, rid("f"), "status='failed', lease_id=NULL, lease_owner=NULL, lease_expires_at=NULL, failure='source_unavailable', retry_after=?",
-          "2026-10-20T00:05:00Z");
-        if (attempt < 3) setJob(db, rid("f"), "status='queued', retry_after=NULL, failure=NULL");
+        claim(db, rid("f"), now, minutes(now, 15));
+        setJob(db, rid("f"), "status='failed', lease_expires_at=NULL, failure='source_unavailable', retry_after=?", minutes(now, 5));
+        if (attempt < 3) setJob(db, rid("f"), "status='queued', lease_id=NULL, lease_owner=NULL, lease_expires_at=NULL, retry_after=NULL, failure=NULL");
       }
       reject(() => setJob(db, rid("f"), "status='queued', retry_after=NULL, failure=NULL"));
-      reject(() => { setJob(db, rid("f"), "status='running', attempt=4, claimed_at=?, lease_id='lease:4', lease_owner='r', lease_expires_at=?", now, "2026-10-20T00:15:00Z"); });
+      reject(() => { setJob(db, rid("f"), "status='running', attempt=4, claimed_at=?, lease_id='lease:4', lease_owner='r', lease_expires_at=?", now, minutes(now, 15)); });
     } finally { db.close(); }
   });
 
@@ -376,7 +383,7 @@ describe("account-neutral exploration storage (0008)", () => {
       reject(() => insertRequest(rid("d"), JSON.stringify({ ...JSON.parse(request), question_text: "private" })));
       reject(() => db.prepare("INSERT INTO exploration_shared_requests (request_id, contract_version, request_json, created_at) VALUES (?, 2, ?, ?)")
         .run(rid("d"), request, now));
-      reject(() => insertRequest(rid("d"), request.replace('"as_of":"2026-10-20"', '"as_of":20261020')));
+      reject(() => insertRequest(rid("d"), request.replace(`"as_of":"${now.slice(0, 10)}"`, '"as_of":20261020')));
       insertRequest(rid("a"), request);
       reject(() => insertRequest(rid("a"), request));
       reject(() => db.prepare("UPDATE exploration_shared_requests SET request_json = ? WHERE request_id = ?")
@@ -386,6 +393,7 @@ describe("account-neutral exploration storage (0008)", () => {
       reject(() => addLink(db, rid("9"), "account-a"));
       reject(() => addLink(db, rid("a"), ""));
       reject(() => addLink(db, rid("a"), "x".repeat(513)));
+      reject(() => addLink(db, rid("a"), "account-ms", now.replace("Z", ".123Z")));
       reject(() => db.prepare("INSERT INTO exploration_request_links (request_id, account_sub, created_at, expires_at) VALUES (?, 'account-a', ?, ?)")
         .run(rid("a"), now, now));
       addLink(db, rid("a"), "account-a");
@@ -422,14 +430,18 @@ describe("account-neutral exploration storage (0008)", () => {
 
       // Operations: closed response, immutable, unique, retained until expiry.
       const sqlOp = `INSERT INTO exploration_bridge_operations
-        (scope_key, operation_type, operation_id, body_hash, response_json, lease_id, created_at, expires_at)
-        VALUES ('bridge:v1', 'claim', ?, ?, ?, NULL, ?, ?)`;
+        (service, scope_key, operation_type, operation_id, body_hash, response_json, lease_id, created_at, expires_at)
+        VALUES ('service:a', 'bridge:v1', 'claim', ?, ?, ?, NULL, ?, ?)`;
       const good = '{"version":1,"kind":"claim_result","payload":{"outcome":"not_found"}}';
       db.prepare(sqlOp).run("op:1", rid("e"), good, past, plus(past, 30));
       reject(() => db.prepare(sqlOp).run("op:1", rid("f"), good, past, plus(past, 30)));
+      db.prepare(`INSERT INTO exploration_bridge_operations
+        (service, scope_key, operation_type, operation_id, body_hash, response_json, created_at, expires_at)
+        VALUES ('service:b', 'bridge:v1', 'claim', 'op:1', ?, ?, ?, ?)`)
+        .run(rid("e"), good, now, plus(now, 30));
       reject(() => db.prepare(`INSERT OR REPLACE INTO exploration_bridge_operations
-        (scope_key, operation_type, operation_id, body_hash, response_json, created_at, expires_at)
-        VALUES ('bridge:v1','claim','op:1',?,?,?,?)`).run(rid("f"), good, past, plus(past, 30)));
+        (service, scope_key, operation_type, operation_id, body_hash, response_json, created_at, expires_at)
+        VALUES ('service:a','bridge:v1','claim','op:1',?,?,?,?)`).run(rid("f"), good, past, plus(past, 30)));
       for (const bad of ['{"version":1,"kind":"claim_result","payload":{},"extra":"x"}', '{"version":1,"kind":"claim_result","extra":"x"}',
         '{"version":2,"kind":"claim_result","payload":{}}']) {
         reject(() => db.prepare(sqlOp).run("op:2", rid("f"), bad, past, plus(past, 30)));
@@ -437,10 +449,10 @@ describe("account-neutral exploration storage (0008)", () => {
       reject(() => db.prepare(sqlOp).run("op:3", "short", good, past, plus(past, 30)));
       reject(() => db.prepare(sqlOp).run("op:4", rid("f"), good, past, past));
       reject(() => db.prepare("UPDATE exploration_bridge_operations SET body_hash = ?").run(rid("f")));
-      db.prepare(sqlOp).run("op:live", rid("e"), good, future, plus(future, 30));
+      db.prepare(sqlOp).run("op:live", rid("e"), good, now, plus(now, 30));
       reject(() => db.prepare("DELETE FROM exploration_bridge_operations WHERE operation_id = 'op:live'").run());
-      db.prepare("DELETE FROM exploration_bridge_operations WHERE operation_id = 'op:1'").run();
-      expect(count(db, "exploration_bridge_operations")).toBe(1);
+      db.prepare("DELETE FROM exploration_bridge_operations WHERE service = 'service:a' AND operation_id = 'op:1'").run();
+      expect(count(db, "exploration_bridge_operations")).toBe(2);
     } finally { db.close(); }
   });
 });

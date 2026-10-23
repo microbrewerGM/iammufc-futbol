@@ -82,6 +82,18 @@ def test_exploration_links_migration_is_idempotent_and_replaces_legacy_tables() 
     ]
     link = (migrations / "0008_exploration_request_links.sql").read_text(encoding="utf-8")
 
+    # The redesign ruling accepts removing 0007 only because the checked-in
+    # bridge has no writer for those tables at the reviewed HEAD.
+    assert "confirmed in the repository at redesign HEAD da4d6d4" in link
+    assert "no code path writes them yet" in link
+    assert "exploration_shared_jobs_orphan_collect" in link
+    assert "exploration_request_links_orphan_collect" in link
+    assert "exploration_shared_job_tombstones_immutable" in link
+    assert "exploration_shared_job_tombstones_retention_monotonic" in link
+    assert "NEW.revision != OLD.revision + 1" in link
+    assert "service TEXT NOT NULL" in link
+    assert "PRIMARY KEY (service, operation_type, operation_id)" in link
+
     def schema(db: sqlite3.Connection) -> list[tuple]:
         return db.execute(
             "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
