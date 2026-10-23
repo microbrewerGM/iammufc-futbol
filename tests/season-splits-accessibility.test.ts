@@ -38,10 +38,20 @@ describe.each(["en", "es"] as const)("season-split accessibility structure (%s)"
     const labels = matches(body, /<label for="([^"]+)">([\s\S]*?)<\/label>/g);
     const controls = matches(body, /<(?:input|select)\b[^>]*\bid="([^"]+)"[^>]*>/g);
     expect(controls).toHaveLength(5);
+    const selectNames: Record<string, string> = {
+      "splits-group_by": code === "en" ? "Group by" : "Agrupar por",
+      "splits-venue": code === "en" ? "Venue" : "Localía",
+      "splits-opponent_id": code === "en" ? "Opponent" : "Rival",
+    };
     for (const control of controls) {
       const associated = labels.filter(label => label[1] === control[1]);
       expect(associated).toHaveLength(1);
-      expect(associated[0]![2]!.replace(/<[^>]*>/g, "").trim()).not.toBe("");
+      if (control[1]!.startsWith("splits-season-")) {
+        const seasonIndex = Number(control[1]!.slice("splits-season-".length));
+        expect(associated[0]![2]).toBe(`${control[0]}${request.seasons[seasonIndex]}`);
+      } else {
+        expect(associated[0]![2]).toBe(selectNames[control[1]!]);
+      }
       expect(control[0]).not.toMatch(/\b(?:disabled|hidden)\b|tabindex="-1"/);
     }
     expect(body).toContain(`<legend>${code === "en" ? "Seasons (choose 1–16)" : "Temporadas (elige 1–16)"}</legend>`);
