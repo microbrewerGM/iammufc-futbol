@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+// @ts-expect-error Node's built-in module is available in the configured test runtime.
+import { readFileSync } from "node:fs";
 import type { CoverageCell } from "../worker/src/core/feasibility";
 import type { PlayerTrendsRequest } from "../worker/src/core/player-trends";
 import { playerTrendsFacts, playerTrendsFactsSql, PLAYER_TRENDS_FACTS_SQL,
@@ -24,21 +26,16 @@ function coverage(season: string, metric: string): CoverageCell & { feasibility:
     attribution_text: "credit", attribution_text_es: "crédito", source_name: "FPL" };
 }
 
-function store(latest = snapshot): { sqlite: InstanceType<typeof DatabaseSync>; db: D1Database } {
+function store(latest = snapshot, factRows?: Array<Record<string, unknown>>): { sqlite: InstanceType<typeof DatabaseSync>; db: D1Database } {
   const sqlite = new DatabaseSync(":memory:");
-  sqlite.exec(`CREATE TABLE snapshots(snapshot_id TEXT PRIMARY KEY);
-    CREATE TABLE publication_runs(run_id INTEGER PRIMARY KEY, snapshot_id TEXT NOT NULL);
-    CREATE TABLE players(player_id TEXT PRIMARY KEY);
-    CREATE TABLE player_identities(player_id TEXT PRIMARY KEY, person_id TEXT, season TEXT);
-    CREATE TABLE player_season_stats(player_id TEXT, season TEXT, competition TEXT, goals INTEGER,
-      assists INTEGER, minutes INTEGER, snapshot_id TEXT, PRIMARY KEY(player_id,season,competition));`);
-  sqlite.prepare("INSERT INTO snapshots VALUES (?)").run(snapshot);
-  sqlite.prepare("INSERT INTO publication_runs VALUES (1, ?)").run(latest);
+  sqlite.exec(readFileSync("infra/migrations/0001_schema.sql", "utf8"));
+  sqlite.prepare("INSERT INTO snapshots(snapshot_id, created_at, sources_json, row_counts) VALUES (?, '', '{}', '{}')").run(snapshot);
+  sqlite.prepare("INSERT INTO publication_runs(snapshot_id, prepared_at, source_status_json) VALUES (?, '', '{}')").run(latest);
   const db = { prepare(sql: string) {
     let bound: unknown[] = [];
     const statement = { bind(...values: unknown[]) { bound = values; return statement; },
       first: async <T,>() => (sqlite.prepare(sql).get(...bound) ?? null) as T | null,
-      all: async <T,>() => ({ results: sqlite.prepare(sql).all(...bound) as T[] }) };
+      all: async <T,>() => ({ results: (factRows ?? sqlite.prepare(sql).all(...bound)) as T[] }) };
     return statement;
   } } as unknown as D1Database;
   return { sqlite, db };
@@ -46,9 +43,9 @@ function store(latest = snapshot): { sqlite: InstanceType<typeof DatabaseSync>; 
 
 function add(data: ReturnType<typeof store>, id: string, season: string, goals: number, minutes: number) {
   const playerId = `${id}/${season}`;
-  data.sqlite.prepare("INSERT INTO players VALUES (?)").run(playerId);
-  data.sqlite.prepare("INSERT INTO player_identities VALUES (?,?,?)").run(playerId, id, season);
-  data.sqlite.prepare("INSERT INTO player_season_stats VALUES (?,?,'PL',?,0,?,?)")
+  data.sqlite.prepare("INSERT INTO players VALUES (?, 1, ?, '', '', '', '', '')").run(playerId, season);
+  data.sqlite.prepare("INSERT INTO player_identities VALUES (?, ?, 'fpl', 1, ?)").run(playerId, id, season);
+  data.sqlite.prepare("INSERT INTO player_season_stats(player_id,season,competition,goals,assists,minutes,points,xg,snapshot_id) VALUES (?,?,'PL',?,0,?,0,NULL,?)")
     .run(playerId, season, goals, minutes, snapshot);
 }
 
@@ -96,9 +93,9 @@ describe("player trends D1 read", () => {
     many.sqlite.prepare("UPDATE publication_runs SET snapshot_id=?").run(snapshot);
     const manyCoverage = manyRequest.seasons.flatMap((season) => [coverage(season, "goals"), coverage(season, "minutes")]);
     for (const id of ids) for (const season of manyRequest.seasons) {
-      many.sqlite.prepare("INSERT INTO players VALUES (?)").run(`${id}/${season}`);
-      many.sqlite.prepare("INSERT INTO player_identities VALUES (?,?,?)").run(`${id}/${season}`, id, season);
-      many.sqlite.prepare("INSERT INTO player_season_stats VALUES (?,?,'PL',1,0,90,?)").run(`${id}/${season}`, season, snapshot);
+      many.sqlite.prepare("INSERT INTO players VALUES (?, 1, ?, '', '', '', '', '')").run(`${id}/${season}`, season);
+      many.sqlite.prepare("INSERT INTO player_identities VALUES (?, ?, 'fpl', ?, ?)").run(`${id}/${season}`, id, 200 + ids.indexOf(id), season);
+      many.sqlite.prepare("INSERT INTO player_season_stats(player_id,season,competition,goals,assists,minutes,points,xg,snapshot_id) VALUES (?,?,'PL',1,0,90,0,NULL,?)").run(`${id}/${season}`, season, snapshot);
     }
     await expect(playerTrendsFacts(many.db, manyRequest, snapshot, ids, manyRequest.seasons, manyCoverage))
       .resolves.toHaveLength(PLAYER_TRENDS_MAX_FACTS);
@@ -112,21 +109,16 @@ describe("player trends D1 read", () => {
   });
 
   it("rejects overflow sentinel, duplicate facts, and invalid counters", async () => {
-    const overflow = store();
+    const overflow = store(snapshot, Array.from({ length: 41 }, () => ({
+      person_id: people[0], season: seasons[0], competition: "PL", goals: 1, assists: 0, minutes: 90, snapshot_id: snapshot,
+    })));
     const ids = people;
-    for (let i = 0; i < 41; i++) {
-      const playerId = `duplicate-${i}`;
-      overflow.sqlite.prepare("INSERT INTO players VALUES (?)").run(playerId);
-      overflow.sqlite.prepare("INSERT INTO player_identities VALUES (?,?,?)").run(playerId, ids[0], seasons[0]);
-      overflow.sqlite.prepare("INSERT INTO player_season_stats VALUES (?,?,'PL',1,0,90,?)").run(playerId, seasons[0], snapshot);
-    }
     await expect(playerTrendsFacts(overflow.db, { ...request, person_ids: ids.slice(0, 1), seasons: [seasons[0]!] }, snapshot, ids, [seasons[0]!], [coverage(seasons[0]!, "goals"), coverage(seasons[0]!, "minutes")])).rejects.toThrow("fact bound reached");
 
-    const duplicate = store(); add(duplicate, people[0]!, seasons[0]!, 1, 90);
-    const dupId = `${people[0]}/duplicate`;
-    duplicate.sqlite.prepare("INSERT INTO players VALUES (?)").run(dupId);
-    duplicate.sqlite.prepare("INSERT INTO player_identities VALUES (?,?,?)").run(dupId, people[0], seasons[0]);
-    duplicate.sqlite.prepare("INSERT INTO player_season_stats VALUES (?,?,'PL',1,0,90,?)").run(dupId, seasons[0], snapshot);
+    const duplicate = store(snapshot, [
+      { person_id: people[0], season: seasons[0], competition: "PL", goals: 1, assists: 0, minutes: 90, snapshot_id: snapshot },
+      { person_id: people[0], season: seasons[0], competition: "PL", goals: 1, assists: 0, minutes: 90, snapshot_id: snapshot },
+    ]);
     await expect(playerTrendsFacts(duplicate.db, request, snapshot, people, seasons, allCoverage)).rejects.toThrow("duplicate player trends fact");
 
     const invalid = store(); add(invalid, people[0]!, seasons[0]!, -1, 90);
