@@ -5,8 +5,8 @@ import { LOCALES } from "../worker/src/core/locale";
 import { querySeasonSplits, type SeasonSplitRequest } from "../worker/src/core/season-splits";
 import { seasonSplitsBody, seasonSplitSelection } from "../worker/src/views/season-splits";
 
-// Only Access signature verification is synthetic. Publication, aggregate SQL,
-// reconciliation, query projection, catalog credits and route HTML remain real.
+// Access verification and capability readiness are synthetic. Publication, aggregate
+// SQL, reconciliation, query projection, catalog credits and route HTML remain real.
 vi.mock("jose", async (original) => ({
   ...await original<typeof import("jose")>(),
   jwtVerify: vi.fn(async () => ({ payload: { sub: "trust-test", email: "owner@example.invalid" } })),
@@ -165,7 +165,11 @@ describe.each(["en", "es"] as const)("%s season trust projection", locale => {
     expect(response.status).toBe(200);
     const section = sourcesSection(body);
     expect(section).toContain("Football-Data.co.uk");
-    expect(section).toMatch(/FPL|Fantasy Premier League/);
+    expect(section).toContain(locale === "en"
+      ? "Player data derived from the Fantasy Premier League public API."
+      : "Datos de jugadores derivados de la API pública de Fantasy Premier League.");
+    expect(section).not.toContain(locale === "en"
+      ? "Datos de jugadores derivados" : "Player data derived");
     expect(section).not.toMatch(/OpenFootball|Source attribution unavailable|Atribución de fuente no disponible/);
     expect(body).not.toContain('id="splits-warning"');
     expect(body).toContain("<td>1</td><td>1</td><td>0</td><td>0</td><td>2</td><td>0</td>");
