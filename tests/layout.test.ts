@@ -91,10 +91,10 @@ describe("localized page links", () => {
 });
 
 describe("homepage actions", () => {
-  it("seeds ask forms from supported catalog seasons in both languages", () => {
+  it("seeds the ask form with feasible examples in both languages", () => {
     for (const [locale, goals, assists] of [
-      [LOCALES.en, "Top goals 2021-22", "Top assists 2021-22"],
-      [LOCALES.es, "Máximos goles 2021-22", "Máximas asistencias 2021-22"],
+      [LOCALES.en, "Top goals 2021-22", "Top assists table 2021-22"],
+      [LOCALES.es, "Máximos goles 2021-22", "Máximas asistencias tabla 2021-22"],
     ] as const) {
       const markup = homeBody(homeCatalog(), locale);
       expect(markup).toContain(`action="/${locale.code}/ask"`);
