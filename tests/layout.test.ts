@@ -93,13 +93,13 @@ describe("localized page links", () => {
 describe("homepage actions", () => {
   it("seeds the ask form with feasible examples in both languages", () => {
     for (const [locale, goals, assists] of [
-      [LOCALES.en, "Top goals 2021-22", "Top assists 2021-22"],
-      [LOCALES.es, "Máximos goles 2021-22", "Máximas asistencias 2021-22"],
+      [LOCALES.en, "Top goals 2021-22", "Top assists table 2021-22"],
+      [LOCALES.es, "Máximos goles 2021-22", "Máximas asistencias tabla 2021-22"],
     ] as const) {
       const markup = homeBody(homeCatalog(), locale);
       expect(markup).toContain(`action="/${locale.code}/ask"`);
       expect(markup).toContain(`name="q" value="${goals}"`);
-      expect(markup).not.toContain(`name="q" value="${assists}"`);
+      expect(markup).toContain(`name="q" value="${assists}"`);
       expect(markup).not.toContain("2024-25");
       expect(markup).not.toMatch(/shot map|mapa de tiros|expected goals|goles esperados/i);
       expect(markup).toContain(`href="/${locale.code}/history"`);

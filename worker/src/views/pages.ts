@@ -53,7 +53,7 @@ export function chatForm(locale: Locale, question = ""): string {
 </form>`;
 }
 
-function exampleQuestion(locale: Locale, question: string): string {
+export function exampleQuestion(locale: Locale, question: string): string {
   return `<li><form method="post" action="${base(locale)}/ask">
 <input type="hidden" name="q" value="${esc(question)}">
 <button type="submit">${esc(question)}</button>
@@ -701,11 +701,12 @@ export function homeBody(
     comparisonLinks.push(`<li><a href="${base(locale)}/season/${esc(teamSeason)}#team-seasons">${esc(label)}</a></li>`);
   }
   const specs = [
-    ["goals", "bar", t.exampleGoals], ["assists", "table", locale.code === "en" ? "Top assists" : "Máximas asistencias"],
-    ["minutes", "dot_plot", t.exampleMinutesDots], ["points", "table", t.examplePointsTable],
-    ["xg", "bar", t.exampleXg],
+    ["goals", "bar", "exampleGoals"], ["assists", "table", "exampleAssistsTable"],
+    ["minutes", "dot_plot", "exampleMinutesDots"], ["points", "table", "examplePointsTable"],
+    ["xg", "bar", "exampleXg"],
   ] as const;
-  const questionExamples = specs.flatMap(([metric, viz, label]) => {
+  const questionExamples = specs.flatMap(([metric, viz, localeKey]) => {
+    const label = t[localeKey];
     const season = catalog.seasonsFor(metric, "player", "box_score").find((candidate) => {
       const question = `${label} ${candidate}`;
       const proposal = parseRuleBased(question, catalog);
