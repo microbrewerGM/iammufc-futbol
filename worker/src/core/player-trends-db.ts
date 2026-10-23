@@ -10,7 +10,7 @@ export const PLAYER_TRENDS_SNAPSHOT_SQL = `SELECT r.snapshot_id FROM publication
 export const PLAYER_TRENDS_FACTS_SQL = `SELECT i.person_id, s.season, s.competition,
   s.goals, s.assists, s.minutes, s.snapshot_id
   FROM player_season_stats s JOIN player_identities i ON i.player_id = s.player_id
-  WHERE i.person_id IN (/*PERSONS*/) AND s.season IN (/*SEASONS*/)
+  WHERE i.person_id IN (/*PERSONS*/) AND s.season IN (/*SEASONS*/) AND i.season = s.season
     AND s.competition = 'PL' AND s.snapshot_id = ?
   ORDER BY i.person_id, s.season LIMIT 41`;
 
@@ -38,6 +38,10 @@ function usable(cell: CoverageCell | undefined, metric: string, season: string):
     cell.cost_class === "cheap";
 }
 
+function validSeason(season: string): boolean {
+  return /^\d{4}-\d{2}$/.test(season) && Number(season.slice(-2)) === (Number(season.slice(0, 4)) + 1) % 100;
+}
+
 function currentPublication(db: D1Database): Promise<{ snapshot_id: unknown } | null> {
   return db.prepare(PLAYER_TRENDS_SNAPSHOT_SQL).first<{ snapshot_id: unknown }>();
 }
@@ -48,7 +52,7 @@ export async function playerTrendsFacts(
   snapshotId: string,
   catalogPeople: readonly string[],
   catalogSeasons: readonly string[],
-  coverage: readonly CoverageCell[],
+  coverage: readonly (CoverageCell & { feasibility?: string })[],
 ): Promise<PlayerTrendRow[]> {
   if (!/^[0-9a-f]{64}$/.test(snapshotId) || request.competition !== "PL" ||
       request.person_ids.length < 1 || request.person_ids.length > 5 ||
@@ -56,14 +60,20 @@ export async function playerTrendsFacts(
       new Set(request.person_ids).size !== request.person_ids.length ||
       new Set(request.seasons).size !== request.seasons.length ||
       request.person_ids.some((id) => !/^fpl:code:[1-9][0-9]{0,17}$/.test(id) || !catalogPeople.includes(id)) ||
-      request.seasons.some((season) => !/^\d{4}-\d{2}$/.test(season) || !catalogSeasons.includes(season))) {
+      request.seasons.some((season) => !validSeason(season) || !catalogSeasons.includes(season)) ||
+      request.seasons.some((season, index) => index > 0 && request.seasons[index - 1]! >= season)) {
     throw new Error("invalid player trends read");
   }
 
   const metric: TrendMetric = request.metric;
   for (const season of request.seasons) {
-    if (!usable(coverage.find((cell) => cell.metric === metric && cell.season === season), metric, season) ||
-        !usable(coverage.find((cell) => cell.metric === "minutes" && cell.season === season), "minutes", season)) {
+    const metricCell = coverage.find((cell) => cell.metric === metric && cell.season === season);
+    const minutesCell = coverage.find((cell) => cell.metric === "minutes" && cell.season === season);
+    const metricFeasibility = (metricCell as (CoverageCell & { feasibility?: string }) | undefined)?.feasibility;
+    const minutesFeasibility = (minutesCell as (CoverageCell & { feasibility?: string }) | undefined)?.feasibility;
+    if (!usable(metricCell, metric, season) || !usable(minutesCell, "minutes", season) ||
+        !["available", "computable_now_queued"].includes(metricFeasibility ?? "") ||
+        !["available", "computable_now_queued"].includes(minutesFeasibility ?? "")) {
       throw new Error("player trends coverage or rights unavailable");
     }
   }
@@ -86,10 +96,17 @@ export async function playerTrendsFacts(
     if (!ref || !ref.trim()) throw new Error("player trends lineage unavailable");
     return `${cell.source_id}:${ref}`;
   };
-  return (result.results ?? []).map((row) => {
+  const seen = new Set<string>();
+  const rows: PlayerTrendRow[] = (result.results ?? []).map((row): PlayerTrendRow => {
     if (!request.person_ids.includes(row.person_id) || !request.seasons.includes(row.season) ||
         row.competition !== "PL" || row.snapshot_id !== snapshotId) {
       throw new Error("invalid player trends fact");
+    }
+    const key = `${row.person_id}\0${row.season}`;
+    if (seen.has(key)) throw new Error("duplicate player trends fact");
+    seen.add(key);
+    for (const counter of [row[metric], row.minutes]) {
+      if (counter !== null && (!Number.isSafeInteger(counter) || counter < 0)) throw new Error("invalid player trends counter");
     }
     return {
       person_id: row.person_id, season: row.season, competition: "PL", metric,
@@ -98,4 +115,7 @@ export async function playerTrendsFacts(
       lineage: [...new Set([lineageFor(row.season, metric), lineageFor(row.season, "minutes")])],
     };
   });
+  const finalPublication = await currentPublication(db);
+  if (finalPublication?.snapshot_id !== snapshotId) throw new Error("player trends publication changed during read");
+  return rows;
 }

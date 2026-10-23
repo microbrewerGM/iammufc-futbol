@@ -18,8 +18,8 @@ const seasons = ["2023-24", "2024-25"];
 const request: PlayerTrendsRequest = { schema_version: 1, competition: "PL", person_ids: people,
   seasons, metric: "goals", normalization: "per90", min_minutes: 450, viz: "line" };
 
-function coverage(season: string, metric: string): CoverageCell {
-  return { metric, entity_type: "player", granularity: "box_score", season, competition: "PL",
+function coverage(season: string, metric: string): CoverageCell & { feasibility: string } {
+  return { metric, entity_type: "player", granularity: "box_score", season, competition: "PL", feasibility: "available",
     source_id: "fpl", redistributable: true, cost_class: "cheap", attribution_asset: "fpl_credit",
     attribution_text: "credit", attribution_text_es: "crédito", source_name: "FPL" };
 }
@@ -57,12 +57,13 @@ const allCoverage = seasons.flatMap((season) => [coverage(season, "goals"), cove
 describe("player trends D1 read", () => {
   it("pins parameterized SQL and read bounds", () => {
     expect(PLAYER_TRENDS_SNAPSHOT_SQL).toContain("ORDER BY r.run_id DESC LIMIT 1");
+    expect(PLAYER_TRENDS_FACTS_SQL).toContain("AND i.season = s.season");
     expect(PLAYER_TRENDS_FACTS_SQL).toContain("s.competition = 'PL' AND s.snapshot_id = ?");
     expect(PLAYER_TRENDS_FACTS_SQL).toContain("LIMIT 41");
     expect(playerTrendsFactsSql(2, 2)).toBe(`SELECT i.person_id, s.season, s.competition,
   s.goals, s.assists, s.minutes, s.snapshot_id
   FROM player_season_stats s JOIN player_identities i ON i.player_id = s.player_id
-  WHERE i.person_id IN (?,?) AND s.season IN (?,?)
+  WHERE i.person_id IN (?,?) AND s.season IN (?,?) AND i.season = s.season
     AND s.competition = 'PL' AND s.snapshot_id = ?
   ORDER BY i.person_id, s.season LIMIT 41`);
     expect(PLAYER_TRENDS_MAX_FACTS).toBe(40);
@@ -101,5 +102,34 @@ describe("player trends D1 read", () => {
     }
     await expect(playerTrendsFacts(many.db, manyRequest, snapshot, ids, manyRequest.seasons, manyCoverage))
       .resolves.toHaveLength(PLAYER_TRENDS_MAX_FACTS);
+  });
+
+  it("rejects infeasible coverage and invalid or unordered seasons", async () => {
+    const infeasible = allCoverage.map((cell) => cell.metric === "goals" && cell.season === seasons[0] ? { ...cell, feasibility: "no_data" } : cell);
+    await expect(playerTrendsFacts(store().db, request, snapshot, people, seasons, infeasible)).rejects.toThrow("coverage or rights unavailable");
+    await expect(playerTrendsFacts(store().db, { ...request, seasons: ["2023-25"] }, snapshot, people, seasons, allCoverage)).rejects.toThrow("invalid player trends read");
+    await expect(playerTrendsFacts(store().db, { ...request, seasons: [...seasons].reverse() }, snapshot, people, seasons, allCoverage)).rejects.toThrow("invalid player trends read");
+  });
+
+  it("rejects overflow sentinel, duplicate facts, and invalid counters", async () => {
+    const overflow = store();
+    const ids = people;
+    for (let i = 0; i < 41; i++) {
+      const playerId = `duplicate-${i}`;
+      overflow.sqlite.prepare("INSERT INTO players VALUES (?)").run(playerId);
+      overflow.sqlite.prepare("INSERT INTO player_identities VALUES (?,?,?)").run(playerId, ids[0], seasons[0]);
+      overflow.sqlite.prepare("INSERT INTO player_season_stats VALUES (?,?,'PL',1,0,90,?)").run(playerId, seasons[0], snapshot);
+    }
+    await expect(playerTrendsFacts(overflow.db, { ...request, person_ids: ids.slice(0, 1), seasons: [seasons[0]!] }, snapshot, ids, [seasons[0]!], [coverage(seasons[0]!, "goals"), coverage(seasons[0]!, "minutes")])).rejects.toThrow("fact bound reached");
+
+    const duplicate = store(); add(duplicate, people[0]!, seasons[0]!, 1, 90);
+    const dupId = `${people[0]}/duplicate`;
+    duplicate.sqlite.prepare("INSERT INTO players VALUES (?)").run(dupId);
+    duplicate.sqlite.prepare("INSERT INTO player_identities VALUES (?,?,?)").run(dupId, people[0], seasons[0]);
+    duplicate.sqlite.prepare("INSERT INTO player_season_stats VALUES (?,?,'PL',1,0,90,?)").run(dupId, seasons[0], snapshot);
+    await expect(playerTrendsFacts(duplicate.db, request, snapshot, people, seasons, allCoverage)).rejects.toThrow("duplicate player trends fact");
+
+    const invalid = store(); add(invalid, people[0]!, seasons[0]!, -1, 90);
+    await expect(playerTrendsFacts(invalid.db, request, snapshot, people, seasons, allCoverage)).rejects.toThrow("invalid player trends counter");
   });
 });
