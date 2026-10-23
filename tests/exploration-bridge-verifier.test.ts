@@ -37,6 +37,16 @@ describe("exploration bridge publication verifier", () => {
     expect(await verifier.verify(job, candidate)).toBe(true);
   });
 
+  it("rejects impossible calendar dates and accepts leap day", async () => {
+    const candidate = { ...publication, request_id: (await requestIdFor(request))! };
+    const verifier = createPublicationVerifier(evidence(candidate), () => Date.parse("2026-12-31T23:59:59Z"));
+    expect(await verifier.verify(job, { ...candidate, loaded_at: "2026-02-30T00:00:00Z" })).toBe(false);
+    expect(await verifier.verify(job, { ...candidate, loaded_at: "2026-02-29T00:00:00Z" })).toBe(false);
+    const leapYearCandidate = { ...candidate, loaded_at: "2024-02-29T00:00:00Z" };
+    expect(await createPublicationVerifier(evidence(leapYearCandidate), () => Date.parse("2026-12-31T23:59:59Z"))
+      .verify(job, leapYearCandidate)).toBe(true);
+  });
+
   it("fails closed for every mismatched candidate reference", async () => {
     const candidate = { ...publication, request_id: (await requestIdFor(request))! };
     const variants: Publication[] = [

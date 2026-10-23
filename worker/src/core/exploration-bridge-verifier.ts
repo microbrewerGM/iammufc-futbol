@@ -26,8 +26,11 @@ export interface InputManifest { snapshot_ids: string[]; lineage: string[]; }
 const object = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const id = (v: unknown): v is string => typeof v === "string" && /^[a-z0-9][a-z0-9:_-]{0,95}$/.test(v);
 const hash = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{64}$/.test(v);
-const time = (v: unknown): v is string => typeof v === "string"
-  && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/.test(v) && !Number.isNaN(Date.parse(v));
+const time = (v: unknown): v is string => {
+  if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(v)) return false;
+  const timestamp = Date.parse(v);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString().replace(".000Z", "Z") === v;
+};
 const ids = (v: unknown): v is string[] => Array.isArray(v) && v.length > 0 && v.length <= 32
   && v.every(id) && new Set(v).size === v.length;
 const sameSet = (a: readonly string[], b: readonly string[]) => a.length === b.length
