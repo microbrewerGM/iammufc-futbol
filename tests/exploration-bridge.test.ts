@@ -273,7 +273,7 @@ describe("claim", () => {
     const r = payload(await claimJob(deps, runner, claimBody(1)));
     expect(r.outcome).toBe("claimed");
     expect(r.job).toMatchObject({ status: "running", attempt: 1, lease_id: "lease-1",
-      lease_expires_at: "2026-10-22T12:15:00.000Z", retry_after: null, failure: null });
+      lease_expires_at: "2026-10-22T12:15:00Z", retry_after: null, failure: null });
     expect(store.jobs.get(hex(1))!.lease_owner).toBe("runner-a");
   });
   it("exactly one of two concurrent claimants wins", async () => {
@@ -314,7 +314,7 @@ describe("claim", () => {
     advance(100);
     expect(await claimJob(deps, runner, claimBody(1))).toEqual(first);
     expect(store.commits).toBe(commits);
-    expect(store.jobs.get(hex(1))!.job.lease_expires_at).toBe("2026-10-22T12:15:00.000Z");
+    expect(store.jobs.get(hex(1))!.job.lease_expires_at).toBe("2026-10-22T12:15:00Z");
     advance(800);
     expect(payload(await claimJob(deps, runner, claimBody(1)))).toEqual({ outcome: "conflict" });
   });
@@ -364,6 +364,7 @@ describe("ack", () => {
     const j = store.jobs.get(hex(1))!.job;
     expect(j).toMatchObject({ status: "published", lease_id: null, lease_expires_at: null, failure: null, retry_after: null });
     expect(j.publication).toEqual(pub());
+    expect(store.jobs.get(hex(1))!.lease_owner).toBeNull();
     expect(payload(await claimJob(deps, other, claimBody(1, 1, "op-n")))).toEqual({ outcome: "conflict" });
   });
   it("conflicts and stays running when publication verification fails or loaded_at is in the future", async () => {
@@ -394,7 +395,7 @@ describe("ack", () => {
     const { store, deps, lease } = await claimed();
     expect(payload(await ackJob(deps, runner, ackBody(1, lease, 1, failOutcome)))).toEqual({ outcome: "accepted" });
     expect(store.jobs.get(hex(1))!.job).toMatchObject({ status: "failed", failure: "source_unavailable", lease_id: null,
-      lease_expires_at: null, retry_after: "2026-10-22T12:05:00.000Z", attempt: 1 });
+      lease_expires_at: null, retry_after: "2026-10-22T12:05:00Z", attempt: 1 });
   });
   it("replays an exact accepted ack even after lease expiry; changed body conflicts", async () => {
     const { store, deps, lease, advance } = await claimed();
@@ -442,17 +443,18 @@ describe("attempts, expiry and retry sweeps", () => {
     const stored = () => ctx.store.jobs.get(hex(1))!.job;
     let job = await cycle(ctx, 0, "o1");
     await ackJob(ctx.deps, runner, ackBody(1, job.lease_id!, 1, failOutcome, "k1"));
-    expect(stored().retry_after).toBe(new Date(T0 + 300_000).toISOString());
+    expect(stored().retry_after).toBe("2026-10-22T12:05:00Z");
     expect(payload(await claimJob(ctx.deps, runner, claimBody(1, 1, "early")))).toEqual({ outcome: "conflict" });
     expect(await sweepRetryDue(ctx.deps)).toBe(0);
     ctx.advance(300);
     expect(await sweepRetryDue(ctx.deps)).toBe(1);
-    expect(stored()).toMatchObject({ status: "queued", attempt: 1, failure: null });
+    expect(stored()).toMatchObject({ status: "queued", attempt: 1, failure: null, retry_after: null, lease_id: null, lease_expires_at: null });
+    expect(ctx.store.jobs.get(hex(1))!).toMatchObject({ revision: 4, lease_owner: null });
     job = await cycle(ctx, 1, "o2");
     expect(job.attempt).toBe(2);
     const t2 = T0 + 300_000;
     await ackJob(ctx.deps, runner, ackBody(1, job.lease_id!, 2, failOutcome, "k2"));
-    expect(stored().retry_after).toBe(new Date(t2 + 1_800_000).toISOString());
+    expect(stored().retry_after).toBe(new Date(t2 + 1_800_000).toISOString().replace(".000Z", "Z"));
     ctx.advance(1800);
     await sweepRetryDue(ctx.deps);
     job = await cycle(ctx, 2, "o3");
@@ -473,7 +475,7 @@ describe("attempts, expiry and retry sweeps", () => {
     ctx.advance(1);
     expect(await sweepExpiredLeases(ctx.deps)).toBe(1);
     expect(stored()).toMatchObject({ status: "failed", failure: "lease_expired", lease_id: null, lease_expires_at: null,
-      retry_after: new Date(ctx.deps.now().getTime() + 300_000).toISOString() });
+      retry_after: new Date(ctx.deps.now().getTime() + 300_000).toISOString().replace(".000Z", "Z") });
     expect(ctx.store.jobs.get(hex(1))!.lease_owner).toBeNull();
     seed(ctx.store, 2, { status: "running", attempt: 3, lease_id: "lease-9", lease_expires_at: "2026-10-22T12:00:00.000Z" });
     expect(await sweepExpiredLeases(ctx.deps)).toBe(1);
@@ -498,5 +500,73 @@ describe("attempts, expiry and retry sweeps", () => {
     expect(ctx.store.jobs.size).toBe(1);
     expect(ctx.store.jobs.get(hex(1))!.job.attempt).toBe(2);
     expect(ctx.store.ops.size).toBe(0);
+  });
+});
+
+
+describe("whole-second bridge storage contract", () => {
+  it("samples once for claim and ack, and computes exact second-only deadlines", async () => {
+    const { store, deps } = setup();
+    seed(store, 1);
+    let clockCalls = 0;
+    deps.now = () => { clockCalls++; return new Date(T0 + 999); };
+    const claimed = payload(await claimJob(deps, runner, claimBody(1))).job as Job;
+    expect(clockCalls).toBe(1);
+    expect(claimed.lease_expires_at).toBe("2026-10-22T12:15:00Z");
+    expect(store.jobs.get(hex(1))!).toMatchObject({ revision: 2, lease_owner: "runner-a" });
+    expect(payload(await ackJob(deps, runner, ackBody(1, claimed.lease_id!, 1, failOutcome))))
+      .toEqual({ outcome: "accepted" });
+    expect(clockCalls).toBe(2);
+    expect(store.jobs.get(hex(1))!).toMatchObject({ revision: 3, lease_owner: null,
+      job: { status: "failed", lease_id: null, lease_expires_at: null, retry_after: "2026-10-22T12:05:00Z" } });
+  });
+  it("keeps an unexpired lease valid until its exact stored expiry second", async () => {
+    const { store, deps } = setup();
+    seed(store, 1);
+    deps.now = () => new Date(T0 + 999);
+    await claimJob(deps, runner, claimBody(1));
+    deps.now = () => new Date(T0 + 899_999);
+    expect(payload(await claimJob(deps, runner, claimBody(1))).outcome).toBe("claimed");
+    deps.now = () => new Date(T0 + 900_000);
+    expect(payload(await claimJob(deps, runner, claimBody(1)))).toEqual({ outcome: "conflict" });
+  });
+  it("floors the expiry sweep clock once and keeps future leases running", async () => {
+    const { store, deps } = setup();
+    seed(store, 1, { status: "running", attempt: 1, lease_id: "lease-1", lease_expires_at: "2026-10-22T12:00:00Z" });
+    seed(store, 2, { status: "running", attempt: 1, lease_id: "lease-2", lease_expires_at: "2026-10-22T12:00:01Z" });
+    let clockCalls = 0;
+    deps.now = () => { clockCalls++; return new Date(T0 + 999); };
+    expect(await sweepExpiredLeases(deps)).toBe(1);
+    expect(clockCalls).toBe(1);
+    expect(store.jobs.get(hex(1))!).toMatchObject({ lease_owner: null,
+      job: { status: "failed", retry_after: "2026-10-22T12:05:00Z", lease_expires_at: null } });
+    expect(store.jobs.get(hex(2))!.job.status).toBe("running");
+  });
+  it("consumes a due retry once, preserving attempt and advancing revision exactly once", async () => {
+    const { store, deps } = setup();
+    seed(store, 1, { status: "failed", attempt: 1, failure: "source_unavailable", retry_after: "2026-10-22T12:00:00Z" });
+    store.jobs.get(hex(1))!.revision = 3;
+    let clockCalls = 0;
+    deps.now = () => { clockCalls++; return new Date(T0 + 999); };
+    expect(await sweepRetryDue(deps)).toBe(1);
+    expect(clockCalls).toBe(1);
+    expect(store.jobs.get(hex(1))!).toMatchObject({ revision: 4, lease_owner: null, job: { status: "queued",
+      attempt: 1, retry_after: null, failure: null, lease_id: null, lease_expires_at: null } });
+    expect(await sweepRetryDue(deps)).toBe(0);
+    expect(payload(await claimJob(deps, other, claimBody(1, 1, "op-2"))).job.attempt).toBe(2);
+    expect(store.jobs.get(hex(1))!.revision).toBe(5);
+  });
+  it("does not requeue future, null, exhausted, or non-failed retry rows", async () => {
+    const { store, deps } = setup();
+    seed(store, 1, { status: "failed", attempt: 1, failure: "source_unavailable", retry_after: "2026-10-22T12:00:01Z" });
+    seed(store, 2, { status: "failed", attempt: 1, failure: "source_unavailable", retry_after: null });
+    seed(store, 3, { status: "failed", attempt: 3, failure: "attempts_exhausted", retry_after: null });
+    seed(store, 4);
+    const before = structuredClone([...store.jobs]);
+    // Deliberately overbroad store result tests the core guard as well as filtering.
+    store.listRetryDue = async () => structuredClone([...store.jobs.values()]);
+    deps.now = () => new Date(T0 + 999);
+    expect(await sweepRetryDue(deps)).toBe(0);
+    expect([...store.jobs]).toEqual(before);
   });
 });
