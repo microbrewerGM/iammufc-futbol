@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import schema from "/Users/aaronsmith/git/iammufc-platform/platform/contracts/arrival-manager-v1.schema.json";
+import * as nodeCrypto from "node:crypto";
+import * as nodeFs from "node:fs";
+declare global {
+  interface ImportMeta { url: string }
+}
+const { createHash } = nodeCrypto as unknown as { createHash(algorithm: string): {
+  update(data: Uint8Array): { digest(encoding: "hex"): string };
+} };
+const { readFileSync } = nodeFs as unknown as { readFileSync(path: URL): Uint8Array & { toString(encoding: "utf8"): string } };
 import {
   ackJob, claimJob, cursorFor, hmacCursorSigner, readJobs, sweepExpiredLeases, sweepRetryDue,
   MAX_REQUEST_BYTES,
@@ -9,6 +17,8 @@ import type {
 } from "../worker/src/core/exploration-bridge";
 
 const T0 = Date.parse("2026-10-22T12:00:00.000Z");
+const schemaBytes = readFileSync(new URL("./fixtures/contracts/arrival-manager-v1.schema.json", import.meta.url));
+const schema = JSON.parse(schemaBytes.toString("utf8"));
 const hex = (n: number) => n.toString(16).padStart(64, "0");
 const request = { version: 1, family: "arrival_manager", as_of: "2026-10-22", population: "first_team_available",
   joining_basis: "effective_first_team_spell_entry", academy_basis: "documented_first_team_promotion", visualization: "table" };
@@ -228,6 +238,12 @@ describe("read", () => {
 });
 
 describe("arrival-manager schema conformance", () => {
+  it("matches the vendored contract schema digest", async () => {
+    // Private source path: platform/contracts/arrival-manager-v1.schema.json (2026-10-22).
+    const sourceSha256 = "45d50c0ff22e098bfec7a0b80ad658fce54e0b77dcd4ac9e9d4dab8ab9693b40";
+    const actualSha256 = createHash("sha256").update(schemaBytes).digest("hex");
+    expect(actualSha256).toBe(sourceSha256);
+  });
   it("validates job/read/read_result/claim/claim_result/ack/ack_result contract shapes", async () => {
     const { store, deps } = setup();
     seed(store, 1);
