@@ -40,7 +40,7 @@ export function bridgeStoreConformance(name: string, create: BridgeStoreFactory)
         failure: "source_unavailable", retry_after: NOW }), row(8, BEFORE, { status: "failed", attempt: 2,
         failure: "lease_expired", retry_after: BEFORE }), row(9, BEFORE, { status: "failed", attempt: 1,
         failure: "validation_failed", retry_after: AFTER }), row(10, BEFORE, { status: "failed", attempt: 3,
-        failure: "attempts_exhausted", retry_after: null }), row(12, BEFORE, { status: "queued", attempt: 1, retry_after: BEFORE }),
+        failure: "attempts_exhausted", retry_after: null }), row(12, BEFORE, { status: "queued", attempt: 1, retry_after: null }),
         row(13, BEFORE, { status: "published", attempt: 1, publication: {
           artifact_key: id(100), request_id: id(101), validation_record_id: "validation-1", publication_id: "publication-1",
           loaded_snapshot_id: "snapshot-1", coverage_record_id: "coverage-1", loaded_at: BEFORE, lineage: ["lineage-1"],
