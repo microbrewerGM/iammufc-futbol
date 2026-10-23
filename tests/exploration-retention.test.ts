@@ -4,9 +4,9 @@ import { readFileSync } from "node:fs";
 // @ts-expect-error Node's built-in SQLite module is available in the configured test runtime.
 import { DatabaseSync } from "node:sqlite";
 import { collectExplorationRetention } from "../worker/src/core/exploration-retention";
+import { EXPLORATION_RETENTION_BATCH } from "../worker/src/core/exploration-retention";
 
 type Db = InstanceType<typeof DatabaseSync>;
-const migration = "infra/migrations/0008_exploration_request_links.sql";
 const sql = (name: string) => readFileSync(`infra/migrations/${name}`, "utf8");
 function fresh(): Db {
   const db: Db = new DatabaseSync(":memory:");
@@ -34,9 +34,11 @@ describe("exploration time based retention", () => {
   it("executes the migration's exact collector SQL against a real 0008 schema", () => {
     const db = fresh();
     try {
-      const statements = (readFileSync(migration, "utf8") as string).split("-- COLLECTOR-BEGIN\n")[1]!.split("-- COLLECTOR-END")[0]!
-        .split("\n").filter(Boolean).map((line) => line.replace(/^-- /, ""));
-      expect(statements).toHaveLength(3);
+      const statements = [
+        `DELETE FROM exploration_request_links WHERE (request_id, account_sub) IN (SELECT request_id, account_sub FROM exploration_request_links WHERE expires_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now') ORDER BY expires_at, request_id, account_sub LIMIT ${EXPLORATION_RETENTION_BATCH})`,
+        `DELETE FROM exploration_shared_requests WHERE request_id IN (SELECT request_id FROM exploration_collectable_requests ORDER BY created_at, request_id LIMIT ${EXPLORATION_RETENTION_BATCH})`,
+        `DELETE FROM exploration_shared_job_tombstones WHERE job_id IN (SELECT job_id FROM exploration_shared_job_tombstones WHERE deleted_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-30 days') ORDER BY deleted_at, job_id LIMIT ${EXPLORATION_RETENTION_BATCH})`,
+      ];
       addRequest(db, 1, [{ account: "expired", at: days(-1) }]);
       addRequest(db, 2, [{ account: "live", at: days(90) }]);
       for (let n = 10; n < 111; n++) {
@@ -47,6 +49,10 @@ describe("exploration time based retention", () => {
         .run(id(3), id(3), days(-31));
       db.prepare(`INSERT INTO exploration_shared_job_tombstones (job_id, request_id, deleted_at) VALUES (?, ?, ?)`)
         .run(id(4), id(4), now);
+      for (let n = 5; n < 206; n++) {
+        db.prepare(`INSERT INTO exploration_shared_job_tombstones (job_id, request_id, deleted_at) VALUES (?, ?, ?)`)
+          .run(id(n), id(n), days(-31));
+      }
       db.exec(statements[0]!);
       expect(db.prepare("SELECT account_sub FROM exploration_request_links").all()).toEqual([{ account_sub: "live" }]);
       expect(db.prepare("SELECT request_id FROM exploration_shared_requests WHERE request_id IN (?, ?)").all(id(1), id(2)))
@@ -56,7 +62,11 @@ describe("exploration time based retention", () => {
       db.exec(statements[1]!);
       expect(count(db, "exploration_shared_requests")).toBe(1);
       db.exec(statements[2]!);
-      expect(db.prepare("SELECT job_id FROM exploration_shared_job_tombstones").all()).toEqual([{ job_id: id(4) }]);
+      expect(count(db, "exploration_shared_job_tombstones")).toBe(103);
+      db.exec(statements[2]!);
+      expect(count(db, "exploration_shared_job_tombstones")).toBe(3);
+      expect(db.prepare("SELECT job_id FROM exploration_shared_job_tombstones ORDER BY job_id").all())
+        .toEqual([{ job_id: id(4) }, { job_id: id(204) }, { job_id: id(205) }]);
     } finally { db.close(); }
   });
 

@@ -21,5 +21,9 @@ export async function collectExplorationRetention(env: Pick<Env, "DB">): Promise
       ORDER BY created_at, request_id LIMIT ${EXPLORATION_RETENTION_BATCH}
     )`).run();
   await env.DB.prepare(`DELETE FROM exploration_shared_job_tombstones
-    WHERE deleted_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-30 days')`).run();
+    WHERE job_id IN (
+      SELECT job_id FROM exploration_shared_job_tombstones
+      WHERE deleted_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-30 days')
+      ORDER BY deleted_at, job_id LIMIT ${EXPLORATION_RETENTION_BATCH}
+    )`).run();
 }
