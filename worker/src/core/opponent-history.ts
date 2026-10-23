@@ -91,7 +91,7 @@ export function queryOpponentHistory(value: unknown, metadata: unknown, rowsValu
   catch { return fail("selection"); }
   if (request.group_by !== "opponent" || request.opponent_id === null ||
       !APPROVED_OPPONENT_IDS.has(request.opponent_id)) fail("opponent");
-  if (typeof cat.snapshot_id !== "string" || !Array.isArray(cat.seasons) || cat.seasons.length > 256) fail("catalog");
+  if (typeof cat.snapshot_id !== "string" || !/^[0-9a-f]{64}$/.test(cat.snapshot_id) || !Array.isArray(cat.seasons) || cat.seasons.length > 256) fail("catalog");
   const coverageBySeason = new Map<string, Coverage>();
   for (const entry of cat.seasons) {
     if (!entry || typeof entry !== "object" || typeof entry.season !== "string" ||

@@ -3,8 +3,9 @@ import { buildOpponentHistoryQuery, queryOpponentHistory, readOpponentHistory } 
 
 const seasons = ["2022-23", "2024-25", "2025-26"];
 const request = { schema_version: 1, competition: "PL", seasons, group_by: "opponent", venue: null, opponent_id: "club:1001" } as const;
-const catalog = { snapshot_id: "snapshot", seasons: seasons.map((season, i) => ({ season, coverage: i === 1 ? "partial" as const : i === 2 ? "missing" as const : "complete" as const })) };
-const row = (season: string, venue: "home" | "away", won: number, drawn: number, lost: number, goals_for: number, goals_against: number) => ({ season, competition: "PL", venue, opponent_id: "club:1001", played: 1, won, drawn, lost, goals_for, goals_against, snapshot_id: "snapshot", lineage: ["source"] });
+const snapshotId = "a".repeat(64);
+const catalog = { snapshot_id: snapshotId, seasons: seasons.map((season, i) => ({ season, coverage: i === 1 ? "partial" as const : i === 2 ? "missing" as const : "complete" as const })) };
+const row = (season: string, venue: "home" | "away", won: number, drawn: number, lost: number, goals_for: number, goals_against: number) => ({ season, competition: "PL", venue, opponent_id: "club:1001", played: 1, won, drawn, lost, goals_for, goals_against, snapshot_id: snapshotId, lineage: ["source"] });
 const run = (rows: unknown[] = [row(seasons[0]!, "home", 1, 0, 0, 2, 0), row(seasons[0]!, "away", 0, 0, 1, 1, 3), row(seasons[1]!, "home", 0, 1, 0, 0, 0)], req: unknown = request, cat: unknown = catalog) => queryOpponentHistory(req, cat, rows);
 
 describe("opponent history query", () => {
@@ -23,7 +24,7 @@ describe("opponent history query", () => {
     const partialOnly = run([row(seasons[1]!, "home", 0, 1, 0, 0, 0)]);
     expect(partialOnly.status).toBe("partial");
     expect(partialOnly.partial).toBe(true);
-    const completeOnlyCatalog = { snapshot_id: "snapshot", seasons: [{ season: seasons[0], coverage: "complete" as const }] };
+    const completeOnlyCatalog = { snapshot_id: snapshotId, seasons: [{ season: seasons[0], coverage: "complete" as const }] };
     const completeEmpty = run([], { ...request, seasons: [seasons[0]] }, completeOnlyCatalog);
     expect(completeEmpty.status).toBe("no_matches");
   });
@@ -36,6 +37,7 @@ describe("opponent history query", () => {
     expect(() => run([], { ...request, seasons: ["2026-27"] })).toThrow("Invalid opponent history: selection");
     expect(() => run([], { ...request, venue: "neutral" })).toThrow("Invalid opponent history: selection");
     expect(() => run([], request, { ...catalog, seasons: [...catalog.seasons, catalog.seasons[0]] })).toThrow("Invalid opponent history: catalog");
+    expect(() => run([], request, { ...catalog, snapshot_id: "not-a-hex-snapshot" })).toThrow("Invalid opponent history: catalog");
   });
   it("rejects malformed rows, invalid lineage, missing contradictions, duplicate grains and snapshot changes", () => {
     expect(() => run([row(seasons[0]!, "home", 1, 0, 0, 2, 0), row(seasons[0]!, "home", 1, 0, 0, 2, 0)])).toThrow("duplicate grain");
@@ -43,7 +45,7 @@ describe("opponent history query", () => {
     expect(() => run([{ ...row(seasons[0]!, "home", 1, 0, 0, 2, 0), lineage: ["source", "source"] }])).toThrow("lineage");
     expect(() => run([{ ...row(seasons[0]!, "home", 1, 0, 0, 2, 0), lineage: [""] }])).toThrow("lineage");
     expect(() => run([row(seasons[2]!, "home", 1, 0, 0, 2, 0)])).toThrow("snapshot or coverage");
-    expect(() => run([row(seasons[0]!, "home", 1, 0, 0, 2, 0)], request, { ...catalog, snapshot_id: "other" })).toThrow("snapshot or coverage");
+    expect(() => run([row(seasons[0]!, "home", 1, 0, 0, 2, 0)], request, { ...catalog, snapshot_id: "b".repeat(64) })).toThrow("snapshot or coverage");
   });
   it("pins production SQL and bindings for both and venue-filtered reads", () => {
   const snapshotId = "a".repeat(64);
@@ -54,7 +56,7 @@ describe("opponent history query", () => {
     });
     expect(buildOpponentHistoryQuery({ ...request, venue: "home" }, validCatalog).bindings).toEqual([snapshotId, ...seasons, "home", "club:1001"]);
     expect(buildOpponentHistoryQuery({ ...request, venue: "home" }, validCatalog).sql).toContain("AND venue = ? AND opponent_id = ?");
-    expect(() => buildOpponentHistoryQuery(request, catalog)).toThrow("query selection");
+    expect(() => buildOpponentHistoryQuery(request, { ...catalog, snapshot_id: "not-a-hex-snapshot" })).toThrow("query selection");
   });
   it("executes the exported bounded query using the catalog snapshot", async () => {
     const snapshotId = "a".repeat(64);
