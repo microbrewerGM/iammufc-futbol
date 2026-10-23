@@ -175,6 +175,16 @@ describe("D1 bridge integration and atomicity", () => {
       else expect(failed.job).toMatchObject({ status: "failed", failure: "attempts_exhausted", retry_after: null, lease_id: null });
     }
   });
+  it("reproduces the frozen core/schema blocker on lease recovery after a day", async () => {
+    const { store } = setup([row(1)]);
+    const active = running(row(1));
+    expect(await store.commit(1, active, null)).toBe(true);
+    // The core computes now + backoff, but 0008 caps retry_after at claim +1d.
+    // This documents the stop condition; it does not establish adapter acceptance.
+    await expect(sweepExpiredLeases(deps(store, "2026-10-24T12:00:00Z")))
+      .rejects.toThrow("invalid exploration job state transition");
+    expect(await store.get(id(1))).toEqual(active);
+  });
   it("uses decoded .000Z cursor positions without skipping tied admission times", async () => {
     const { store } = setup(); const d = deps(store);
     const result = await readJobs(d, caller, envelope("read", { cursor: null, limit: 1 }));
