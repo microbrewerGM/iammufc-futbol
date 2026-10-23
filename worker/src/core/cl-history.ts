@@ -23,7 +23,7 @@ export interface CLHistoryResult {
 
 const SEASON_RE = /^(\d{4})-(\d{2})$/;
 const SNAPSHOT_RE = /^[a-f0-9]{64}$/;
-const MAX_COVERAGE_CELLS = 512;
+const MAX_COVERAGE_SEASONS = 20;
 
 function validSeason(value: unknown): value is string {
   if (typeof value !== "string") return false;
@@ -36,7 +36,7 @@ function safeCount(value: unknown, positive = false): value is number {
 }
 
 function eligibleSeasons(catalog: CompiledCatalog): string[] {
-  if (!Array.isArray(catalog.coverage) || catalog.coverage.length > MAX_COVERAGE_CELLS) {
+  if (!Array.isArray(catalog.coverage)) {
     throw new Error("invalid CL history catalog");
   }
   const seasons = new Set<string>();
@@ -46,7 +46,8 @@ function eligibleSeasons(catalog: CompiledCatalog): string[] {
     if (!validSeason(cell.season) || seasons.has(cell.season)) throw new Error("invalid CL history coverage");
     seasons.add(cell.season);
   }
-  return [...seasons].sort((a, b) => Number(a.slice(0, 4)) - Number(b.slice(0, 4)));
+  if (seasons.size > MAX_COVERAGE_SEASONS) throw new Error("invalid CL history coverage");
+  return [...seasons].sort((a, b) => Number(b.slice(0, 4)) - Number(a.slice(0, 4)));
 }
 
 function validateRows(rows: unknown[], seasons: readonly string[], snapshotId: string): CLHistoryRecord[] {
@@ -81,7 +82,7 @@ export async function clHistoryRows(env: Env, catalog: CompiledCatalog): Promise
     `SELECT season, played, won, drawn, lost, goals, goals_against, snapshot_id
        FROM season_stats
       WHERE competition = ? AND season IN (${placeholders})
-      ORDER BY season ASC LIMIT ${seasons.length + 1}`,
+      ORDER BY season DESC LIMIT ${seasons.length + 1}`,
   ).bind("CL", ...seasons).all<CLHistoryRecord>();
   if ((results ?? []).length > seasons.length) throw new Error("invalid CL history row");
   const after = await env.DB.prepare(

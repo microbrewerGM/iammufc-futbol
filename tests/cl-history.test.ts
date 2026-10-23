@@ -35,21 +35,26 @@ describe("Champions League history query", () => {
     expect(store.calls).toHaveLength(1);
   });
 
-  it("returns observed rows in ascending order with explicit gaps and exact parameterized SQL", async () => {
+  it("returns observed rows newest first with explicit gaps and exact parameterized SQL", async () => {
     const store = fakeDb([row("2024-25"), row("2016-17")]);
     const result = await clHistoryRows(store.env, catalog(["2024-25", "2016-17", "2017-18"]));
     expect(result.entries).toEqual([
-      { status: "observed", row: row("2016-17") },
-      { status: "gap", season: "2017-18" },
       { status: "observed", row: row("2024-25") },
+      { status: "gap", season: "2017-18" },
+      { status: "observed", row: row("2016-17") },
     ]);
     expect(store.calls[1]).toEqual({
       sql: `SELECT season, played, won, drawn, lost, goals, goals_against, snapshot_id
        FROM season_stats
       WHERE competition = ? AND season IN (?, ?, ?)
-      ORDER BY season ASC LIMIT 4`,
-      bindings: ["CL", "2016-17", "2017-18", "2024-25"],
+      ORDER BY season DESC LIMIT 4`,
+      bindings: ["CL", "2024-25", "2017-18", "2016-17"],
     });
+  });
+
+  it("rejects coverage larger than the hard cap of 20 seasons", async () => {
+    const seasons = Array.from({ length: 21 }, (_, i) => `${2000 + i}-${String((2001 + i) % 100).padStart(2, "0")}`);
+    await expect(clHistoryRows(fakeDb([]).env, catalog(seasons))).rejects.toThrow("invalid CL history coverage");
   });
 
   it("rejects duplicate rows, invalid counts, and mixed snapshots", async () => {
