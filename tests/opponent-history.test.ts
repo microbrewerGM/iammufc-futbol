@@ -14,14 +14,14 @@ describe("opponent history query", () => {
     expect(result.seasons[2]).not.toHaveProperty("record");
     expect(result.combined).toMatchObject({ played: 3, won: 1, drawn: 1, lost: 1, goals_for: 3, goals_against: 3, points: 4, goal_difference: 0, points_per_match: 4 / 3, win_rate: 1 / 3 });
     expect(result.partial).toBe(true);
-    expect(result.status).toBe("available");
+    expect(result.status).toBe("partial");
   });
   it("keeps each empty coverage state distinct and makes combined coverage visible", () => {
     const result = run([]);
     expect(result.seasons.map(s => [s.coverage, s.status])).toEqual([["complete", "no_matches"], ["partial", "missing_capability"], ["missing", "missing_capability"]]);
     expect(result).not.toHaveProperty("combined");
     const partialOnly = run([row(seasons[1]!, "home", 0, 1, 0, 0, 0)]);
-    expect(partialOnly.status).toBe("available");
+    expect(partialOnly.status).toBe("partial");
     expect(partialOnly.partial).toBe(true);
     const completeOnlyCatalog = { snapshot_id: "snapshot", seasons: [{ season: seasons[0], coverage: "complete" as const }] };
     const completeEmpty = run([], { ...request, seasons: [seasons[0]] }, completeOnlyCatalog);

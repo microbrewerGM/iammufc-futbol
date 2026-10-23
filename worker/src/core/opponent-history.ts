@@ -22,7 +22,7 @@ export interface OpponentHistoryResult {
   snapshot_id: string;
   seasons: { season: string; coverage: Coverage; status: "available" | "no_matches" | "missing_capability"; record?: HistoryRecord }[];
   combined?: HistoryRecord;
-  status: "available" | "no_matches" | "missing_capability";
+  status: "available" | "partial" | "no_matches" | "missing_capability";
   partial: boolean;
   contributing_seasons: string[];
 }
@@ -143,6 +143,6 @@ export function queryOpponentHistory(value: unknown, metadata: unknown, rowsValu
   });
   const contributing = seasons.filter(s => s.record).map(s => s.season);
   const partial = seasons.some(s => s.coverage !== "complete");
-  const status = contributing.length ? "available" : partial ? "missing_capability" : "no_matches";
+  const status = partial ? "partial" : contributing.length ? "available" : "no_matches";
   return { request, snapshot_id: cat.snapshot_id, seasons, ...(rows.length ? { combined: makeRecord(rows) } : {}), status, partial, contributing_seasons: contributing };
 }
