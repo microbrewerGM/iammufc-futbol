@@ -147,7 +147,7 @@ describe("D1 bridge integration and atomicity", () => {
       lease_expires_at: null, retry_after: "2026-10-23T12:05:00Z" } });
     expect({ ...binding.sqlite.prepare("SELECT lease_id,lease_owner,claimed_at FROM exploration_shared_jobs WHERE job_id=?").get(id(1)) })
       .toEqual({ lease_id: "lease-a", lease_owner: "runner-a", claimed_at: NOW });
-    expect(await sweepRetryDue(deps(store, "2026-10-23T12:05:00Z"))).toBe(1);
+    expect(await sweepRetryDue(deps(store, "2026-10-23T12:05:00Z"))).toEqual({ moved: 1, failed: 0 });
     const queued = (await store.get(id(1)))!;
     expect(queued).toMatchObject({ revision: 4, job: { status: "queued", retry_after: null } });
     const d2 = deps(store, "2026-10-23T12:05:00Z");
@@ -169,22 +169,32 @@ describe("D1 bridge integration and atomicity", () => {
       const queued = (await store.get(id(1)))!;
       const active = running(queued);
       expect(await store.commit(queued.revision, active, null)).toBe(true);
-      expect(await sweepExpiredLeases(deps(store, LATER))).toBe(1);
+      expect(await sweepExpiredLeases(deps(store, LATER))).toEqual({ moved: 1, failed: 0 });
       const failed = (await store.get(id(1)))!;
-      if (attempt < 3) expect(await sweepRetryDue(deps(store, failed.job.retry_after!))).toBe(1);
+      if (attempt < 3) expect(await sweepRetryDue(deps(store, failed.job.retry_after!))).toEqual({ moved: 1, failed: 0 });
       else expect(failed.job).toMatchObject({ status: "failed", failure: "attempts_exhausted", retry_after: null, lease_id: null });
     }
   });
-  it("reproduces the frozen core/schema blocker on lease recovery after a day", async () => {
-    const { store } = setup([row(1)]);
-    const active = running(row(1));
-    expect(await store.commit(1, active, null)).toBe(true);
-    // The core computes now + backoff, but 0008 caps retry_after at claim +1d.
-    // This documents the stop condition; it does not establish adapter acceptance.
-    await expect(sweepExpiredLeases(deps(store, "2026-10-24T12:00:00Z")))
-      .rejects.toThrow("invalid exploration job state transition");
-    expect(await store.get(id(1))).toEqual(active);
-  });
+  it.each(["2026-10-24T12:00:00Z", "2026-10-25T12:00:00Z"])(
+    "recovers expired leases at %s within the SQL retry bound and advances later rows", async time => {
+      const { binding, store } = setup([row(1), row(2)]);
+      for (const n of [1, 2]) expect(await store.commit(1, running(row(n)), null)).toBe(true);
+      expect(await sweepExpiredLeases(deps(store, time))).toEqual({ moved: 2, failed: 0 });
+      for (const n of [1, 2]) {
+        expect(await store.get(id(n))).toMatchObject({ revision: 3, lease_owner: null,
+          job: { status: "failed", attempt: 1, failure: "lease_expired", lease_id: null,
+            lease_expires_at: null, retry_after: "2026-10-24T12:00:00Z" } });
+      }
+      expect(await sweepRetryDue(deps(store, time))).toEqual({ moved: 2, failed: 0 });
+      for (const n of [1, 2]) expect(await store.get(id(n))).toMatchObject({ revision: 4,
+        job: { status: "queued", attempt: 1, retry_after: null, failure: null } });
+      expect(binding.sqlite.prepare("SELECT count(*) AS n FROM exploration_bridge_operations").get().n).toBe(0);
+      const reclaim = await claimJob(deps(store, time), caller,
+        envelope("claim", { job_id: id(1), expected_attempt: 1, operation_id: "late-reclaim" }));
+      expect(reclaim.ok).toBe(true);
+      expect(await store.get(id(1))).toMatchObject({ revision: 5, lease_owner: "runner-a",
+        job: { status: "running", attempt: 2 } });
+    });
   it("uses decoded .000Z cursor positions without skipping tied admission times", async () => {
     const { store } = setup(); const d = deps(store);
     const result = await readJobs(d, caller, envelope("read", { cursor: null, limit: 1 }));
