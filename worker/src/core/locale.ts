@@ -18,6 +18,7 @@
  */
 
 import type { Catalog } from "./feasibility";
+import type { ChampionsLeagueHistoryStrings } from "../views/cl-history";
 
 export type LocaleCode = "en" | "es";
 export const LOCALE_CODES: LocaleCode[] = ["en", "es"];
@@ -37,6 +38,7 @@ export interface Locale {
   htmlLang: string; // full BCP-47 for <html lang="">
   numberLocale: string; // for Intl.NumberFormat -- es-ES gives decimal comma
   strings: {
+    clHistory: ChampionsLeagueHistoryStrings;
     siteTagline: string;
     askPlaceholder: string;
     askButton: string;
@@ -142,6 +144,16 @@ const EN: Locale = {
   htmlLang: "en",
   numberLocale: "en-GB",
   strings: {
+    clHistory: {
+      heading: "Champions League history", caption: "Recorded matches; records may be incomplete",
+      season: "Season", played: "Played", won: "Won", drawn: "Drawn", lost: "Lost",
+      goalsFor: "Goals for", goalsAgainst: "Goals against",
+      gap: "No recorded matches available; this does not establish non-participation",
+      partial: "Partial", outsideCoverage: "Champions League history is outside current coverage",
+      noResults: "No recorded Champions League results are available",
+      unavailable: "History is temporarily unavailable", snapshotDate: "Data snapshot",
+      sources: "Sources and snapshot", attributionUnavailable: "Source attribution unavailable for some data.",
+    },
     siteTagline: "Manchester United statistics. Unofficial, non-commercial, and honest about what it does not have.",
     askPlaceholder: "Ask about Manchester United…",
     askButton: "Ask",
@@ -251,6 +263,16 @@ const ES: Locale = {
   htmlLang: "es",
   numberLocale: "es-ES",
   strings: {
+    clHistory: {
+      heading: "Historial de la Liga de Campeones", caption: "Partidos registrados; los datos pueden estar incompletos",
+      season: "Temporada", played: "Jugados", won: "Ganados", drawn: "Empatados", lost: "Perdidos",
+      goalsFor: "Goles a favor", goalsAgainst: "Goles en contra",
+      gap: "No hay partidos registrados disponibles; esto no demuestra que el equipo no participara",
+      partial: "Parcial", outsideCoverage: "El historial de la Liga de Campeones está fuera de la cobertura actual",
+      noResults: "No hay resultados registrados de la Liga de Campeones disponibles",
+      unavailable: "El historial no está disponible temporalmente", snapshotDate: "Fecha de los datos",
+      sources: "Fuentes y versión de datos", attributionUnavailable: "Atribución de fuente no disponible para algunos datos.",
+    },
     siteTagline: "Estadísticas del Manchester United. No oficial, sin ánimo de lucro, y honesto sobre lo que no tiene.",
     askPlaceholder: "Pregunta sobre el Manchester United…",
     askButton: "Preguntar",
