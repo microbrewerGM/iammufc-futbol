@@ -41,7 +41,9 @@ export function bridgeStoreConformance(name: string, create: BridgeStoreFactory)
         failure: "validation_failed", retry_after: AFTER }), row(10, BEFORE, { status: "failed", attempt: 3,
         failure: "attempts_exhausted", retry_after: null }), row(11, BEFORE, { status: "failed", attempt: 1,
         failure: "publication_failed", retry_after: null }), row(12, BEFORE, { status: "queued", retry_after: BEFORE }),
-        row(13, BEFORE, { status: "published" })];
+        row(13, BEFORE, { status: "published", retry_after: BEFORE, lease_expires_at: BEFORE }),
+        row(14, BEFORE, { status: "running", attempt: 1, lease_id: "lease-14", lease_expires_at: null }),
+        row(15, BEFORE, { status: "failed", attempt: 3, failure: "attempts_exhausted", retry_after: BEFORE })];
       const fixture = await create(structuredClone(rows));
       store = fixture.store;
       return async () => { await fixture.dispose?.(); };
@@ -63,6 +65,9 @@ export function bridgeStoreConformance(name: string, create: BridgeStoreFactory)
       expect(await store.commit(0, next(r), op())).toBe(false);
       expect(await store.get(r.job.job_id)).toEqual(r);
       expect(await store.getOperation("runner-a", "claim", "op-1")).toBeNull();
+      expect(await store.commit(1, next(r), op())).toBe(true);
+      expect(await store.get(r.job.job_id)).toEqual(next(r));
+      expect(await store.getOperation("runner-a", "claim", "op-1")).toEqual(op());
     });
     it("rejects a duplicate operation key without changing either job", async () => {
       const a = rows[0]!; const b = rows[2]!; const operation = op();
@@ -99,6 +104,15 @@ export function bridgeStoreConformance(name: string, create: BridgeStoreFactory)
       expect(await store.getOperation("runner-a", "claim", winning.operation_id)).toEqual(winning);
       expect(await store.getOperation("runner-a", "claim", results[0] ? "op-2" : "op-1")).toBeNull();
       expect(await store.get(r.job.job_id)).toEqual(results[0] ? next(r) : { ...next(r), lease_owner: "runner-b" });
+    });
+    it("allows exactly one concurrent winner for an operation key across jobs", async () => {
+      const a = rows[0]!; const b = rows[2]!;
+      const results = await Promise.all([store.commit(1, next(a), op()),
+        store.commit(1, next(b), op({ body_hash: id(101) }))]);
+      expect(results.filter(Boolean)).toHaveLength(1);
+      expect(await store.get(a.job.job_id)).toEqual(results[0] ? next(a) : a);
+      expect(await store.get(b.job.job_id)).toEqual(results[1] ? next(b) : b);
+      expect(await store.getOperation("runner-a", "claim", "op-1")).toEqual(results[0] ? op() : op({ body_hash: id(101) }));
     });
     it("orders pages by admission then id, applies exclusive positions and bounds", async () => {
       const sorted = [...rows].sort((a, b) => a.admitted_at.localeCompare(b.admitted_at) || a.job.job_id.localeCompare(b.job.job_id));
