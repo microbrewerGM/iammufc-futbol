@@ -829,37 +829,56 @@ function registerLocaleRoutes(code: LocaleCode) {
       cell.granularity === "box_score" && cell.competition === "CL" && cell.source_id === "openfootball");
     const seasons = [...new Set(cells.map((cell) => cell.season))];
     seasons.sort((a, b) => Number(b.slice(0, 4)) - Number(a.slice(0, 4)));
-    if (seasons.length === 0) {
-      const empty = championsLeagueHistoryBody({ entries: [], credits: {} }, locale.strings.clHistory);
-      const res = html(page(empty, { title: locale.strings.clHistory.heading, locale, unprefixedPath: "/seasons/champions-league" }));
-      res.headers.set("Cache-Control", CACHE_CONTROL);
-      return res;
-    }
     let snapshot: string | null = null;
     let body: string;
     let credits: (string | null | undefined)[] = [];
     try {
-      const [publication, result] = await Promise.all([currentPublication(c.env), clHistoryRows(c.env, decodedCatalog)]);
+      const [publication, result, snapshotMetadata] = await Promise.all([
+        currentPublication(c.env),
+        clHistoryRows(c.env, decodedCatalog),
+        c.env.DB.prepare("SELECT snapshot_id, sources_json FROM snapshots ORDER BY created_at DESC LIMIT 1")
+          .first<{ snapshot_id: unknown; sources_json: unknown }>(),
+      ]);
       snapshot = result.snapshot_id;
-      if (!publication || publication.snapshotId !== result.snapshot_id || !snapshot) throw new Error("CL history publication unavailable");
+      if (!publication || publication.snapshotId !== result.snapshot_id || !snapshot ||
+          !snapshotMetadata || snapshotMetadata.snapshot_id !== snapshot || typeof snapshotMetadata.sources_json !== "string") {
+        throw new Error("CL history publication unavailable");
+      }
+      let sourceHashes: unknown;
+      try { sourceHashes = JSON.parse(snapshotMetadata.sources_json); } catch { throw new Error("Invalid snapshot lineage"); }
+      if (!sourceHashes || typeof sourceHashes !== "object" || Array.isArray(sourceHashes)) throw new Error("Invalid snapshot lineage");
+      const hashKeys = sourceHashes as Record<string, unknown>;
+      for (const [key, value] of Object.entries(hashKeys)) {
+        if (!/^[a-z0-9_]+(?::[A-Z]+)?(?::\d{4}-\d{2})?$/.test(key) || typeof value !== "string" || !/^[a-f0-9]{64}$/.test(value)) {
+          throw new Error("Invalid snapshot lineage");
+        }
+      }
       const source = publication.sources.find((item) => item.id === "openfootball_cl");
       if (source?.status === "unavailable" && result.entries.some((entry) => entry.status === "observed")) throw new Error("CL source unavailable");
-      const mapped = result.entries.map((entry) => {
-        if (entry.status === "gap") return { state: "gap" as const, season: entry.season };
-        const cell = cells.find((candidate) => candidate.season === entry.row.season);
-        const state = catalog.checkFeasibility({ metric: "goals", entity_type: "season", entity_id: "all", season: entry.row.season,
-          competition: "CL", dimensions: [], filters: {}, viz: "table", limit: 1 }, code).state;
-        if (!cell || !["available", "computable_now_queued"].includes(state)) return { state: "gap" as const, season: entry.row.season };
-        const ref = `${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`;
-        const credit = (code === "es" ? cell.attribution_text_es ?? cell.attribution_text : cell.attribution_text) ?? cell.source_name;
-        if (credit.trim()) credits.push(credit);
-        return { state: "observed" as const, row: { ...entry.row, lineage: [ref] } };
-      });
-      const modelEntries = seasons.length ? mapped : [];
-      body = championsLeagueHistoryBody({ entries: modelEntries, credits: Object.fromEntries(cells.map((cell) => [
-        `${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`,
-        (code === "es" ? cell.attribution_text_es ?? cell.attribution_text : cell.attribution_text) ?? cell.source_name,
-      ])), snapshotDate: publication.loadedAt.slice(0, 10) }, locale.strings.clHistory);
+      if (seasons.length === 0) {
+        if (await currentSnapshot(c.env) !== snapshot) throw new Error("CL history snapshot changed");
+        body = championsLeagueHistoryBody({ entries: [{ state: "out_of_coverage", season: "2026-27" }], credits: {} }, locale.strings.clHistory);
+      } else {
+        const mapped = result.entries.map((entry) => {
+          if (entry.status === "gap") return { state: "gap" as const, season: entry.season };
+          const cell = cells.find((candidate) => candidate.season === entry.row.season);
+          const state = catalog.checkFeasibility({ metric: "goals", entity_type: "season", entity_id: "all", season: entry.row.season,
+            competition: "CL", dimensions: [], filters: {}, viz: "table", limit: 1 }, code).state;
+          if (!cell || !["available", "computable_now_queued"].includes(state)) return { state: "gap" as const, season: entry.row.season };
+          if (hashKeys[`openfootball:CL:${entry.row.season}`] === undefined) {
+            return { state: "observed" as const, row: { ...entry.row, lineage: [] } };
+          }
+          const ref = `${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`;
+          const credit = (code === "es" ? cell.attribution_text_es ?? cell.attribution_text : cell.attribution_text) ?? cell.source_name;
+          if (credit.trim()) credits.push(credit);
+          return { state: "partial" as const, row: { ...entry.row, lineage: [ref] } };
+        });
+        body = championsLeagueHistoryBody({ entries: mapped, credits: Object.fromEntries(cells.map((cell) => [
+          `${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`,
+          (code === "es" ? cell.attribution_text_es ?? cell.attribution_text : cell.attribution_text) ?? cell.source_name,
+        ])), snapshotDate: publication.loadedAt.slice(0, 10) }, locale.strings.clHistory);
+        if (await currentSnapshot(c.env) !== snapshot) throw new Error("CL history snapshot changed");
+      }
     } catch {
       body = championsLeagueHistoryBody({ entries: [], credits: {}, unavailable: true }, locale.strings.clHistory);
       snapshot = null;

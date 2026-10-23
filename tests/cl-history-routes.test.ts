@@ -6,7 +6,7 @@ vi.mock("jose", async (original) => ({
   jwtVerify: vi.fn(async () => ({ payload: { sub: "owner", email: "owner@example.invalid" } })),
 }));
 
-const readState = vi.hoisted(() => ({ rows: [] as Record<string, unknown>[], fail: false, seasons: ["2024-25", "2023-24"] as string[] }));
+const readState = vi.hoisted(() => ({ rows: [] as Record<string, unknown>[], fail: false, seasons: ["2024-25", "2023-24"] as string[], sourceHashes: { "openfootball:CL:2024-25": "b".repeat(64) } as Record<string, string> }));
 vi.mock("../worker/src/core/cl-history", async (original) => ({
   ...await original<typeof import("../worker/src/core/cl-history")>(),
   clHistoryRows: vi.fn(async () => {
@@ -23,9 +23,14 @@ vi.mock("../worker/src/core/db", async (original) => ({
   seasonHistoryRows: vi.fn(async () => []),
 }));
 
+const snapshotDb = vi.hoisted(() => ({
+  prepare: vi.fn(() => ({ first: vi.fn(async () => ({ snapshot_id: "a".repeat(64), sources_json: JSON.stringify(readState.sourceHashes) })) })),
+}));
+
 import app from "../worker/src/index";
 
 const env = { ACCESS_ISSUER: "https://example.cloudflareaccess.com", ACCESS_AUD: "a".repeat(64), ACCESS_OWNER_EMAILS: "owner@example.invalid" } as Env;
+Object.assign(env, { DB: snapshotDb });
 const headers = { "cf-access-jwt-assertion": "synthetic" };
 const row = { season: "2024-25", played: 2, won: 1, drawn: 0, lost: 1, goals: 3, goals_against: 0, snapshot_id: "a".repeat(64) };
 
@@ -33,11 +38,13 @@ describe("Champions League history routes", () => {
   it.each([["en", "Champions League history"], ["es", "Historial de la Liga de Campeones"]] as const)("renders %s with linked observed totals", async (locale, heading) => {
     readState.fail = false;
     readState.rows = [{ status: "observed", row } as unknown as Record<string, unknown>, { status: "gap", season: "2023-24" }];
+    readState.sourceHashes = { "openfootball:CL:2024-25": "b".repeat(64) };
     const response = await app.request(`https://site.invalid/${locale}/seasons/champions-league`, { headers }, env);
     const body = await response.text();
     expect(response.status).toBe(200);
     expect(body).toContain(heading);
     expect(body).toContain(">3</td>");
+    expect(body).toContain(locale === "es" ? "2024-25 <span>(Parcial)</span>" : "2024-25 <span>(Partial)</span>");
     expect(body).toContain(locale === "es" ? "Fecha de los datos" : "Data snapshot");
     expect((await app.request(`https://site.invalid/${locale}/season/2024-25`, { headers }, env)).status).toBe(200);
     expect(await (await app.request(`https://site.invalid/${locale}/season/2024-25`, { headers }, env)).text()).toContain(`href="/${locale}/seasons/champions-league"`);
@@ -48,6 +55,26 @@ describe("Champions League history routes", () => {
     readState.rows = [];
     const response = await app.request("https://site.invalid/en/seasons/champions-league", { headers }, env);
     expect(await response.text()).toContain("outside current coverage");
+  });
+
+  it("withholds an observed row without its expected publication lineage key", async () => {
+    readState.fail = false;
+    readState.rows = [{ status: "observed", row } as unknown as Record<string, unknown>];
+    readState.sourceHashes = {};
+    const body = await (await app.request("https://site.invalid/en/seasons/champions-league", { headers }, env)).text();
+    expect(body).toContain("Source attribution unavailable for some data.");
+    expect(body).not.toContain(">3</td>");
+  });
+
+  it("checks publication and snapshot metadata before serving empty coverage", async () => {
+    readState.fail = false;
+    readState.rows = [];
+    readState.sourceHashes = {};
+    const { currentPublication } = await import("../worker/src/core/db");
+    vi.mocked(currentPublication).mockResolvedValueOnce(null);
+    const body = await (await app.request("https://site.invalid/en/seasons/champions-league", { headers }, env)).text();
+    expect(body).toContain("temporarily unavailable");
+    expect(body).not.toContain("outside current coverage");
   });
 
   it("renders the temporary-unavailable state on a query failure", async () => {
