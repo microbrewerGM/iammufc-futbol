@@ -45,6 +45,7 @@ import {
   type QuestionHistoryEntry,
   type PublicationState,
 } from "./core/db";
+import { clHistoryRows } from "./core/cl-history";
 import { decodeCompiledCatalog } from "./core/catalog-contract";
 import { Catalog, columnFeasibility, hasSubstance } from "./core/feasibility";
 import { artifactKey, canonicalize } from "./core/intent";
@@ -61,6 +62,7 @@ import { buildSeasonComparison, eligibleLeagueSeasons } from "./core/season-comp
 import { calculatePlayerRange, parsePlayerRangeRequest } from "./core/player-range";
 import { parseSeasonSplitRequest, querySeasonSplits } from "./core/season-splits";
 import { seasonSplitsBody, seasonSplitSelection } from "./views/season-splits";
+import { championsLeagueHistoryBody } from "./views/cl-history";
 import type { PlayerRangeRequest } from "./core/player-range";
 import { playerRangeBody, playerRangeSelection } from "./views/player-range";
 import { withSecurityHeaders } from "./security/headers";
@@ -797,7 +799,9 @@ function registerLocaleRoutes(code: LocaleCode) {
       seasonHistoryRows(c.env, eligibleSeasons),
     ]);
     const comparison = buildSeasonComparison(history, eligibleSeasons, catalog, code);
-    const body = seasonPageBody(season, squad, record, catalog, locale, europeanRecord, comparison);
+    const seasonBody = seasonPageBody(season, squad, record, catalog, locale, europeanRecord, comparison);
+    const historyLink = `<p><a href="/${code}/seasons/champions-league">${locale.code === "es" ? "Historial de la Liga de Campeones" : "Champions League history"}</a></p>`;
+    const body = `${seasonBody}${historyLink}`;
     const res = html(
       page(body, {
         title: `${season}`,
@@ -814,6 +818,53 @@ function registerLocaleRoutes(code: LocaleCode) {
     }
     // No enforceBudget() call on this route either -- same reasoning as
     // /player above.
+    res.headers.set("Cache-Control", CACHE_CONTROL);
+    return res;
+  });
+
+  app.get(`${p}/seasons/champions-league`, async (c) => {
+    const url = new URL(c.req.url);
+    if (url.search || url.pathname.endsWith("/")) return c.redirect(`/${code}/seasons/champions-league`, 301);
+    const cells = catalog.coverage.filter((cell) => cell.metric === "goals" && cell.entity_type === "season" &&
+      cell.granularity === "box_score" && cell.competition === "CL" && cell.source_id === "openfootball");
+    const seasons = [...new Set(cells.map((cell) => cell.season))];
+    seasons.sort((a, b) => Number(b.slice(0, 4)) - Number(a.slice(0, 4)));
+    if (seasons.length === 0) {
+      const empty = championsLeagueHistoryBody({ entries: [], credits: {} }, locale.strings.clHistory);
+      const res = html(page(empty, { title: locale.strings.clHistory.heading, locale, unprefixedPath: "/seasons/champions-league" }));
+      res.headers.set("Cache-Control", CACHE_CONTROL);
+      return res;
+    }
+    let snapshot: string | null = null;
+    let body: string;
+    let credits: (string | null | undefined)[] = [];
+    try {
+      const [publication, result] = await Promise.all([currentPublication(c.env), clHistoryRows(c.env, decodedCatalog)]);
+      snapshot = result.snapshot_id;
+      if (!publication || publication.snapshotId !== result.snapshot_id || !snapshot) throw new Error("CL history publication unavailable");
+      const source = publication.sources.find((item) => item.id === "openfootball_cl");
+      if (source?.status === "unavailable" && result.entries.some((entry) => entry.status === "observed")) throw new Error("CL source unavailable");
+      const mapped = result.entries.map((entry) => {
+        if (entry.status === "gap") return { state: "gap" as const, season: entry.season };
+        const cell = cells.find((candidate) => candidate.season === entry.row.season);
+        const state = catalog.checkFeasibility({ metric: "goals", entity_type: "season", entity_id: "all", season: entry.row.season,
+          competition: "CL", dimensions: [], filters: {}, viz: "table", limit: 1 }, code).state;
+        if (!cell || !["available", "computable_now_queued"].includes(state)) return { state: "gap" as const, season: entry.row.season };
+        const ref = `${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`;
+        const credit = (code === "es" ? cell.attribution_text_es ?? cell.attribution_text : cell.attribution_text) ?? cell.source_name;
+        if (credit.trim()) credits.push(credit);
+        return { state: "observed" as const, row: { ...entry.row, lineage: [ref] } };
+      });
+      const modelEntries = seasons.length ? mapped : [];
+      body = championsLeagueHistoryBody({ entries: modelEntries, credits: Object.fromEntries(cells.map((cell) => [
+        `${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`,
+        (code === "es" ? cell.attribution_text_es ?? cell.attribution_text : cell.attribution_text) ?? cell.source_name,
+      ])), snapshotDate: publication.loadedAt.slice(0, 10) }, locale.strings.clHistory);
+    } catch {
+      body = championsLeagueHistoryBody({ entries: [], credits: {}, unavailable: true }, locale.strings.clHistory);
+      snapshot = null;
+    }
+    const res = html(page(body, { title: locale.strings.clHistory.heading, locale, unprefixedPath: "/seasons/champions-league", snapshotId: snapshot, attribution: credits }));
     res.headers.set("Cache-Control", CACHE_CONTROL);
     return res;
   });
