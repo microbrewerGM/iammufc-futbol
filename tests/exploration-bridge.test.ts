@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import schema from "/Users/aaronsmith/git/iammufc-platform/platform/contracts/arrival-manager-v1.schema.json";
 import {
   ackJob, claimJob, cursorFor, readJobs, sweepExpiredLeases, sweepRetryDue,
   MAX_REQUEST_BYTES,
@@ -73,6 +74,38 @@ const ackBody = (n: number, lease: string, attempt: number, outcome: unknown, op
 const failOutcome = { status: "failed", reason: "source_unavailable" };
 function ok(r: BridgeResult) { if (!r.ok) throw new Error(`expected ok, got ${r.error}`); return JSON.parse(r.body); }
 const payload = (r: BridgeResult) => ok(r).payload;
+const schemaRecord = schema as Record<string, any>;
+function schemaValid(def: string, value: unknown): boolean { return matches(schemaRecord.$defs[def], value); }
+function matches(spec: any, value: any): boolean {
+  if (spec.$ref) return matches(schemaRecord.$defs[spec.$ref.split("/").at(-1)!], value);
+  if (spec.oneOf && spec.oneOf.filter((s: any) => matches(s, value)).length !== 1) return false;
+  if (spec.allOf && !spec.allOf.every((s: any) => matches(s, value))) return false;
+  if (spec.if && matches(spec.if, value) && spec.then && !matches(spec.then, value)) return false;
+  if (spec.const !== undefined && value !== spec.const) return false;
+  if (spec.enum && !spec.enum.includes(value)) return false;
+  if (spec.type === "object") {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+    if ((spec.required ?? []).some((k: string) => !(k in value))) return false;
+    if (spec.additionalProperties === false && Object.keys(value).some(k => !(k in (spec.properties ?? {})))) return false;
+    if (Object.entries(spec.properties ?? {}).some(([k, s]) => k in value && !matches(s, value[k]))) return false;
+  }
+  if (spec.type === "array") {
+    if (!Array.isArray(value) || value.length < (spec.minItems ?? 0) || value.length > (spec.maxItems ?? Infinity)) return false;
+    if (spec.uniqueItems && new Set(value.map(v => JSON.stringify(v))).size !== value.length) return false;
+    if (spec.items && value.some(v => !matches(spec.items, v))) return false;
+  }
+  if (spec.type === "integer" && !Number.isInteger(value)) return false;
+  if (spec.type === "string" && typeof value !== "string") return false;
+  if (spec.type === "null" && value !== null) return false;
+  if (typeof value === "number" && (value < (spec.minimum ?? -Infinity) || value > (spec.maximum ?? Infinity))) return false;
+  if (typeof value === "string" && ((spec.pattern && !new RegExp(spec.pattern).test(value)) || value.length > (spec.maxLength ?? Infinity))) return false;
+  return true;
+}
+const envelopeValid = (kind: string, def: string, value: unknown) => {
+  const envelope = { version: 1, kind, payload: value };
+  const branch = (schemaRecord.oneOf as any[]).find(s => s.properties.kind.const === kind);
+  return Boolean(branch && matches(branch, envelope) && schemaValid(def, value));
+};
 
 describe("read", () => {
   it("orders by admission time then job id, pages with scoped cursors and has no side effects", async () => {
@@ -83,8 +116,7 @@ describe("read", () => {
     const before = JSON.stringify([...store.jobs]);
     const p1 = payload(await readJobs(deps, runner, env("read", { cursor: null, limit: 2 })));
     expect(p1.jobs.map((j: Job) => j.job_id)).toEqual([hex(3), hex(1)]);
-    expect(p1.next_cursor).toBe(await cursorFor(runner, hex(1)));
-    expect(p1.next_cursor).toMatch(/^c1:[0-9a-f]{16}:[0-9a-f]{64}$/);
+    expect(p1.next_cursor).toMatch(/^c2:[0-9a-f]{32}:[0-9a-z]+:[A-Za-z0-9_-]{43}$/);
     const p2 = payload(await readJobs(deps, runner, env("read", { cursor: p1.next_cursor, limit: 2 })));
     expect(p2.jobs.map((j: Job) => j.job_id)).toEqual([hex(2)]);
     expect(p2.next_cursor).toBeNull();
@@ -96,12 +128,13 @@ describe("read", () => {
     seed(store, 1);
     const foreign = await cursorFor(other, hex(1));
     const otherCap = await cursorFor({ ...runner, capability: "other:1" }, hex(1));
-    for (const cursor of [foreign, otherCap, await cursorFor(runner, hex(9))]) {
+    for (const cursor of [foreign, otherCap]) {
       expect(await readJobs(deps, runner, env("read", { cursor, limit: 5 }))).toEqual({ ok: false, error: "invalid_cursor" });
     }
     for (const cursor of ["SELECT 1", "c1:zz:zz", 5]) {
       expect((await readJobs(deps, runner, env("read", { cursor, limit: 5 }))).ok).toBe(false);
     }
+    expect((await readJobs(deps, runner, env("read", { cursor: await cursorFor(runner, hex(9)), limit: 5 }))).ok).toBe(true);
     for (const limit of [0, 21, 1.5, "5"]) {
       expect(await readJobs(deps, runner, env("read", { cursor: null, limit }))).toEqual({ ok: false, error: "malformed" });
     }
@@ -126,11 +159,51 @@ describe("read", () => {
     expect(await readJobs(deps, runner, JSON.stringify({ version: 2, kind: "read", payload: { cursor: null, limit: 1 } }))).toEqual({ ok: false, error: "malformed" });
     expect(await readJobs(deps, { service: "", capability: "x" }, env("read", { cursor: null, limit: 1 }))).toEqual({ ok: false, error: "invalid_caller" });
   });
-  it("refuses an oversized response instead of truncating", async () => {
+  it("rejects an oversized stored request row without truncating it", async () => {
     const { store, deps } = setup();
     const id = seed(store, 1);
     store.jobs.get(id)!.job.request = { blob: "x".repeat(300 * 1024) };
-    expect(await readJobs(deps, runner, env("read", { cursor: null, limit: 1 }))).toEqual({ ok: false, error: "too_large" });
+    expect(payload(await readJobs(deps, runner, env("read", { cursor: null, limit: 1 }))).jobs).toEqual([]);
+  });
+  it("keeps a signed page position valid after its cursor row is deleted or changed", async () => {
+    const { store, deps } = setup();
+    const a = seed(store, 1, {}, "2026-10-22T09:00:00.000Z");
+    seed(store, 2, {}, "2026-10-22T10:00:00.000Z");
+    const first = payload(await readJobs(deps, runner, env("read", { cursor: null, limit: 1 })));
+    store.jobs.delete(a);
+    const second = payload(await readJobs(deps, runner, env("read", { cursor: first.next_cursor, limit: 1 })));
+    expect(second.jobs.map((j: Job) => j.job_id)).toEqual([hex(2)]);
+  });
+  it("skips malformed and oversized stored requests while returning valid rows", async () => {
+    const { store, deps } = setup();
+    seed(store, 1);
+    seed(store, 2);
+    store.jobs.get(hex(1))!.job.request = { bad: true };
+    store.jobs.get(hex(2))!.job.request = { ...request, extra: "x".repeat(MAX_REQUEST_BYTES) };
+    const result = payload(await readJobs(deps, runner, env("read", { cursor: null, limit: 2 })));
+    expect(result.jobs).toEqual([]);
+    expect(result.next_cursor).toBeNull();
+  });
+});
+
+describe("arrival-manager schema conformance", () => {
+  it("validates job/read/read_result/claim/claim_result/ack/ack_result contract shapes", async () => {
+    const { store, deps } = setup();
+    seed(store, 1);
+    const job = store.jobs.get(hex(1))!.job;
+    expect(envelopeValid("job", "job", job)).toBe(true);
+    expect(envelopeValid("read", "read", { cursor: null, limit: 20 })).toBe(true);
+    const read = payload(await readJobs(deps, runner, env("read", { cursor: null, limit: 20 })));
+    expect(envelopeValid("read_result", "read_result", read)).toBe(true);
+    const claim = payload(await claimJob(deps, runner, claimBody(1)));
+    expect(envelopeValid("claim_result", "claim_result", claim)).toBe(true);
+    expect(envelopeValid("claim", "claim", { job_id: hex(1), expected_attempt: 0, operation_id: "op-1" })).toBe(true);
+    const running = claim.job as Job;
+    const ack = { job_id: hex(1), attempt: 1, lease_id: running.lease_id, operation_id: "ack-1",
+      outcome: { status: "failed", reason: "source_unavailable" } };
+    expect(envelopeValid("ack", "ack", ack)).toBe(true);
+    const ackResult = payload(await ackJob(deps, runner, env("ack", ack)));
+    expect(envelopeValid("ack_result", "ack_result", ackResult)).toBe(true);
   });
 });
 

@@ -65,7 +65,7 @@ export type BridgeResult = { ok: true; body: string } | { ok: false; error: Brid
 const ID = /^[a-z0-9][a-z0-9:_-]{0,95}$/;
 const HASH = /^[0-9a-f]{64}$/;
 const TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
-const CURSOR = /^c1:([0-9a-f]{16}):([0-9a-f]{64})$/;
+const CURSOR = /^c2:([0-9a-f]{32}):([0-9a-z]+):([A-Za-z0-9_-]{43})$/;
 const PAGE_MAX = 20;
 const SWEEP_BATCH = 100;
 const FAIL_REASONS: readonly string[] = ["source_unavailable", "validation_failed", "publication_failed"];
@@ -84,10 +84,25 @@ async function sha256Hex(text: string): Promise<string> {
   const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return [...new Uint8Array(d)].map(b => b.toString(16).padStart(2, "0")).join("");
 }
-function canonical(v: unknown): string {
-  if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
-  if (isObj(v)) return `{${Object.keys(v).sort().map(k => `${JSON.stringify(k)}:${canonical(v[k])}`).join(",")}}`;
-  return JSON.stringify(v);
+function canonical(v: unknown, seen = new Set<object>()): string {
+  if (v === null || typeof v === "string" || typeof v === "boolean") return JSON.stringify(v);
+  if (typeof v === "number" && Number.isFinite(v)) return JSON.stringify(v);
+  if (Array.isArray(v)) {
+    if (seen.has(v)) throw new TypeError("cyclic value");
+    seen.add(v);
+    const result = `[${v.map(x => canonical(x, seen)).join(",")}]`;
+    seen.delete(v);
+    return result;
+  }
+  if (isObj(v)) {
+    if (seen.has(v)) throw new TypeError("cyclic value");
+    seen.add(v);
+    const keys = Object.keys(v).sort();
+    const result = `{${keys.map(k => `${JSON.stringify(k)}:${canonical(v[k], seen)}`).join(",")}}`;
+    seen.delete(v);
+    return result;
+  }
+  throw new TypeError("unsupported canonical value");
 }
 const callerOk = (c: Caller) => isObj(c) && isId(c.service) && isId(c.capability);
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -125,7 +140,22 @@ function parsePublication(v: unknown): Publication | null {
 
 /** Cursor bound to service + capability (newline-joined, hashed) and a job id. */
 export async function cursorFor(caller: Caller, jobId: string): Promise<string> {
-  return `c1:${(await sha256Hex(`${caller.service}\n${caller.capability}`)).slice(0, 16)}:${jobId}`;
+  return pageCursor(caller, { admitted_at: "1970-01-01T00:00:00Z", job_id: jobId });
+}
+
+function encodePosition(position: PagePosition): string {
+  const timestamp = Date.parse(position.admitted_at);
+  const bytes = Uint8Array.from(position.job_id.match(/.{2}/g)!, byte => parseInt(byte, 16));
+  return `${timestamp.toString(36)}:${btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "")}`;
+}
+function decodePosition(timestamp: string, encoded: string): PagePosition | null {
+  try {
+    const binary = atob(encoded.replace(/-/g, "+").replace(/_/g, "/"));
+    const job_id = [...binary].map(c => c.charCodeAt(0).toString(16).padStart(2, "0")).join("");
+    const ms = parseInt(timestamp, 36);
+    if (binary.length !== 32 || !Number.isSafeInteger(ms) || ms < 0 || !isHash(job_id)) return null;
+    return { admitted_at: new Date(ms).toISOString(), job_id };
+  } catch { return null; }
 }
 
 /** Bounded, side-effect-free page read ordered by (admitted_at, job_id). */
@@ -133,21 +163,36 @@ export async function readJobs(deps: BridgeDeps, caller: Caller, raw: unknown): 
   if (!callerOk(caller)) return bad("invalid_caller");
   const p = openEnvelope(raw, "read");
   if (typeof p === "string") return bad(p);
-  if (!closed(p, ["cursor", "limit"]) || !isInt(p.limit, 1, PAGE_MAX)) return bad("malformed");
+  if (!closed(p, ["cursor", "limit"]) || !isInt(p.limit, 1, PAGE_MAX) || (p.cursor !== null && typeof p.cursor !== "string")) return bad("malformed");
   let after: PagePosition | null = null;
   if (p.cursor !== null) {
-    if (!isId(p.cursor)) return bad("malformed");
-    const m = CURSOR.exec(p.cursor);
-    const scope = await cursorFor(caller, "");
-    if (!m || `c1:${m[1]}:` !== scope) return bad("invalid_cursor");
-    const at = await deps.store.get(m[2] as string);
-    if (!at) return bad("invalid_cursor");
-    after = { admitted_at: at.admitted_at, job_id: at.job.job_id };
+    const m = CURSOR.exec(p.cursor as string);
+    const position = m && decodePosition(m[2] as string, m[3] as string);
+    if (!m || !position || m[1] !== (await cursorTag(caller, position)).slice(0, 32)) return bad("invalid_cursor");
+    after = position;
   }
   const rows = await deps.store.listPage(after, p.limit + 1);
   const page = rows.slice(0, p.limit);
-  const next = rows.length > p.limit ? await cursorFor(caller, (page[page.length - 1] as StoredJob).job.job_id) : null;
-  return respond("read_result", { jobs: page.map(r => project(r.job)), next_cursor: next });
+  const valid = page.filter(r => validStoredRequest(r.job.request));
+  const next = rows.length > p.limit && page.length ? await pageCursor(caller, { admitted_at: page[page.length - 1]!.admitted_at,
+    job_id: page[page.length - 1]!.job.job_id }) : null;
+  return respond("read_result", { jobs: valid.map(r => project(r.job)), next_cursor: next });
+}
+
+function validStoredRequest(v: unknown): boolean {
+  try { if (byteLength(JSON.stringify(v)) > MAX_REQUEST_BYTES) return false; } catch { return false; }
+  if (!isObj(v) || !closed(v, ["version", "family", "as_of", "population", "joining_basis", "academy_basis", "visualization"])) return false;
+  return v.version === 1 && v.family === "arrival_manager" && typeof v.as_of === "string"
+    && /^\d{4}-\d{2}-\d{2}$/.test(v.as_of) && new Date(`${v.as_of}T00:00:00Z`).toISOString().slice(0, 10) === v.as_of
+    && v.population === "first_team_available" && v.joining_basis === "effective_first_team_spell_entry"
+    && v.academy_basis === "documented_first_team_promotion" && v.visualization === "table";
+}
+async function pageCursor(caller: Caller, position: PagePosition): Promise<string> {
+  const [timestamp, jobId] = encodePosition(position).split(":");
+  return `c2:${(await cursorTag(caller, position)).slice(0, 32)}:${timestamp}:${jobId}`;
+}
+async function cursorTag(caller: Caller, position: PagePosition): Promise<string> {
+  return sha256Hex(`${caller.service}\n${caller.capability}\n${new Date(Date.parse(position.admitted_at)).toISOString()}\n${position.job_id}`);
 }
 
 /** Atomic claim: queued, due, expected attempt equals stored, attempt < 3. */
@@ -159,7 +204,8 @@ export async function claimJob(deps: BridgeDeps, caller: Caller, raw: unknown): 
     || !isInt(p.expected_attempt, 0, 2) || !isId(p.operation_id)) return bad("malformed");
   const now = deps.now().getTime();
   const outcome = (o: "conflict" | "exhausted" | "not_found") => respond("claim_result", { outcome: o });
-  const bodyHash = await sha256Hex(canonical(p));
+  let bodyHash: string;
+  try { bodyHash = await sha256Hex(canonical(p)); } catch { return bad("malformed"); }
 
   const prior = await deps.store.getOperation(caller.service, "claim", p.operation_id);
   if (prior) {
@@ -217,7 +263,8 @@ export async function ackJob(deps: BridgeDeps, caller: Caller, raw: unknown): Pr
 
   const now = deps.now().getTime();
   const outcome = (r: "accepted" | "replayed" | "conflict" | "not_found") => respond("ack_result", { outcome: r });
-  const bodyHash = await sha256Hex(canonical(p));
+  let bodyHash: string;
+  try { bodyHash = await sha256Hex(canonical(p)); } catch { return bad("malformed"); }
   const prior = await deps.store.getOperation(caller.service, "ack", p.operation_id);
   if (prior) return outcome(prior.body_hash === bodyHash ? "replayed" : "conflict");
 
