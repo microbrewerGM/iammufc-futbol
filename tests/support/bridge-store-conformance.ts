@@ -7,12 +7,17 @@ import type { BridgeStore, Job, OperationRecord, StoredJob } from "../../worker/
  * No test relies on private maps, SQL representation or a synchronous factory. */
 export interface BridgeStoreFixture { store: BridgeStore; dispose?(): void | Promise<void> }
 export type BridgeStoreFactory = (rows: StoredJob[]) => BridgeStoreFixture | Promise<BridgeStoreFixture>;
-const NOW = "2026-10-23T12:00:00.000Z";
-const BEFORE = "2026-10-23T11:59:59.000Z";
-const AFTER = "2026-10-23T12:00:01.000Z";
+const NOW = "2026-10-23T12:00:00Z";
+const BEFORE = "2026-10-23T11:59:59Z";
+const AFTER = "2026-10-23T12:00:01Z";
 const id = (n: number) => n.toString(16).padStart(64, "0");
 function row(n: number, admitted = BEFORE, patch: Partial<Job> = {}): StoredJob {
-  return { admitted_at: admitted, revision: 1, lease_owner: null, job: {
+  const attempt = patch.attempt ?? 0;
+  const status = patch.status ?? "queued";
+  // Each attempt goes queued -> running -> failed/published, with a separate
+  // failed -> queued retry transition. Seed only revisions reachable under 0008.
+  const revision = status === "queued" ? 3 * attempt + 1 : status === "running" ? 3 * attempt - 1 : 3 * attempt;
+  return { admitted_at: admitted, revision, lease_owner: status === "running" ? "runner-a" : null, job: {
     job_id: id(n), request: { version: 1, family: "arrival_manager", as_of: "2026-10-22",
       population: "first_team_available", joining_basis: "effective_first_team_spell_entry",
       academy_basis: "documented_first_team_promotion", visualization: "table" },

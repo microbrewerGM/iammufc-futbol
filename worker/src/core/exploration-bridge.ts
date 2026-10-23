@@ -24,7 +24,9 @@ export interface Job {
   lease_id: string | null; lease_expires_at: string | null; retry_after: string | null;
   failure: FailureReason | null; publication: Publication | null;
 }
-/** Store record: wire job plus server-only fields that never leave this module. */
+/** Store record: wire job plus server-only fields that never leave this module.
+ * Failed/published records expose null lease_owner and lease_expires_at on this
+ * port, even if an adapter retains the former owner/lease in audit columns. */
 export interface StoredJob {
   job: Job; admitted_at: string; lease_owner: string | null; revision: number;
 }
@@ -123,7 +125,10 @@ function canonical(v: unknown, seen = new Set<object>()): string {
   throw new TypeError("unsupported canonical value");
 }
 const callerOk = (c: Caller) => isObj(c) && isId(c.service) && isId(c.capability);
-const iso = (ms: number) => new Date(ms).toISOString();
+// Sample the clock once per mutating operation; storage and deadlines use whole
+// UTC seconds, matching the D1 contract without adapter-side truncation.
+const nowMs = (deps: Pick<BridgeDeps, "now">) => Math.floor(deps.now().getTime() / 1000) * 1000;
+const iso = (ms: number) => new Date(ms).toISOString().replace(".000Z", "Z");
 
 /** Parse a raw request body (size-capped before parsing) into an enveloped payload. */
 function openEnvelope(raw: unknown, kind: string): Record<string, unknown> | BridgeError {
@@ -220,7 +225,7 @@ export async function claimJob(deps: BridgeDeps, caller: Caller, raw: unknown): 
   if (typeof p === "string") return bad(p);
   if (!closed(p, ["job_id", "expected_attempt", "operation_id"]) || !isHash(p.job_id)
     || !isInt(p.expected_attempt, 0, 2) || !isId(p.operation_id)) return bad("malformed");
-  const now = deps.now().getTime();
+  const now = nowMs(deps);
   const outcome = (o: "conflict" | "exhausted" | "not_found") => respond("claim_result", { outcome: o });
   let bodyHash: string;
   try { bodyHash = await sha256Hex(canonical(p)); } catch { return bad("malformed"); }
@@ -279,7 +284,7 @@ export async function ackJob(deps: BridgeDeps, caller: Caller, raw: unknown): Pr
   }
   if (!reason && !publication) return bad("malformed");
 
-  const now = deps.now().getTime();
+  const now = nowMs(deps);
   const outcome = (r: "accepted" | "replayed" | "conflict" | "not_found") => respond("ack_result", { outcome: r });
   let bodyHash: string;
   try { bodyHash = await sha256Hex(canonical(p)); } catch { return bad("malformed"); }
@@ -302,13 +307,13 @@ export async function ackJob(deps: BridgeDeps, caller: Caller, raw: unknown): Pr
   }
   const op: OperationRecord = { service: caller.service, type: "ack", operation_id: p.operation_id,
     body_hash: bodyHash, response: { outcome: "accepted" }, lease_id: p.lease_id };
-  const ok = await deps.store.commit(cur.revision, { ...cur, job: next, lease_owner: publication ? cur.lease_owner : null, revision: cur.revision + 1 }, op);
+  const ok = await deps.store.commit(cur.revision, { ...cur, job: next, lease_owner: null, revision: cur.revision + 1 }, op);
   return outcome(ok ? "accepted" : "conflict");
 }
 
 /** Server-owned expiry: expired running jobs become failed attempts with backoff. Returns count moved. */
 export async function sweepExpiredLeases(deps: Pick<BridgeDeps, "store" | "now">): Promise<number> {
-  const now = deps.now().getTime();
+  const now = nowMs(deps);
   let n = 0;
   for (const r of await deps.store.listExpiredLeases(iso(now), SWEEP_BATCH)) {
     const j = r.job;
@@ -320,13 +325,13 @@ export async function sweepExpiredLeases(deps: Pick<BridgeDeps, "store" | "now">
 
 /** Server-owned due transition: retryable failed jobs return to queued, attempt kept. Returns count moved. */
 export async function sweepRetryDue(deps: Pick<BridgeDeps, "store" | "now">): Promise<number> {
-  const now = deps.now().getTime();
+  const now = nowMs(deps);
   let n = 0;
   for (const r of await deps.store.listRetryDue(iso(now), SWEEP_BATCH)) {
     const j = r.job;
     if (j.status !== "failed" || j.failure === "attempts_exhausted" || j.retry_after === null || Date.parse(j.retry_after) > now) continue;
-    const queued: Job = { ...j, status: "queued", failure: null };
-    if (await deps.store.commit(r.revision, { ...r, job: queued, revision: r.revision + 1 }, null)) n++;
+    const queued: Job = { ...j, status: "queued", retry_after: null, lease_id: null, lease_expires_at: null, failure: null };
+    if (await deps.store.commit(r.revision, { ...r, job: queued, lease_owner: null, revision: r.revision + 1 }, null)) n++;
   }
   return n;
 }
