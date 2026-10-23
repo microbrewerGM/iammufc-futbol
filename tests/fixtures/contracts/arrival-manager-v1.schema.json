@@ -1,0 +1,660 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://iammufc.futbol/schemas/arrival-manager-v1.json",
+  "title": "Arrival manager v1 — private contract, no source authorization",
+  "description": "Closed transport and data shapes. Semantic checks in the companion contract are mandatory; shape validity alone never admits retrieval or publication. No credential or raw question fields.",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "kind", "payload"],
+      "properties": {
+        "version": {"const": 1, "type": "integer"},
+        "kind": {"const": "request", "type": "string"},
+        "payload": {"$ref": "#/$defs/request"}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "kind", "payload"],
+      "properties": {
+        "version": {"const": 1, "type": "integer"},
+        "kind": {"const": "inputs", "type": "string"},
+        "payload": {"$ref": "#/$defs/inputs"}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "kind", "payload"],
+      "properties": {
+        "version": {"const": 1, "type": "integer"},
+        "kind": {"const": "result", "type": "string"},
+        "payload": {"$ref": "#/$defs/result"}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "kind", "payload"],
+      "properties": {
+        "version": {"const": 1, "type": "integer"},
+        "kind": {"const": "job", "type": "string"},
+        "payload": {"$ref": "#/$defs/job"}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "kind", "payload"],
+      "properties": {
+        "version": {"const": 1, "type": "integer"},
+        "kind": {"const": "read", "type": "string"},
+        "payload": {"$ref": "#/$defs/read"}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "kind", "payload"],
+      "properties": {
+        "version": {"const": 1, "type": "integer"},
+        "kind": {"const": "read_result", "type": "string"},
+        "payload": {"$ref": "#/$defs/read_result"}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "kind", "payload"],
+      "properties": {
+        "version": {"const": 1, "type": "integer"},
+        "kind": {"const": "claim", "type": "string"},
+        "payload": {"$ref": "#/$defs/claim"}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "kind", "payload"],
+      "properties": {
+        "version": {"const": 1, "type": "integer"},
+        "kind": {"const": "claim_result", "type": "string"},
+        "payload": {"$ref": "#/$defs/claim_result"}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "kind", "payload"],
+      "properties": {
+        "version": {"const": 1, "type": "integer"},
+        "kind": {"const": "ack", "type": "string"},
+        "payload": {"$ref": "#/$defs/ack"}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "kind", "payload"],
+      "properties": {
+        "version": {"const": 1, "type": "integer"},
+        "kind": {"const": "ack_result", "type": "string"},
+        "payload": {"$ref": "#/$defs/ack_result"}
+      }
+    }
+  ],
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9:_-]{0,95}$", "maxLength": 96},
+    "hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "date": {"type": "string", "format": "date"},
+    "time": {"type": "string", "format": "date-time", "pattern": "Z$"},
+    "lineage": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/id"},
+      "maxItems": 32,
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "family",
+        "as_of",
+        "population",
+        "joining_basis",
+        "academy_basis",
+        "visualization"
+      ],
+      "properties": {
+        "version": {"const": 1, "type": "integer"},
+        "family": {"const": "arrival_manager", "type": "string"},
+        "as_of": {"$ref": "#/$defs/date"},
+        "population": {"const": "first_team_available", "type": "string"},
+        "joining_basis": {"const": "effective_first_team_spell_entry", "type": "string"},
+        "academy_basis": {"const": "documented_first_team_promotion", "type": "string"},
+        "visualization": {"const": "table", "type": "string"}
+      }
+    },
+    "date_range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["earliest", "latest", "precision"],
+      "properties": {
+        "earliest": {"$ref": "#/$defs/date"},
+        "latest": {"$ref": "#/$defs/date"},
+        "precision": {"type": "string", "enum": ["day", "month", "range"]}
+      }
+    },
+    "crosswalk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_id", "source_person_id", "person_id", "lineage"],
+      "properties": {
+        "source_id": {"$ref": "#/$defs/id"},
+        "source_person_id": {"$ref": "#/$defs/id"},
+        "person_id": {"$ref": "#/$defs/id"},
+        "lineage": {"$ref": "#/$defs/lineage"}
+      }
+    },
+    "member": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["member_id", "person_id", "spell_id", "membership", "availability", "lineage"],
+      "properties": {
+        "member_id": {"$ref": "#/$defs/id"},
+        "person_id": {"oneOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "spell_id": {"oneOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "membership": {"type": "string", "enum": ["permanent", "incoming_loan", "outgoing_loan"]},
+        "availability": {"type": "string", "enum": ["available", "injured", "suspended"]},
+        "lineage": {"$ref": "#/$defs/lineage"}
+      }
+    },
+    "roster": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "snapshot_id",
+        "observed_at",
+        "as_of",
+        "freshness",
+        "freshness_policy_id",
+        "membership_evidence",
+        "complete",
+        "members",
+        "lineage"
+      ],
+      "properties": {
+        "snapshot_id": {"$ref": "#/$defs/id"},
+        "observed_at": {"$ref": "#/$defs/time"},
+        "as_of": {"$ref": "#/$defs/date"},
+        "freshness": {"type": "string", "enum": ["dated", "verified_current", "stale"]},
+        "freshness_policy_id": {"oneOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "membership_evidence": {"type": "string", "enum": ["dated_snapshot", "effective_intervals"]},
+        "complete": {"type": "boolean"},
+        "members": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/member"},
+          "maxItems": 100,
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "lineage": {"$ref": "#/$defs/lineage"}
+      }
+    },
+    "arrival": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_id", "person_id", "spell_id", "event_type", "date", "lineage"],
+      "properties": {
+        "event_id": {"$ref": "#/$defs/id"},
+        "person_id": {"$ref": "#/$defs/id"},
+        "spell_id": {"$ref": "#/$defs/id"},
+        "event_type": {
+          "type": "string",
+          "enum": [
+            "effective_arrival",
+            "registration",
+            "first_team_promotion",
+            "academy_join",
+            "debut",
+            "announcement",
+            "loan_return",
+            "permanent_conversion",
+            "departure",
+            "re_signing"
+          ]
+        },
+        "date": {"oneOf": [{"$ref": "#/$defs/date_range"}, {"type": "null"}]},
+        "lineage": {"$ref": "#/$defs/lineage"}
+      }
+    },
+    "tenure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tenure_id", "manager_id", "role", "start", "end", "end_state", "boundary", "lineage"],
+      "properties": {
+        "tenure_id": {"$ref": "#/$defs/id"},
+        "manager_id": {"$ref": "#/$defs/id"},
+        "role": {"type": "string", "enum": ["permanent", "interim", "caretaker"]},
+        "start": {"$ref": "#/$defs/date_range"},
+        "end": {"oneOf": [{"$ref": "#/$defs/date_range"}, {"type": "null"}]},
+        "end_state": {"type": "string", "enum": ["known", "ongoing", "unknown"]},
+        "boundary": {"type": "string", "enum": ["established_half_open", "unresolved"]},
+        "lineage": {"$ref": "#/$defs/lineage"}
+      }
+    },
+    "spell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["spell_id", "person_id", "start", "end", "end_state", "boundary", "lineage"],
+      "properties": {
+        "spell_id": {"$ref": "#/$defs/id"},
+        "person_id": {"$ref": "#/$defs/id"},
+        "start": {"$ref": "#/$defs/date_range"},
+        "end": {"oneOf": [{"$ref": "#/$defs/date_range"}, {"type": "null"}]},
+        "end_state": {"type": "string", "enum": ["known", "ongoing", "unknown"]},
+        "boundary": {"type": "string", "enum": ["established_half_open", "unresolved"]},
+        "lineage": {"$ref": "#/$defs/lineage"}
+      }
+    },
+    "membership_interval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "interval_id",
+        "member_id",
+        "spell_id",
+        "membership",
+        "start",
+        "end",
+        "end_state",
+        "boundary",
+        "lineage"
+      ],
+      "properties": {
+        "interval_id": {"$ref": "#/$defs/id"},
+        "member_id": {"$ref": "#/$defs/id"},
+        "spell_id": {"$ref": "#/$defs/id"},
+        "membership": {"type": "string", "enum": ["permanent", "incoming_loan", "outgoing_loan"]},
+        "start": {"$ref": "#/$defs/date_range"},
+        "end": {"oneOf": [{"$ref": "#/$defs/date_range"}, {"type": "null"}]},
+        "end_state": {"type": "string", "enum": ["known", "ongoing", "unknown"]},
+        "boundary": {"type": "string", "enum": ["established_half_open", "unresolved"]},
+        "lineage": {"$ref": "#/$defs/lineage"}
+      }
+    },
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request",
+        "snapshot_id",
+        "roster",
+        "spells",
+        "membership_intervals",
+        "crosswalks",
+        "arrivals",
+        "tenures"
+      ],
+      "properties": {
+        "request": {"$ref": "#/$defs/request"},
+        "snapshot_id": {"$ref": "#/$defs/id"},
+        "roster": {"oneOf": [{"$ref": "#/$defs/roster"}, {"type": "null"}]},
+        "spells": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/spell"},
+          "maxItems": 200,
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "membership_intervals": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/membership_interval"},
+          "maxItems": 400,
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "crosswalks": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/crosswalk"},
+          "maxItems": 400,
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "arrivals": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/arrival"},
+          "maxItems": 1000,
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "tenures": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/tenure"},
+          "maxItems": 200,
+          "minItems": 0,
+          "uniqueItems": true
+        }
+      }
+    },
+    "assignment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["member_id", "person_id", "spell_id", "manager_id", "event_id", "tenure_id", "lineage"],
+      "properties": {
+        "member_id": {"$ref": "#/$defs/id"},
+        "person_id": {"$ref": "#/$defs/id"},
+        "spell_id": {"$ref": "#/$defs/id"},
+        "manager_id": {"$ref": "#/$defs/id"},
+        "event_id": {"$ref": "#/$defs/id"},
+        "tenure_id": {"$ref": "#/$defs/id"},
+        "lineage": {"$ref": "#/$defs/lineage"}
+      }
+    },
+    "unknown": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["member_id", "person_id", "spell_id", "reason", "lineage"],
+      "properties": {
+        "member_id": {"$ref": "#/$defs/id"},
+        "person_id": {"oneOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "spell_id": {"oneOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "reason": {
+          "type": "string",
+          "enum": [
+            "identity_unresolved",
+            "spell_missing",
+            "arrival_missing",
+            "promotion_missing",
+            "date_uncertain",
+            "boundary_unresolved",
+            "tenure_missing",
+            "tenure_overlap",
+            "source_conflict"
+          ]
+        },
+        "lineage": {"$ref": "#/$defs/lineage"}
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request",
+        "snapshot_id",
+        "artifact_key",
+        "transform_code_version",
+        "renderer_version",
+        "roster_snapshot_id",
+        "feasibility",
+        "coverage",
+        "population_count",
+        "assigned",
+        "unknown",
+        "lineage"
+      ],
+      "properties": {
+        "request": {"$ref": "#/$defs/request"},
+        "snapshot_id": {"$ref": "#/$defs/id"},
+        "artifact_key": {"$ref": "#/$defs/hash"},
+        "transform_code_version": {"$ref": "#/$defs/id"},
+        "renderer_version": {"$ref": "#/$defs/id"},
+        "roster_snapshot_id": {"oneOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "feasibility": {
+          "type": "string",
+          "enum": ["available", "computable_now_queued", "computable_but_expensive", "no_data", "no_rights"]
+        },
+        "coverage": {"type": "string", "enum": ["complete", "partial", "missing"]},
+        "population_count": {"type": "integer", "minimum": 0, "maximum": 100},
+        "assigned": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/assignment"},
+          "maxItems": 100,
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "unknown": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/unknown"},
+          "maxItems": 100,
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "lineage": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/id"},
+          "maxItems": 32,
+          "minItems": 0,
+          "uniqueItems": true
+        }
+      }
+    },
+    "publication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_key",
+        "request_id",
+        "validation_record_id",
+        "publication_id",
+        "loaded_snapshot_id",
+        "coverage_record_id",
+        "loaded_at",
+        "lineage"
+      ],
+      "properties": {
+        "artifact_key": {"$ref": "#/$defs/hash"},
+        "request_id": {"$ref": "#/$defs/hash"},
+        "validation_record_id": {"$ref": "#/$defs/id"},
+        "publication_id": {"$ref": "#/$defs/id"},
+        "loaded_snapshot_id": {"$ref": "#/$defs/id"},
+        "coverage_record_id": {"$ref": "#/$defs/id"},
+        "loaded_at": {"$ref": "#/$defs/time"},
+        "lineage": {"$ref": "#/$defs/lineage"}
+      }
+    },
+    "job": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "job_id",
+        "request",
+        "status",
+        "attempt",
+        "lease_id",
+        "lease_expires_at",
+        "retry_after",
+        "failure",
+        "publication"
+      ],
+      "properties": {
+        "job_id": {"$ref": "#/$defs/hash"},
+        "request": {"$ref": "#/$defs/request"},
+        "status": {"type": "string", "enum": ["queued", "running", "failed", "published"]},
+        "attempt": {"type": "integer", "minimum": 0, "maximum": 3},
+        "lease_id": {"oneOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "lease_expires_at": {"oneOf": [{"$ref": "#/$defs/time"}, {"type": "null"}]},
+        "retry_after": {"oneOf": [{"$ref": "#/$defs/time"}, {"type": "null"}]},
+        "failure": {
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "source_unavailable",
+                "validation_failed",
+                "publication_failed",
+                "lease_expired",
+                "attempts_exhausted"
+              ]
+            },
+            {"type": "null"}
+          ]
+        },
+        "publication": {"oneOf": [{"$ref": "#/$defs/publication"}, {"type": "null"}]}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "queued", "type": "string"}}},
+          "then": {
+            "properties": {
+              "publication": {"type": "null"},
+              "lease_id": {"type": "null"},
+              "lease_expires_at": {"type": "null"},
+              "failure": {"type": "null"}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"status": {"const": "running", "type": "string"}}},
+          "then": {
+            "properties": {
+              "lease_id": {"$ref": "#/$defs/id"},
+              "lease_expires_at": {"$ref": "#/$defs/time"},
+              "attempt": {"type": "integer", "minimum": 1, "maximum": 3},
+              "publication": {"type": "null"},
+              "failure": {"type": "null"}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"status": {"const": "failed", "type": "string"}}},
+          "then": {
+            "properties": {
+              "publication": {"type": "null"},
+              "lease_id": {"type": "null"},
+              "lease_expires_at": {"type": "null"},
+              "failure": {
+                "type": "string",
+                "enum": [
+                  "source_unavailable",
+                  "validation_failed",
+                  "publication_failed",
+                  "lease_expired",
+                  "attempts_exhausted"
+                ]
+              },
+              "attempt": {"type": "integer", "minimum": 1, "maximum": 3}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"status": {"const": "published", "type": "string"}}},
+          "then": {
+            "properties": {
+              "publication": {"$ref": "#/$defs/publication"},
+              "lease_id": {"type": "null"},
+              "lease_expires_at": {"type": "null"},
+              "retry_after": {"type": "null"},
+              "failure": {"type": "null"},
+              "attempt": {"type": "integer", "minimum": 1, "maximum": 3}
+            }
+          }
+        }
+      ]
+    },
+    "read": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cursor", "limit"],
+      "properties": {
+        "cursor": {"oneOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 20}
+      }
+    },
+    "read_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jobs", "next_cursor"],
+      "properties": {
+        "jobs": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/job"},
+          "maxItems": 20,
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "next_cursor": {"oneOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]}
+      }
+    },
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["job_id", "expected_attempt", "operation_id"],
+      "properties": {
+        "job_id": {"$ref": "#/$defs/hash"},
+        "expected_attempt": {"type": "integer", "minimum": 0, "maximum": 2},
+        "operation_id": {"$ref": "#/$defs/id"}
+      }
+    },
+    "claim_result": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["outcome", "job"],
+          "properties": {
+            "outcome": {"const": "claimed", "type": "string"},
+            "job": {
+              "allOf": [
+                {"$ref": "#/$defs/job"},
+                {"properties": {"status": {"const": "running", "type": "string"}}}
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["outcome"],
+          "properties": {"outcome": {"type": "string", "enum": ["conflict", "exhausted", "not_found"]}}
+        }
+      ]
+    },
+    "ack": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["job_id", "attempt", "lease_id", "operation_id", "outcome"],
+      "properties": {
+        "job_id": {"$ref": "#/$defs/hash"},
+        "attempt": {"type": "integer", "minimum": 1, "maximum": 3},
+        "lease_id": {"$ref": "#/$defs/id"},
+        "operation_id": {"$ref": "#/$defs/id"},
+        "outcome": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["status", "reason"],
+              "properties": {
+                "status": {"const": "failed", "type": "string"},
+                "reason": {
+                  "type": "string",
+                  "enum": ["source_unavailable", "validation_failed", "publication_failed"]
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["status", "publication"],
+              "properties": {
+                "status": {"const": "published", "type": "string"},
+                "publication": {"$ref": "#/$defs/publication"}
+              }
+            }
+          ]
+        }
+      }
+    },
+    "ack_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcome"],
+      "properties": {"outcome": {"type": "string", "enum": ["accepted", "replayed", "conflict", "not_found"]}}
+    }
+  }
+}
