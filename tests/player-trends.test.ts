@@ -15,6 +15,14 @@ describe("player trends",()=>{
   expect(result.series[0]!.cells.map(c=>c.reason)).toEqual(["zero_minutes","missing_numerator"]);
   expect(result.series[1]!.cells.map(c=>c.reason)).toEqual(["supported","missing_minutes"]);
  });
+ it("returns season totals in total mode and leaves incomplete seasons out of subtotals",()=>{
+  const facts=[row(a,"2023-24",3,900),row(a,"2024-25",null,1200),row(b,"2023-24",4,null),row(b,"2024-25",2,600)];
+  const result=calculatePlayerTrends({...request,normalization:"total",min_minutes:0},meta,facts);
+  expect(result.series[0]!.cells.map(c=>c.rate)).toEqual([3,null]);
+  expect(result.series[0]!.cells.map(c=>c.reason)).toEqual(["supported","missing_numerator"]);
+  expect(result.series[1]!.cells.map(c=>c.rate)).toEqual([null,2]);
+  expect(result.series[1]!.cells.map(c=>c.reason)).toEqual(["missing_minutes","supported"]);
+ });
  it("rejects bounds, malformed selectors, duplicate facts and mixed snapshots",()=>{
   expect(()=>parsePlayerTrendsRequest({...request,person_ids:[a,a]},meta)).toThrow();
   expect(()=>parsePlayerTrendsRequest({...request,extra:true},meta)).toThrow();

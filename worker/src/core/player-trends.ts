@@ -80,7 +80,7 @@ function cell(seasonName: string, row: PlayerTrendRow | undefined, min: number, 
   const rate = 90 * row.total / row.minutes;
   if (!Number.isFinite(rate) || !Number.isSafeInteger(90 * row.total)) fail("rate overflow");
   const reason = normalization === "per90" && row.minutes < min ? "below_minimum" : "supported";
-  return {season:seasonName,total:row.total,minutes:row.minutes,rate:normalization === "per90" && reason === "supported" ? rate : null,reason,lineage:[...row.lineage]};
+  return {season:seasonName,total:row.total,minutes:row.minutes,rate:reason !== "supported" ? null : normalization === "total" ? row.total : rate,reason,lineage:[...row.lineage]};
 }
 export function calculatePlayerTrends(value: unknown, metadataValue: unknown, rowsValue: unknown): {request:PlayerTrendsRequest;snapshot_id:string;definition:"goals"|"fpl_assists";series:PlayerTrendSeries[]} {
   const meta = catalog(metadataValue), request = parsePlayerTrendsRequest(value,meta), rows = validateRows(meta,rowsValue);
@@ -90,8 +90,11 @@ export function calculatePlayerTrends(value: unknown, metadataValue: unknown, ro
     for (const s of request.seasons) {
       const row = rows.get(JSON.stringify([person_id,s,request.metric]));
       if (!row) continue;
-      if (row.total !== null) { total += row.total; if (!Number.isSafeInteger(total)) fail("total sum overflow"); }
-      if (row.minutes !== null) { minutes += row.minutes; if (!Number.isSafeInteger(minutes)) fail("minutes sum overflow"); }
+      // A season is an atomic contribution: never combine one counter from a
+      // season whose other required counter is unavailable.
+      if (row.total === null || row.minutes === null) continue;
+      total += row.total; if (!Number.isSafeInteger(total)) fail("total sum overflow");
+      minutes += row.minutes; if (!Number.isSafeInteger(minutes)) fail("minutes sum overflow");
     }
   }
   return {request,snapshot_id:meta.snapshot_id,definition:request.metric === "goals" ? "goals" : "fpl_assists",series};
