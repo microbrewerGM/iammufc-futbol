@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import schema from "/Users/aaronsmith/git/iammufc-platform/platform/contracts/arrival-manager-v1.schema.json";
 import {
-  ackJob, claimJob, cursorFor, readJobs, sweepExpiredLeases, sweepRetryDue,
+  ackJob, claimJob, cursorFor, hmacCursorSigner, readJobs, sweepExpiredLeases, sweepRetryDue,
   MAX_REQUEST_BYTES,
 } from "../worker/src/core/exploration-bridge";
 import type {
@@ -14,6 +14,7 @@ const request = { version: 1, family: "arrival_manager", as_of: "2026-10-22", po
   joining_basis: "effective_first_team_spell_entry", academy_basis: "documented_first_team_promotion", visualization: "table" };
 const runner: Caller = { service: "runner-a", capability: "arrival_manager:1" };
 const other: Caller = { service: "runner-b", capability: "arrival_manager:1" };
+const testSigner = hmacCursorSigner(new TextEncoder().encode("test-only cursor signing key"));
 
 class FakeStore implements BridgeStore {
   jobs = new Map<string, StoredJob>();
@@ -60,7 +61,7 @@ function setup(verify = true) {
   const store = new FakeStore();
   let now = T0; let lease = 0;
   const calls: Publication[] = [];
-  const deps: BridgeDeps = { store, now: () => new Date(now), newLeaseId: () => `lease-${++lease}`,
+  const deps: BridgeDeps = { store, cursorSigner: testSigner, now: () => new Date(now), newLeaseId: () => `lease-${++lease}`,
     verifier: { verify: async (_j, p) => { calls.push(p); return verify; } } };
   return { store, deps, calls, advance: (s: number) => { now += s * 1000; } };
 }
@@ -116,7 +117,7 @@ describe("read", () => {
     const before = JSON.stringify([...store.jobs]);
     const p1 = payload(await readJobs(deps, runner, env("read", { cursor: null, limit: 2 })));
     expect(p1.jobs.map((j: Job) => j.job_id)).toEqual([hex(3), hex(1)]);
-    expect(p1.next_cursor).toMatch(/^c2:[0-9a-f]{32}:[0-9a-z]+:[A-Za-z0-9_-]{43}$/);
+    expect(p1.next_cursor).toMatch(/^c2:[A-Za-z0-9_-]{43}:[0-9a-z]+:[A-Za-z0-9_-]{43}$/);
     const p2 = payload(await readJobs(deps, runner, env("read", { cursor: p1.next_cursor, limit: 2 })));
     expect(p2.jobs.map((j: Job) => j.job_id)).toEqual([hex(2)]);
     expect(p2.next_cursor).toBeNull();
@@ -126,19 +127,30 @@ describe("read", () => {
   it("rejects foreign-scope, unknown and malformed cursors, and bad limits", async () => {
     const { store, deps } = setup();
     seed(store, 1);
-    const foreign = await cursorFor(other, hex(1));
-    const otherCap = await cursorFor({ ...runner, capability: "other:1" }, hex(1));
+    const foreign = await cursorFor(testSigner, other, hex(1));
+    const otherCap = await cursorFor(testSigner, { ...runner, capability: "other:1" }, hex(1));
     for (const cursor of [foreign, otherCap]) {
       expect(await readJobs(deps, runner, env("read", { cursor, limit: 5 }))).toEqual({ ok: false, error: "invalid_cursor" });
     }
     for (const cursor of ["SELECT 1", "c1:zz:zz", 5]) {
       expect((await readJobs(deps, runner, env("read", { cursor, limit: 5 }))).ok).toBe(false);
     }
-    expect((await readJobs(deps, runner, env("read", { cursor: await cursorFor(runner, hex(9)), limit: 5 }))).ok).toBe(true);
+    expect(await readJobs(deps, runner, env("read", { cursor: await cursorFor(testSigner, runner, hex(9)), limit: 5 }))).toMatchObject({ ok: true });
     for (const limit of [0, 21, 1.5, "5"]) {
       expect(await readJobs(deps, runner, env("read", { cursor: null, limit }))).toEqual({ ok: false, error: "malformed" });
     }
     expect((await readJobs(deps, runner, env("read", { cursor: null, limit: 5, order: "x" }))).ok).toBe(false);
+  });
+  it("rejects forged, altered, and missing cursor tags", async () => {
+    const { deps } = setup();
+    const valid = await cursorFor(testSigner, runner, hex(1));
+    const [, tag, timestamp, job] = valid.split(":");
+    const forged = `c2:${"A".repeat(43)}:${timestamp}:${job}`;
+    const altered = `c2:${tag}:${timestamp}:${hex(2)}`;
+    const missing = `c2::${timestamp}:${job}`;
+    for (const cursor of [forged, altered, missing])
+      expect(await readJobs(deps, runner, env("read", { cursor, limit: 5 }))).toEqual({ ok: false, error: "invalid_cursor" });
+    expect(await readJobs(deps, runner, env("read", { cursor: valid, limit: 5 }))).toMatchObject({ ok: true });
   });
   it("projects only closed job fields, never server-only state", async () => {
     const { store, deps } = setup();

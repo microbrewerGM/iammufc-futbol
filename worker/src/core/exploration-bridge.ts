@@ -53,8 +53,23 @@ export interface PublicationVerifier {
   verify(job: Job, publication: Publication): Promise<boolean>;
 }
 export interface BridgeDeps {
-  store: BridgeStore; verifier: PublicationVerifier;
+  store: BridgeStore; verifier: PublicationVerifier; cursorSigner: CursorSigner;
   now(): Date; newLeaseId(): string;
+}
+export interface CursorSigner { sign(message: string): Promise<string>; verify(message: string, tag: string): Promise<boolean> }
+/** Caller supplies the secret key; this module never provisions or logs it. */
+export function hmacCursorSigner(key: Uint8Array): CursorSigner {
+  const bytes = new Uint8Array(key);
+  const imported = crypto.subtle.importKey("raw", bytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
+  const enc = (b: Uint8Array) => btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  return {
+    async sign(message) { return enc(new Uint8Array(await crypto.subtle.sign("HMAC", await imported, new TextEncoder().encode(message)))); },
+    async verify(message, tag) {
+      try { const raw = atob(tag.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - tag.length % 4) % 4));
+        return await crypto.subtle.verify("HMAC", await imported, Uint8Array.from(raw, c => c.charCodeAt(0)), new TextEncoder().encode(message));
+      } catch { return false; }
+    },
+  };
 }
 /** Identity established by the protected channel before this module runs. */
 export interface Caller { service: string; capability: string }
@@ -65,7 +80,7 @@ export type BridgeResult = { ok: true; body: string } | { ok: false; error: Brid
 const ID = /^[a-z0-9][a-z0-9:_-]{0,95}$/;
 const HASH = /^[0-9a-f]{64}$/;
 const TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
-const CURSOR = /^c2:([0-9a-f]{32}):([0-9a-z]+):([A-Za-z0-9_-]{43})$/;
+const CURSOR = /^c2:([A-Za-z0-9_-]{43}):([0-9a-z]+):([A-Za-z0-9_-]{43})$/;
 const PAGE_MAX = 20;
 const SWEEP_BATCH = 100;
 const FAIL_REASONS: readonly string[] = ["source_unavailable", "validation_failed", "publication_failed"];
@@ -139,8 +154,8 @@ function parsePublication(v: unknown): Publication | null {
 }
 
 /** Cursor bound to service + capability (newline-joined, hashed) and a job id. */
-export async function cursorFor(caller: Caller, jobId: string): Promise<string> {
-  return pageCursor(caller, { admitted_at: "1970-01-01T00:00:00Z", job_id: jobId });
+export async function cursorFor(signer: CursorSigner, caller: Caller, jobId: string): Promise<string> {
+  return pageCursor(signer, caller, { admitted_at: "1970-01-01T00:00:00Z", job_id: jobId });
 }
 
 function encodePosition(position: PagePosition): string {
@@ -168,13 +183,13 @@ export async function readJobs(deps: BridgeDeps, caller: Caller, raw: unknown): 
   if (p.cursor !== null) {
     const m = CURSOR.exec(p.cursor as string);
     const position = m && decodePosition(m[2] as string, m[3] as string);
-    if (!m || !position || m[1] !== (await cursorTag(caller, position)).slice(0, 32)) return bad("invalid_cursor");
+    if (!m || !position || !m[1] || !(await deps.cursorSigner.verify(cursorMessage(caller, position), m[1]))) return bad("invalid_cursor");
     after = position;
   }
   const rows = await deps.store.listPage(after, p.limit + 1);
   const page = rows.slice(0, p.limit);
   const valid = page.filter(r => validStoredRequest(r.job.request));
-  const next = rows.length > p.limit && page.length ? await pageCursor(caller, { admitted_at: page[page.length - 1]!.admitted_at,
+  const next = rows.length > p.limit && page.length ? await pageCursor(deps.cursorSigner, caller, { admitted_at: page[page.length - 1]!.admitted_at,
     job_id: page[page.length - 1]!.job.job_id }) : null;
   return respond("read_result", { jobs: valid.map(r => project(r.job)), next_cursor: next });
 }
@@ -187,12 +202,12 @@ function validStoredRequest(v: unknown): boolean {
     && v.population === "first_team_available" && v.joining_basis === "effective_first_team_spell_entry"
     && v.academy_basis === "documented_first_team_promotion" && v.visualization === "table";
 }
-async function pageCursor(caller: Caller, position: PagePosition): Promise<string> {
+async function pageCursor(signer: CursorSigner, caller: Caller, position: PagePosition): Promise<string> {
   const [timestamp, jobId] = encodePosition(position).split(":");
-  return `c2:${(await cursorTag(caller, position)).slice(0, 32)}:${timestamp}:${jobId}`;
+  return `c2:${await signer.sign(cursorMessage(caller, position))}:${timestamp}:${jobId}`;
 }
-async function cursorTag(caller: Caller, position: PagePosition): Promise<string> {
-  return sha256Hex(`${caller.service}\n${caller.capability}\n${new Date(Date.parse(position.admitted_at)).toISOString()}\n${position.job_id}`);
+function cursorMessage(caller: Caller, position: PagePosition): string {
+  return `${caller.service}\n${caller.capability}\n${new Date(Date.parse(position.admitted_at)).toISOString()}\n${position.job_id}`;
 }
 
 /** Atomic claim: queued, due, expected attempt equals stored, attempt < 3. */
