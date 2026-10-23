@@ -261,6 +261,18 @@ describe("page shell per locale", () => {
     }
   });
 
+  it("renders credits after the disclaimer and before the results attribution", () => {
+    for (const code of ["en", "es"] as const) {
+      const markup = render(code, { attribution: ["Credit One", "Credit Two"] });
+      const results = markup.indexOf(`<p>${esc(LOCALES[code].strings.resultsAttribution)}</p>`);
+      const one = markup.indexOf("<p>Credit One</p>");
+      const two = markup.indexOf("<p>Credit Two</p>");
+      expect(markup.indexOf('<p class="disclaimer">')).toBeLessThan(one);
+      expect(one).toBeLessThan(two);
+      expect(two).toBeLessThan(results);
+    }
+  });
+
   it("renders no credit paragraphs when attribution is absent or all empty", () => {
     for (const code of ["en", "es"] as const) {
       // Footer holds only the disclaimer and the results attribution.
@@ -283,6 +295,10 @@ describe("page shell per locale", () => {
         const markup = render(code, { snapshotId });
         expect(markup).not.toContain(esc(note));
         expect(markup).not.toContain("0123456789ab");
+        // Footer holds only the disclaimer and the results attribution.
+        const footer = markup.slice(markup.indexOf("<footer>"), markup.indexOf("</footer>"));
+        expect(footer.match(/<p/g)).toHaveLength(2);
+        expect(footer).not.toContain(esc(LOCALES[code].strings.snapshotNote("")));
       }
     }
   });
