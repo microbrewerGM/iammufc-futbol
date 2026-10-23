@@ -135,9 +135,10 @@ describe("read", () => {
     for (const cursor of [foreign, otherCap]) {
       expect(await readJobs(deps, runner, env("read", { cursor, limit: 5 }))).toEqual({ ok: false, error: "invalid_cursor" });
     }
-    for (const cursor of ["SELECT 1", "c1:zz:zz", 5]) {
-      expect((await readJobs(deps, runner, env("read", { cursor, limit: 5 }))).ok).toBe(false);
+    for (const cursor of ["SELECT 1", "c1:zz:zz"]) {
+      expect(await readJobs(deps, runner, env("read", { cursor, limit: 5 }))).toEqual({ ok: false, error: "invalid_cursor" });
     }
+    expect(await readJobs(deps, runner, env("read", { cursor: 5, limit: 5 }))).toEqual({ ok: false, error: "malformed" });
     expect(await readJobs(deps, runner, env("read", { cursor: await cursorFor(testSigner, runner, hex(9)), limit: 5 }))).toMatchObject({ ok: true });
     for (const limit of [0, 21, 1.5, "5"]) {
       expect(await readJobs(deps, runner, env("read", { cursor: null, limit }))).toEqual({ ok: false, error: "malformed" });
@@ -148,10 +149,17 @@ describe("read", () => {
     const { deps } = setup();
     const valid = await cursorFor(testSigner, runner, hex(1));
     const [, tag, timestamp, job] = valid.split(":");
-    const forged = `c2:${"A".repeat(43)}:${timestamp}:${job}`;
-    const altered = `c2:${tag}:${timestamp}:${hex(2)}`;
-    const missing = `c2::${timestamp}:${job}`;
-    for (const cursor of [forged, altered, missing])
+    const forged = `c3:${"A".repeat(43)}:${timestamp}:${job}`;
+    const altered = `c3:${tag}:${timestamp}:${hex(2)}`;
+    const missing = `c3::${timestamp}:${job}`;
+    const invalidTimestamp = `c3:${tag}:${timestamp}x:${job}`;
+    const leadingZeroTimestamp = `c3:${tag}:0${timestamp}:${job}`;
+    const leadingZeroJob = `c3:${tag}:${timestamp}:0${job}`;
+    const overlongTimestamp = `c3:${tag}:${"z".repeat(12)}:${job}`;
+    const overlongJob = `c3:${tag}:${timestamp}:${"z".repeat(51)}`;
+    const overlongCursor = `${valid}${"x".repeat(97)}`;
+    for (const cursor of [forged, altered, missing, invalidTimestamp, leadingZeroTimestamp,
+      leadingZeroJob, overlongTimestamp, overlongJob, overlongCursor])
       expect(await readJobs(deps, runner, env("read", { cursor, limit: 5 }))).toEqual({ ok: false, error: "invalid_cursor" });
     expect(await readJobs(deps, runner, env("read", { cursor: valid, limit: 5 }))).toMatchObject({ ok: true });
   });

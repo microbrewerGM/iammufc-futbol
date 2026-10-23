@@ -83,7 +83,7 @@ export type BridgeResult = { ok: true; body: string } | { ok: false; error: Brid
 const ID = /^[a-z0-9][a-z0-9:_-]{0,95}$/;
 const HASH = /^[0-9a-f]{64}$/;
 const TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
-const CURSOR = /^c3:([0-9a-f]{32}):([0-9a-z]+):([0-9a-z]+)$/;
+const CURSOR = /^c3:([0-9a-f]{32}):(0|[1-9a-z][0-9a-z]{0,10}):(0|[1-9a-z][0-9a-z]{0,49})$/;
 const PAGE_MAX = 20;
 const SWEEP_BATCH = 100;
 const FAIL_REASONS: readonly string[] = ["source_unavailable", "validation_failed", "publication_failed"];
@@ -167,11 +167,11 @@ function encodePosition(position: PagePosition): string {
 }
 function decodePosition(timestamp: string, encoded: string): PagePosition | null {
   try {
-    if (!/^(0|[1-9a-z][0-9a-z]*)$/.test(encoded)) return null;
     let n = 0n; for (const c of encoded) n = n * 36n + BigInt(parseInt(c, 36));
     const job_id = n.toString(16).padStart(64, "0");
     const ms = parseInt(timestamp, 36);
-    if (n >= (1n << 256n) || !Number.isSafeInteger(ms) || ms < 0 || !isHash(job_id)) return null;
+    if (n >= (1n << 256n) || !Number.isSafeInteger(ms) || ms < 0 || !isHash(job_id)
+      || ms.toString(36) !== timestamp || n.toString(36) !== encoded) return null;
     return { admitted_at: new Date(ms).toISOString(), job_id };
   } catch { return null; }
 }
