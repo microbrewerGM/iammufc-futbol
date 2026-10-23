@@ -111,7 +111,7 @@ describe("Cloudflare Access boundary", () => {
 
   it("requires same-origin proof for cost-causing GET and HEAD queries", async () => {
     const { request } = setup();
-    for (const path of ["/en/q", "/es/q"]) {
+    for (const path of ["/en/q", "/es/q", "/seasons/explore", "/en/seasons/explore", "/es/seasons/explore", "/en/seasons/explore/", "/%65n/%73easons/%65xplore", "/es/seasons/%65xplore"]) {
       for (const method of ["GET", "HEAD"]) {
         for (const site of [undefined, "cross-site", "same-site", "none"]) {
           expect((await request(path, { method, headers: site ? { "Sec-Fetch-Site": site } : {} })).status).toBe(403);

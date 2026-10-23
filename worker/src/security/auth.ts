@@ -61,12 +61,12 @@ export function accessGate(verifier: AccessVerifier = verifyAccess) {
     catch { return c.text("Access denied.", 403); }
     c.set("accessIdentity", identity);
     // Access is cookie-backed in browsers. Authorization alone is not CSRF
-    // protection. /q and player comparison also write account history and
+    // protection. Query, player comparison and season exploration routes
     // consume shared budget despite using GET.
     const url = new URL(c.req.url);
     const unsafe = !["GET", "HEAD", "OPTIONS"].includes(c.req.method);
     // Use the same decoded path as Hono's router (for example /en/%71).
-    const protectedGet = /^\/(?:en\/|es\/)?(?:q|players\/compare)\/?$/.test(c.req.path);
+    const protectedGet = /^\/(?:en\/|es\/)?(?:q|players\/compare|seasons\/explore)\/?$/.test(c.req.path);
     if (unsafe || protectedGet) {
       const origin = c.req.header("Origin");
       const site = c.req.header("Sec-Fetch-Site");
