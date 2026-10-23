@@ -83,23 +83,30 @@ def test_guard_follows_newest_created_at_not_insertion_order():
     db = sqlite3.connect(":memory:")
     db.executescript((ROOT / "infra/migrations/0001_schema.sql").read_text())
     db.executescript((ROOT / "infra/migrations/0004_cache_slots.sql").read_text())
-    # The newer publication is inserted first; the older one is inserted last.
-    db.execute("INSERT INTO snapshots VALUES (?, ?, ?, ?)", (SNAPSHOT_NEW, "2026-10-02", "{}", "{}"))
-    db.execute("INSERT INTO snapshots VALUES (?, ?, ?, ?)", (SNAPSHOT_OLD, "2026-10-01", "{}", "{}"))
+    # The newest publication is inserted in the middle and has the middle id, so
+    # first-row, last-row, smallest-id and largest-id orderings all pick a stale one.
+    oldest = "0" * 64
+    newest = "8" * 64
+    stale = "f" * 64
+    db.execute("INSERT INTO snapshots VALUES (?, ?, ?, ?)", (oldest, "2026-10-01", "{}", "{}"))
+    db.execute("INSERT INTO snapshots VALUES (?, ?, ?, ?)", (newest, "2026-10-03", "{}", "{}"))
+    db.execute("INSERT INTO snapshots VALUES (?, ?, ?, ?)", (stale, "2026-10-02", "{}", "{}"))
 
     def write(snapshot: str) -> int:
         return db.execute(
             sql, (cache_slot(KEY_FIRST), KEY_FIRST, snapshot, "payload", snapshot)
         ).rowcount
 
-    assert write(SNAPSHOT_OLD) == 0
+    assert write(oldest) == 0
+    assert write(stale) == 0
     assert db.execute("SELECT COUNT(*) FROM query_result_cache_slots").fetchone() == (0,)
-    assert write(SNAPSHOT_NEW) == 1
+    assert write(newest) == 1
     # A superseded writer cannot replace the current entry in the same slot.
-    assert write(SNAPSHOT_OLD) == 0
+    assert write(oldest) == 0
+    assert write(stale) == 0
     assert db.execute(
         "SELECT snapshot_id, result_json FROM query_result_cache_slots"
-    ).fetchone() == (SNAPSHOT_NEW, "payload")
+    ).fetchone() == (newest, "payload")
 
 
 def test_slot_table_rejects_non_integer_and_out_of_range_slots():

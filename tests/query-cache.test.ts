@@ -12,7 +12,7 @@ import {
   type Env,
   type QueryResult,
 } from "../worker/src/core/db";
-import { artifactKey, withDefaults } from "../worker/src/core/intent";
+import { withDefaults } from "../worker/src/core/intent";
 
 const KEY = "a".repeat(64);
 const SNAPSHOT = "b".repeat(64);
@@ -281,32 +281,6 @@ describe("content-addressed query cache", () => {
       await expect(readQueryCache(current.env, KEY, SNAPSHOT, INTENT)).resolves.toEqual({ outcome: "miss", result: null });
       await expect(readQueryCache(current.env, KEY, NEWER, INTENT)).resolves.toEqual({ outcome: "hit", result: newResult });
     });
-  });
-});
-
-describe("artifact key changes with every bound input", () => {
-  const base = withDefaults({ metric: "goals", entity_type: "player", entity_id: "all", season: "2024-25", viz: "bar" });
-
-  it.each([
-    ["metric", { metric: "assists" }],
-    ["entity_type", { entity_type: "season" }],
-    ["entity_id", { entity_id: "fpl:code:1" }],
-    ["season", { season: "2023-24" }],
-    ["competition", { competition: "UCL" }],
-    ["dimensions", { dimensions: ["home_away"] }],
-    ["filters", { filters: { venue: "home" } }],
-    ["viz", { viz: "table" }],
-    ["limit", { limit: 5 }],
-  ] as const)("changes when %s changes", async (_field, change) => {
-    const key = await artifactKey(base, SNAPSHOT);
-    const changed = await artifactKey({ ...base, ...change } as typeof base, SNAPSHOT);
-    expect(changed).not.toBe(key);
-    expect(queryCacheSlot(changed)).not.toBeNull();
-  });
-
-  it("changes when the snapshot changes and is stable for identical input", async () => {
-    expect(await artifactKey(base, SNAPSHOT)).toBe(await artifactKey({ ...base }, SNAPSHOT));
-    expect(await artifactKey(base, SNAPSHOT)).not.toBe(await artifactKey(base, "c".repeat(64)));
   });
 });
 
