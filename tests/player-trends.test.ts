@@ -29,6 +29,26 @@ describe("player trends",()=>{
   expect(result.leaders.map(x=>x.person_id)).toEqual([a]);
   expect(result.excluded).toEqual([{person_id:b,reason:"below_minimum"},{person_id:c,reason:"below_minimum"}]);
  });
+ it("compares large near-equal rates exactly",()=>{
+  const high=row(a,"2024-25",1000000000,1000000000000);
+  const low=row(b,"2024-25",999999999,999999999000);
+  const result=calculatePer90Leaders(meta,"2024-25","goals",0,[low,high]);
+  expect(result.leaders.map(x=>x.person_id)).toEqual([a,b]);
+ });
+ it("checks cross-season sums and 449/450 eligibility boundaries",()=>{
+  expect(()=>calculatePlayerTrends({...request,seasons:["2023-24","2024-25"]},meta,[row(a,"2023-24",Number.MAX_SAFE_INTEGER,1),row(a,"2024-25",1,1)])).toThrow();
+  const facts=[row(a,"2023-24",1,449),row(a,"2024-25",1,450),row(b,"2023-24",1,449),row(b,"2024-25",1,450)];
+  const trends=calculatePlayerTrends(request,meta,facts);
+  expect(trends.series[0]!.cells.map(c=>c.reason)).toEqual(["below_minimum","supported"]);
+  expect(trends.series[0]!.cells.map(c=>c.rate)).toEqual([null,.2]);
+  const leaders=calculatePer90Leaders(meta,"2024-25","goals",450,facts);
+  expect(leaders.leaders.map(x=>x.person_id)).toEqual([a,b]);
+  expect(calculatePer90Leaders(meta,"2024-25","goals",450,[row(a,"2024-25",1,449)]).excluded[0]!.reason).toBe("below_minimum");
+ });
+ it("defaults the per-90 leader threshold to 450 minutes",()=>{
+  const minMinutes=450;
+  expect(calculatePer90Leaders(meta,"2024-25","goals",minMinutes,[row(a,"2024-25",1,450)]).min_minutes).toBe(450);
+ });
  it("is deterministic, validates bad counters, and handles empty input",()=>{
   const one=calculatePlayerTrends(request,meta,[]), two=calculatePlayerTrends(request,meta,[]);
   expect(JSON.stringify(one)).toBe(JSON.stringify(two)); expect(one.series[0]!.cells[0]!.reason).toBe("missing_row");

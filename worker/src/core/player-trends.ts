@@ -33,6 +33,11 @@ function text(v: unknown): v is string { return typeof v === "string" && v.lengt
 function person(v: unknown): v is string { return typeof v === "string" && /^fpl:code:[1-9][0-9]{0,17}$/.test(v); }
 function season(v: unknown): v is string { return typeof v === "string" && /^[0-9]{4}-[0-9]{2}$/.test(v) && Number(v.slice(-2)) === (Number(v.slice(0,4))+1)%100; }
 function integer(v: unknown): v is number { return typeof v === "number" && Number.isSafeInteger(v) && v >= 0; }
+function safeRateCompare(a: Per90Leader, b: Per90Leader): number {
+  const left = BigInt(a.total) * BigInt(b.minutes);
+  const right = BigInt(b.total) * BigInt(a.minutes);
+  return left === right ? 0 : left > right ? -1 : 1;
+}
 function strings(v: unknown, min: number, max: number, valid: (x: unknown)=>boolean): string[] {
   if (!Array.isArray(v) || v.length < min || v.length > max || !v.every(valid) || new Set(v).size !== v.length) fail("list bounds or entries");
   return [...v as string[]].sort();
@@ -80,6 +85,15 @@ function cell(seasonName: string, row: PlayerTrendRow | undefined, min: number, 
 export function calculatePlayerTrends(value: unknown, metadataValue: unknown, rowsValue: unknown): {request:PlayerTrendsRequest;snapshot_id:string;definition:"goals"|"fpl_assists";series:PlayerTrendSeries[]} {
   const meta = catalog(metadataValue), request = parsePlayerTrendsRequest(value,meta), rows = validateRows(meta,rowsValue);
   const series = request.person_ids.map(person_id=>({person_id,cells:request.seasons.map(s=>cell(s,rows.get(JSON.stringify([person_id,s,request.metric])),request.min_minutes,request.normalization))}));
+  for (const person_id of request.person_ids) {
+    let total = 0, minutes = 0;
+    for (const s of request.seasons) {
+      const row = rows.get(JSON.stringify([person_id,s,request.metric]));
+      if (!row) continue;
+      if (row.total !== null) { total += row.total; if (!Number.isSafeInteger(total)) fail("total sum overflow"); }
+      if (row.minutes !== null) { minutes += row.minutes; if (!Number.isSafeInteger(minutes)) fail("minutes sum overflow"); }
+    }
+  }
   return {request,snapshot_id:meta.snapshot_id,definition:request.metric === "goals" ? "goals" : "fpl_assists",series};
 }
 export function calculatePer90Leaders(metadataValue: unknown, seasonValue: unknown, metricValue: unknown, minMinutesValue: unknown, rowsValue: unknown): Per90LeadersResult {
@@ -94,6 +108,6 @@ export function calculatePer90Leaders(metadataValue: unknown, seasonValue: unkno
     const rate=90*row!.total!/row!.minutes!; if(!Number.isFinite(rate)||!Number.isSafeInteger(90*row!.total!)) fail("rate overflow");
     leaders.push({person_id:id,total:row!.total!,minutes:row!.minutes!,rate,lineage:[...row!.lineage]});
   }
-  leaders.sort((a,b)=>b.rate-a.rate || b.minutes-a.minutes || (a.person_id < b.person_id ? -1 : a.person_id > b.person_id ? 1 : 0));
+  leaders.sort((a,b)=>safeRateCompare(a,b) || b.minutes-a.minutes || (a.person_id < b.person_id ? -1 : a.person_id > b.person_id ? 1 : 0));
   return {snapshot_id:meta.snapshot_id,season:seasonValue,metric:metricValue,min_minutes:minMinutesValue,leaders:leaders.slice(0,50),excluded};
 }
