@@ -1,4 +1,5 @@
 import { parseSeasonSplitRequest, type SeasonSplitCatalog, type SeasonSplitRequest, type SeasonSplitRow } from "./season-splits";
+import type { Env } from "./db";
 
 /** Explicit IDs approved by the private season_splits_seed._CLUBS crosswalk. */
 export const APPROVED_OPPONENT_IDS: ReadonlySet<string> = new Set([
@@ -34,9 +35,10 @@ const MAX_ROWS = 4096;
 const COUNTERS = ["played", "won", "drawn", "lost", "goals_for", "goals_against"] as const;
 
 /** Exact bounded query shape used with seasonSplitFacts' shared split table. */
-export function buildOpponentHistoryQuery(request: SeasonSplitRequest, snapshotId: string): OpponentHistoryQuery {
+export function buildOpponentHistoryQuery(request: SeasonSplitRequest, catalog: SeasonSplitCatalog): OpponentHistoryQuery {
+  const snapshotId = catalog?.snapshot_id;
   if (request.group_by !== "opponent" || request.opponent_id === null ||
-      !APPROVED_OPPONENT_IDS.has(request.opponent_id) || !/^[0-9a-f]{64}$/.test(snapshotId)) fail("query selection");
+      !APPROVED_OPPONENT_IDS.has(request.opponent_id) || typeof snapshotId !== "string" || !/^[0-9a-f]{64}$/.test(snapshotId)) fail("query selection");
   const marks = request.seasons.map(() => "?").join(",");
   const venueClause = request.venue === null ? "" : " AND venue = ?";
   const opponentClause = " AND opponent_id = ?";
@@ -44,6 +46,18 @@ export function buildOpponentHistoryQuery(request: SeasonSplitRequest, snapshotI
     sql: `SELECT snapshot_id, season, competition, venue, opponent_id, played, won, drawn, lost,\n            goals_for, goals_against, lineage_json\n       FROM season_splits WHERE snapshot_id = ? AND season IN (${marks})${venueClause}${opponentClause}\n       ORDER BY season, venue, opponent_id LIMIT ${MAX_ROWS + 1}`,
     bindings: [snapshotId, ...request.seasons, ...(request.venue === null ? [] : [request.venue]), request.opponent_id],
   };
+}
+
+/** Execute the bounded production query against the supplied catalog snapshot. */
+export async function readOpponentHistory(env: Env, value: unknown, metadata: unknown): Promise<OpponentHistoryResult> {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) fail("catalog");
+  const catalog = metadata as SeasonSplitCatalog;
+  let request: SeasonSplitRequest;
+  try { request = parseSeasonSplitRequest(value, Array.isArray(catalog.seasons) ? catalog.seasons.map(s => s.season) : []); }
+  catch { return fail("selection"); }
+  const query = buildOpponentHistoryQuery(request, catalog);
+  const { results } = await env.DB.prepare(query.sql).bind(...query.bindings).all<SeasonSplitRow & { lineage_json: string }>();
+  return queryOpponentHistory(request, catalog, results);
 }
 
 function makeRecord(rows: readonly SeasonSplitRow[]): HistoryRecord {
@@ -117,8 +131,9 @@ export function queryOpponentHistory(value: unknown, metadata: unknown, rowsValu
     const grain = JSON.stringify([row.season, row.competition, row.venue, row.opponent_id]);
     if (seen.has(grain)) fail("duplicate grain");
     seen.add(grain);
-    if (selected.has(season) && opponentId === request.opponent_id &&
-        (request.venue === null || rowVenue === request.venue)) rows.push({ ...row, lineage: [...validLineage] } as unknown as SeasonSplitRow);
+    if (!selected.has(season) || opponentId !== request.opponent_id ||
+        (request.venue !== null && rowVenue !== request.venue)) fail("row dimensions differ from request");
+    rows.push({ ...row, lineage: [...validLineage] } as unknown as SeasonSplitRow);
   }
   const seasons = request.seasons.map(season => {
     const coverage = coverageBySeason.get(season)!;

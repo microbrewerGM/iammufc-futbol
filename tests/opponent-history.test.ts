@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildOpponentHistoryQuery, queryOpponentHistory } from "../worker/src/core/opponent-history";
+import { buildOpponentHistoryQuery, queryOpponentHistory, readOpponentHistory } from "../worker/src/core/opponent-history";
 
 const seasons = ["2022-23", "2024-25", "2025-26"];
 const request = { schema_version: 1, competition: "PL", seasons, group_by: "opponent", venue: null, opponent_id: "club:1001" } as const;
@@ -46,13 +46,29 @@ describe("opponent history query", () => {
     expect(() => run([row(seasons[0]!, "home", 1, 0, 0, 2, 0)], request, { ...catalog, snapshot_id: "other" })).toThrow("snapshot or coverage");
   });
   it("pins production SQL and bindings for both and venue-filtered reads", () => {
-    const snapshotId = "a".repeat(64);
-    expect(buildOpponentHistoryQuery(request, snapshotId)).toEqual({
+  const snapshotId = "a".repeat(64);
+    const validCatalog = { ...catalog, snapshot_id: snapshotId };
+    expect(buildOpponentHistoryQuery(request, validCatalog)).toEqual({
       sql: "SELECT snapshot_id, season, competition, venue, opponent_id, played, won, drawn, lost,\n            goals_for, goals_against, lineage_json\n       FROM season_splits WHERE snapshot_id = ? AND season IN (?,?,?) AND opponent_id = ?\n       ORDER BY season, venue, opponent_id LIMIT 4097",
       bindings: [snapshotId, ...seasons, "club:1001"],
     });
-    expect(buildOpponentHistoryQuery({ ...request, venue: "home" }, snapshotId).bindings).toEqual([snapshotId, ...seasons, "home", "club:1001"]);
-    expect(buildOpponentHistoryQuery({ ...request, venue: "home" }, snapshotId).sql).toContain("AND venue = ? AND opponent_id = ?");
+    expect(buildOpponentHistoryQuery({ ...request, venue: "home" }, validCatalog).bindings).toEqual([snapshotId, ...seasons, "home", "club:1001"]);
+    expect(buildOpponentHistoryQuery({ ...request, venue: "home" }, validCatalog).sql).toContain("AND venue = ? AND opponent_id = ?");
+    expect(() => buildOpponentHistoryQuery(request, catalog)).toThrow("query selection");
+  });
+  it("executes the exported bounded query using the catalog snapshot", async () => {
+    const snapshotId = "a".repeat(64);
+    const seen: { sql?: string; bindings?: unknown[] } = {};
+    const dbRow = { ...row(seasons[0]!, "home", 1, 0, 0, 2, 0), snapshot_id: snapshotId };
+    const env = { DB: { prepare(sql: string) { seen.sql = sql; return { bind(...bindings: unknown[]) { seen.bindings = bindings; return { all: async () => ({ results: [dbRow] }) }; } }; } } } as never;
+    const result = await readOpponentHistory(env, request, { ...catalog, snapshot_id: snapshotId });
+    expect(seen.bindings?.[0]).toBe(snapshotId);
+    expect(seen.sql).toContain("LIMIT 4097");
+    expect(result.snapshot_id).toBe(snapshotId);
+  });
+  it("rejects rows for a different requested opponent or venue", () => {
+    expect(() => run([{ ...row(seasons[0]!, "home", 1, 0, 0, 2, 0), opponent_id: "club:1002" }])).toThrow("row dimensions differ from request");
+    expect(() => run([row(seasons[0]!, "away", 1, 0, 0, 2, 0)], { ...request, venue: "home" })).toThrow("row dimensions differ from request");
   });
   it("rejects input bounds, unsafe counts and aggregate overflow", () => {
     expect(() => run(Array(4097).fill(null))).toThrow("row count");
