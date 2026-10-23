@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Catalog, type CompiledCatalog } from "../worker/src/core/feasibility";
 import { LOCALES } from "../worker/src/core/locale";
-import { page } from "../worker/src/views/layout";
+import { esc, html, page, type LayoutOptions } from "../worker/src/views/layout";
 import { homeBody } from "../worker/src/views/pages";
 
 function homeCatalog(overrides: Partial<CompiledCatalog> = {}): Catalog {
@@ -172,5 +172,158 @@ describe("homepage actions", () => {
 
     expect(markup).not.toContain('/player/');
     expect(markup.match(/<li><a href=/g)).toHaveLength(2);
+  });
+});
+
+describe("esc", () => {
+  it("escapes all five HTML-significant characters", () => {
+    expect(esc(`&<>"'`)).toBe("&amp;&lt;&gt;&quot;&#39;");
+    expect(esc("&lt;")).toBe("&amp;lt;");
+    expect(esc("plain")).toBe("plain");
+  });
+});
+
+describe("page shell per locale", () => {
+  const render = (code: "en" | "es", extra: Partial<LayoutOptions> = {}) =>
+    page("<p>BODY</p>", { title: "T", locale: LOCALES[code], unprefixedPath: "/x", ...extra });
+
+  it("escapes the title and keeps the brand suffix", () => {
+    for (const locale of Object.values(LOCALES)) {
+      const markup = page("", { title: `<b>"A" & 'B'</b>`, locale, unprefixedPath: "/" });
+      expect(markup).toContain(
+        "<title>&lt;b&gt;&quot;A&quot; &amp; &#39;B&#39;&lt;/b&gt; — iammufc</title>",
+      );
+      expect(markup).not.toContain("<b>");
+    }
+  });
+
+  it("sets html lang, aria-current and canonical per locale", () => {
+    const en = render("en");
+    const es = render("es");
+    expect(en).toContain(`<html lang="${LOCALES.en.htmlLang}">`);
+    expect(es).toContain(`<html lang="${LOCALES.es.htmlLang}">`);
+    expect(en).toContain('<a href="/en/x" aria-current="page">EN</a>');
+    expect(en).toContain('<a href="/es/x">ES</a>');
+    expect(es).toContain('<a href="/es/x" aria-current="page">ES</a>');
+    expect(es).toContain('<a href="/en/x">EN</a>');
+    expect(en.match(/aria-current/g)).toHaveLength(1);
+    expect(es.match(/aria-current/g)).toHaveLength(1);
+    expect(en).toContain('<link rel="canonical" href="/en/x">');
+    expect(es).toContain('<link rel="canonical" href="/es/x">');
+  });
+
+  it("emits reciprocal hreflang en, es and x-default in both locales", () => {
+    for (const code of ["en", "es"] as const) {
+      const markup = render(code);
+      expect(markup).toContain('hreflang="en" href="/en/x"');
+      expect(markup).toContain('hreflang="es" href="/es/x"');
+      expect(markup).toContain('hreflang="x-default" href="/en/x"');
+    }
+  });
+
+  it("renders the analysis nav in the page locale", () => {
+    const en = render("en");
+    expect(en).toContain('<nav class="analysis-nav" aria-label="Analysis and data">');
+    expect(en).toContain('<a href="/en/compare">Compare output per 90</a>');
+    expect(en).toContain(`<a href="/en/players/compare">${LOCALES.en.strings.playerRangeLink}</a>`);
+    expect(en).toContain('<a href="/en/seasons/explore">Explore season splits</a>');
+    expect(en).toContain('<a href="/en/season/2025-26#team-seasons">Compare league seasons</a>');
+    expect(en).toContain('<a href="/en/data">Data and sources</a>');
+    const es = render("es");
+    expect(es).toContain('<nav class="analysis-nav" aria-label="Análisis y datos">');
+    expect(es).toContain('<a href="/es/compare">Comparar por 90 minutos</a>');
+    expect(es).toContain(`<a href="/es/players/compare">${LOCALES.es.strings.playerRangeLink}</a>`);
+    expect(es).toContain('<a href="/es/seasons/explore">Explorar desgloses</a>');
+    expect(es).toContain('<a href="/es/season/2025-26#team-seasons">Comparar temporadas</a>');
+    expect(es).toContain('<a href="/es/data">Datos y fuentes</a>');
+  });
+
+  it("wraps the body in main and renders disclaimer and results attribution per locale", () => {
+    for (const code of ["en", "es"] as const) {
+      const s = LOCALES[code].strings;
+      const markup = render(code);
+      expect(markup).toContain("<main>\n<p>BODY</p>\n</main>");
+      expect(markup).toContain(`<p class="disclaimer">${esc(s.disclaimer)}</p>`);
+      expect(markup).toContain(`<p>${esc(s.resultsAttribution)}</p>`);
+      expect(markup.indexOf("</main>")).toBeLessThan(markup.indexOf('<p class="disclaimer">'));
+    }
+  });
+
+  it("filters empty credits, dedupes and escapes them", () => {
+    for (const code of ["en", "es"] as const) {
+      const markup = render(code, {
+        attribution: ["Data <A>", null, undefined, "", "Data <A>", "B & C"],
+      });
+      expect(markup.match(/<p>Data &lt;A&gt;<\/p>/g)).toHaveLength(1);
+      expect(markup).toContain("<p>B &amp; C</p>");
+      expect(markup).not.toContain("Data <A>");
+      expect(markup).not.toContain("<p></p>");
+    }
+  });
+
+  it("renders credits after the disclaimer and before the results attribution", () => {
+    for (const code of ["en", "es"] as const) {
+      const markup = render(code, { attribution: ["Credit One", "Credit Two"] });
+      const results = markup.indexOf(`<p>${esc(LOCALES[code].strings.resultsAttribution)}</p>`);
+      const one = markup.indexOf("<p>Credit One</p>");
+      const two = markup.indexOf("<p>Credit Two</p>");
+      expect(markup.indexOf('<p class="disclaimer">')).toBeLessThan(one);
+      expect(one).toBeLessThan(two);
+      expect(two).toBeLessThan(results);
+    }
+  });
+
+  it("renders no credit paragraphs when attribution is absent or all empty", () => {
+    for (const code of ["en", "es"] as const) {
+      // Footer holds only the disclaimer and the results attribution.
+      for (const extra of [{}, { attribution: [] }, { attribution: [null, undefined, ""] }]) {
+        const markup = render(code, extra);
+        const footer = markup.slice(markup.indexOf("<footer>"), markup.indexOf("</footer>"));
+        expect(footer.match(/<p/g)).toHaveLength(2);
+      }
+    }
+  });
+
+  it("truncates the snapshot id to 12 characters and omits the note when absent", () => {
+    const id = "0123456789abcdefghij";
+    for (const code of ["en", "es"] as const) {
+      const note = LOCALES[code].strings.snapshotNote("0123456789ab");
+      const withId = render(code, { snapshotId: id });
+      expect(withId).toContain(`<p>${esc(note)}</p>`);
+      expect(withId).not.toContain("0123456789abc");
+      for (const snapshotId of [undefined, null, ""]) {
+        const markup = render(code, { snapshotId });
+        expect(markup).not.toContain(esc(note));
+        expect(markup).not.toContain("0123456789ab");
+        // Footer holds only the disclaimer and the results attribution.
+        const footer = markup.slice(markup.indexOf("<footer>"), markup.indexOf("</footer>"));
+        expect(footer.match(/<p/g)).toHaveLength(2);
+        expect(footer).not.toContain(esc(LOCALES[code].strings.snapshotNote("")));
+      }
+    }
+  });
+
+  it("ships no script elements or inline handlers", () => {
+    for (const code of ["en", "es"] as const) {
+      const markup = render(code, { attribution: ["x"], snapshotId: "abcdef123456789" });
+      expect(markup).not.toMatch(/<script/i);
+      expect(markup).not.toMatch(/\son[a-z]+\s*=/i);
+      expect(markup).not.toMatch(/javascript:/i);
+    }
+  });
+});
+
+describe("html", () => {
+  it("defaults to status 200 with an HTML content-type", async () => {
+    const res = html("<p>x</p>");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    expect(await res.text()).toBe("<p>x</p>");
+  });
+
+  it("honours an explicit status", () => {
+    const res = html("nope", 404);
+    expect(res.status).toBe(404);
+    expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8");
   });
 });
