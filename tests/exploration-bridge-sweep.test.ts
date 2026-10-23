@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { BridgeDeps, BridgeResult, Caller, Job, StoredJob } from "../worker/src/core/exploration-bridge";
-import { claimJobAfterSweep, readJobsAfterSweep } from "../worker/src/routes/exploration-bridge-sweep";
+import { claimJobAfterSweep, MIN_SWEEP_INTERVAL_MS, readJobsAfterSweep, resetSweepThrottleForTest } from "../worker/src/routes/exploration-bridge-sweep";
 
 const NOW = "2026-10-23T12:00:00Z";
 const id = (n: number) => n.toString(16).padStart(64, "0");
@@ -63,6 +63,7 @@ function fixture() {
 
 describe("bridge request sweeps", () => {
   it("sweeps expiry and due retries before a claim, respecting the retry delay", async () => {
+    resetSweepThrottleForTest();
     const { store, deps, advance } = fixture();
     const source = queued(1);
     const running: Job = { ...source.job, status: "running", attempt: 1, lease_id: "lease-old",
@@ -81,20 +82,53 @@ describe("bridge request sweeps", () => {
     const second = await claimJobAfterSweep(deps, runner,
       envelope("claim", { job_id: running.job_id, expected_attempt: 1, operation_id: "op-2" }));
     expect(payload(second.result!).outcome).toBe("claimed");
-    expect(store.listCalls.slice(0, 3)).toEqual(["expired", "due", "expired"]);
+    expect(store.listCalls.slice(0, 2)).toEqual(["expired", "due"]);
     expect(store.expiredLimit).toBe(100);
     expect(store.dueLimit).toBe(100);
   });
 
   it("runs both sweeps before a read", async () => {
+    resetSweepThrottleForTest();
     const { store, deps } = fixture();
     const result = await readJobsAfterSweep(deps, runner,
       envelope("read", { cursor: null, limit: 10 }));
     expect(result.status).toBe(200);
-    expect(store.listCalls).toEqual(["expired", "due", "read"]);
+    expect(store.listCalls).toEqual(["expired", "read"]);
+  });
+
+  it("rejects invalid caller and request before maintenance queries", async () => {
+    resetSweepThrottleForTest();
+    const { store, deps } = fixture();
+    const invalidCaller = await readJobsAfterSweep(deps, { service: "bad space", capability: "arrival_manager:1" },
+      envelope("read", { cursor: null, limit: 10 }));
+    const invalidRequest = await claimJobAfterSweep(deps, runner, "not-json");
+    expect(invalidCaller.result).toEqual({ ok: false, error: "invalid_caller" });
+    expect(invalidRequest.result).toEqual({ ok: false, error: "malformed" });
+    expect(store.listCalls).toEqual([]);
+  });
+
+  it("limits ten requests in the interval to one maintenance query", async () => {
+    resetSweepThrottleForTest();
+    const { store, deps } = fixture();
+    for (let i = 0; i < 10; i++) {
+      const result = await readJobsAfterSweep(deps, runner, envelope("read", { cursor: null, limit: 10 }));
+      expect(result.status).toBe(200);
+    }
+    expect(store.listCalls.filter(call => call !== "read")).toHaveLength(1);
+    expect(MIN_SWEEP_INTERVAL_MS).toBeGreaterThan(0);
+  });
+
+  it("allows another maintenance query after the injected clock passes the interval", async () => {
+    resetSweepThrottleForTest();
+    const { store, deps, advance } = fixture();
+    await readJobsAfterSweep(deps, runner, envelope("read", { cursor: null, limit: 10 }));
+    advance(MIN_SWEEP_INTERVAL_MS / 1000);
+    await readJobsAfterSweep(deps, runner, envelope("read", { cursor: null, limit: 10 }));
+    expect(store.listCalls.filter(call => call !== "read")).toHaveLength(2);
   });
 
   it("returns a generic failure without leaking sweep storage details", async () => {
+    resetSweepThrottleForTest();
     const { store, deps } = fixture();
     store.failList = true;
     const result = await claimJobAfterSweep(deps, runner,
