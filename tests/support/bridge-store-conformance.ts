@@ -77,6 +77,14 @@ export function bridgeStoreConformance(name: string, create: BridgeStoreFactory)
       expect(await store.get(b.job.job_id)).toEqual(b);
       expect(await store.getOperation("runner-a", "claim", "op-1")).toEqual(operation);
     });
+    it("rejects an identical operation record reused against a different job", async () => {
+      const a = rows[0]!; const b = rows[2]!; const operation = op();
+      expect(await store.commit(1, next(a), operation)).toBe(true);
+      expect(await store.commit(1, next(b), structuredClone(operation))).toBe(false);
+      expect(await store.get(a.job.job_id)).toEqual(next(a));
+      expect(await store.get(b.job.job_id)).toEqual(b);
+      expect(await store.getOperation("runner-a", "claim", "op-1")).toEqual(operation);
+    });
     it("scopes operation keys by service and operation type", async () => {
       for (const [index, operation] of [op(), op({ service: "runner-b" }), op({ type: "ack" })].entries()) {
         expect(await store.commit(1, next(rows[index]!), operation)).toBe(true);
