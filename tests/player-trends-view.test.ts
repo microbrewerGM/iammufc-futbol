@@ -14,14 +14,42 @@ describe("playerTrendsBody", () => {
     const result = calculatePlayerTrends(request, meta, [row(a, "2023-24", 0, 900), row(a, "2024-25", 2, 900), row(a, "2025-26", 3, 300)]);
     const html = playerTrendsBody({ ...result, people: [{ person_id: a, label: "<Alex>" }], credits: { "source:goals": "League source" } }, {}, LOCALES.en);
     expect(html).toContain("<svg");
-    expect(html).toContain("aria-label=\"Player trends: &lt;Alex&gt;; Goals; 2023-24–2025-26; below minimum minutes.");
+    expect(html).toContain("aria-label=\"Player trends: &lt;Alex&gt;; Goals; 2023-24–2025-26; &lt;Alex&gt; 2025-26: Below minimum minutes.");
     expect(html).toContain("<table>");
     expect(html).toContain("Data unavailable");
     expect(html).toContain("<td>0</td>");
     expect(html).toContain("Below minimum minutes");
     expect(html).toContain("&lt;Alex&gt;");
     expect(html).toContain("League source");
+    expect(html).toContain("Goals total");
     expect(html).not.toContain("source:goals");
+  });
+
+  it("breaks chart segments at missing and below-threshold cells and never plots invalid support", () => {
+    const gap = calculatePlayerTrends(request, meta, [
+      row(a, "2023-24", 1, 900),
+      row(a, "2024-25", 9, 0),
+      row(a, "2025-26", 3, 900),
+    ]);
+    const html = playerTrendsBody({ ...gap, people: [{ person_id: a, label: "Alex" }], credits: {} }, {}, LOCALES.en);
+    expect(html.match(/<polyline/g)).toBeNull();
+    expect(html).toContain("2024-25: No positive minutes");
+
+    const threshold = calculatePlayerTrends(request, meta, [
+      row(a, "2023-24", 1, 900),
+      row(a, "2024-25", 2, 300),
+      row(a, "2025-26", 3, 900),
+    ]);
+    const thresholdHtml = playerTrendsBody({ ...threshold, people: [{ person_id: a, label: "Alex" }], credits: {} }, {}, LOCALES.en);
+    expect(thresholdHtml.match(/<polyline/g)).toBeNull();
+
+    const totalRequest: PlayerTrendsRequest = { ...request, normalization: "total", min_minutes: 0 };
+    const invalidTotal = calculatePlayerTrends(totalRequest, meta, [
+      row(a, "2023-24", 1, 900), row(a, "2024-25", 99, 0), row(a, "2025-26", 3, 900),
+    ]);
+    const invalidHtml = playerTrendsBody({ ...invalidTotal, people: [{ person_id: a, label: "Alex" }], credits: {} }, {}, LOCALES.en);
+    expect(invalidHtml.match(/<polyline/g)).toBeNull();
+    expect(invalidHtml).not.toContain("cx=\"50.00\" cy=\"20.00\"");
   });
 
   it("renders Spanish labels and leaderboard exclusions", () => {
@@ -34,6 +62,7 @@ describe("playerTrendsBody", () => {
     expect(html).toContain("Clasificación por 90 minutos");
     expect(html).toContain("Por debajo del mínimo de minutos");
     expect(html).toContain("Jugadores excluidos");
+    expect(html).toContain('role="region" tabindex="0" aria-label="Jugadores excluidos"');
     expect(html).toContain("Atribución de fuente no disponible");
   });
 
@@ -46,5 +75,16 @@ describe("playerTrendsBody", () => {
     expect(html).toContain("Custom data table");
     expect(html).toContain("Not enough points for a trend");
     expect(html).not.toContain("<svg");
+  });
+
+  it("does not emit a figure for a series with fewer than two supported points", () => {
+    const multi: PlayerTrendsRequest = { ...request, person_ids: [a, b] };
+    const result = calculatePlayerTrends(multi, meta, [
+      row(a, "2023-24", 1, 900), row(a, "2024-25", 2, 900),
+      row(b, "2023-24", 1, 900), row(b, "2024-25", 2, 100),
+    ]);
+    const html = playerTrendsBody({ ...result, people: [{ person_id: a, label: "Alex" }, { person_id: b, label: "Bea" }], credits: {} }, {}, LOCALES.en);
+    expect(html.match(/<figure>/g)).toHaveLength(1);
+    expect(html).toContain("Not enough points for a trend");
   });
 });
