@@ -23,14 +23,6 @@ describe("exploration request account links migration", () => {
         VALUES (?, 'account-a', 1, ?, ?, '2027-01-18T00:00:00Z')`).run(requestId, requestJson, now);
       db.prepare(`INSERT INTO exploration_request_accounts (request_id, account_sub, created_at, expires_at)
         VALUES (?, 'account-a', ?, '2027-01-18T00:00:00Z')`).run(requestId, now);
-      db.exec(readFileSync("infra/migrations/0008_exploration_request_links.sql", "utf8"));
-      db.exec(readFileSync("infra/migrations/0008_exploration_request_links.sql", "utf8"));
-      const insertRequest = `INSERT INTO exploration_requests
-        (request_id, account_sub, contract_version, request_json, created_at, expires_at)
-        VALUES (?, 'legacy-unused', 1, ?, ?, '2027-01-18T00:00:00Z')
-        ON CONFLICT(request_id) DO NOTHING`;
-      db.prepare(insertRequest).run(requestId, requestJson, now);
-      db.prepare(insertRequest).run(requestId, requestJson, now); // canonical replay is idempotent
       db.prepare(`INSERT INTO exploration_results
         (request_id, snapshot_id, artifact_key, transform_code_version, renderer_version, roster_snapshot_id,
          feasibility, coverage, population_count, assigned_json, unknown_json, lineage_json, created_at, expires_at)
@@ -40,13 +32,17 @@ describe("exploration request account links migration", () => {
       db.prepare(`INSERT INTO exploration_jobs
         (job_id, request_id, status, attempt, admitted_at, created_at, updated_at, expires_at)
         VALUES (?, ?, 'queued', 0, ?, ?, ?, '2026-11-19T00:00:00Z')`).run("b".repeat(64), requestId, now, now, now);
-      db.prepare(`UPDATE exploration_jobs SET status='running', attempt=1, claimed_at=?, lease_id='worker:1',
-        lease_expires_at='2026-10-20T00:15:00Z' WHERE request_id=?`).run(now, requestId);
-      expect(() => db.prepare(`INSERT INTO exploration_jobs
-        (job_id, request_id, status, attempt, admitted_at, created_at, updated_at, expires_at)
-        VALUES (?, ?, 'queued', 0, ?, ?, ?, '2026-11-19T00:00:00Z')`).run("c".repeat(64), requestId, now, now, now)).toThrow();
+      db.exec(readFileSync("infra/migrations/0008_exploration_request_links.sql", "utf8"));
+      db.exec(readFileSync("infra/migrations/0008_exploration_request_links.sql", "utf8"));
+      expect(db.prepare("PRAGMA table_info(exploration_shared_requests)").all().map((column: { name: string }) => column.name))
+        .not.toContain("account_sub");
       db.prepare(`INSERT INTO exploration_request_links (request_id, account_sub, created_at, expires_at)
         VALUES (?, 'account-b', ?, '2027-01-19T00:00:00Z')`).run(requestId, "2026-10-21T00:00:00Z");
+      db.prepare(`UPDATE exploration_shared_jobs SET status='running', attempt=1, claimed_at=?, lease_id='worker:1',
+        lease_expires_at='2026-10-20T00:15:00Z' WHERE request_id=?`).run(now, requestId);
+      expect(() => db.prepare(`INSERT INTO exploration_shared_jobs
+        (job_id, request_id, status, attempt, admitted_at, created_at, updated_at, expires_at)
+        VALUES (?, ?, 'queued', 0, ?, ?, ?, '2026-11-19T00:00:00Z')`).run("c".repeat(64), requestId, now, now, now)).toThrow();
       expect(db.prepare(`SELECT account_sub, created_at, expires_at FROM exploration_request_links
         WHERE request_id=? ORDER BY account_sub`).all(requestId)).toEqual([
         { account_sub: "account-a", created_at: now, expires_at: "2027-01-18T00:00:00Z" },
@@ -57,15 +53,36 @@ describe("exploration request account links migration", () => {
         .run(requestId, now)).toThrow();
       expect(() => db.prepare(`UPDATE exploration_request_links SET account_sub='account-c'
         WHERE request_id=? AND account_sub='account-a'`).run(requestId)).toThrow();
-      expect(db.prepare("SELECT count(*) AS n FROM exploration_requests WHERE request_id=?").get(requestId))
+      expect(db.prepare("SELECT count(*) AS n FROM exploration_shared_requests WHERE request_id=?").get(requestId))
         .toEqual({ n: 1 });
       db.prepare("DELETE FROM exploration_request_links WHERE request_id=? AND account_sub='account-a'").run(requestId);
       expect(db.prepare("SELECT account_sub FROM exploration_request_links WHERE request_id=?").all(requestId))
         .toEqual([{ account_sub: "account-b" }]);
-      expect(db.prepare("SELECT status, lease_id FROM exploration_jobs WHERE request_id=?").all(requestId))
+      // Removing the legacy owner row simulates its account deletion cascade;
+      // it must not reach the account-neutral shared request or payload rows.
+      db.prepare("DELETE FROM exploration_requests WHERE account_sub='account-a'").run();
+      expect(db.prepare("SELECT account_sub FROM exploration_request_links WHERE request_id=?").all(requestId))
+        .toEqual([{ account_sub: "account-b" }]);
+      expect(db.prepare("SELECT status, lease_id FROM exploration_shared_jobs WHERE request_id=?").all(requestId))
         .toEqual([{ status: "running", lease_id: "worker:1" }]);
-      expect(db.prepare("SELECT snapshot_id FROM exploration_results WHERE request_id=?").all(requestId))
+      expect(db.prepare("SELECT snapshot_id FROM exploration_shared_results WHERE request_id=?").all(requestId))
         .toEqual([{ snapshot_id: "snapshot:one" }]);
+
+      const collect = `DELETE FROM exploration_shared_requests
+        WHERE request_id IN (SELECT r.request_id FROM exploration_shared_requests AS r
+          WHERE NOT EXISTS (SELECT 1 FROM exploration_request_links AS l WHERE l.request_id=r.request_id)
+          ORDER BY r.expires_at, r.request_id LIMIT 100)`;
+      db.exec(collect);
+      expect(db.prepare("SELECT count(*) AS n FROM exploration_shared_requests WHERE request_id=?").get(requestId))
+        .toEqual({ n: 1 });
+      db.prepare("DELETE FROM exploration_request_links WHERE request_id=? AND account_sub='account-b'").run(requestId);
+      db.exec(collect);
+      expect(db.prepare("SELECT count(*) AS n FROM exploration_shared_requests WHERE request_id=?").get(requestId))
+        .toEqual({ n: 0 });
+      expect(db.prepare("SELECT count(*) AS n FROM exploration_shared_jobs WHERE request_id=?").get(requestId))
+        .toEqual({ n: 0 });
+      expect(db.prepare("SELECT count(*) AS n FROM exploration_shared_results WHERE request_id=?").get(requestId))
+        .toEqual({ n: 0 });
       db.close();
     } finally {
       // DatabaseSync close is safe after the assertions and makes teardown explicit.

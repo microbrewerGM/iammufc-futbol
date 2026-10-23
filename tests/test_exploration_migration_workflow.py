@@ -102,17 +102,23 @@ def test_request_account_links_migration_is_idempotent_with_and_without_legacy_d
     def database_state(db: sqlite3.Connection) -> tuple[list[tuple], list[tuple], list[tuple]]:
         schema = db.execute(
             """SELECT type, name, sql FROM sqlite_master
-            WHERE name LIKE 'exploration_request%' OR name LIKE 'idx_exploration_request%'
+            WHERE name LIKE 'exploration_request%' OR name LIKE 'exploration_shared_%'
+              OR name LIKE 'idx_exploration_request%' OR name LIKE 'idx_exploration_shared_%'
             ORDER BY type, name"""
         ).fetchall()
         requests = db.execute("SELECT * FROM exploration_requests ORDER BY request_id").fetchall()
+        shared_requests = db.execute("SELECT * FROM exploration_shared_requests ORDER BY request_id").fetchall()
         legacy_links = db.execute(
             "SELECT * FROM exploration_request_accounts ORDER BY request_id, account_sub"
         ).fetchall()
         links = db.execute(
             "SELECT * FROM exploration_request_links ORDER BY request_id, account_sub"
         ).fetchall()
-        return schema, requests, legacy_links + links
+        shared_rows = (
+            db.execute("SELECT * FROM exploration_shared_jobs ORDER BY job_id").fetchall(),
+            db.execute("SELECT * FROM exploration_shared_results ORDER BY request_id").fetchall(),
+        )
+        return schema, requests, shared_requests, legacy_links + links, shared_rows
 
     clean_db = sqlite3.connect(":memory:")
     try:
@@ -157,10 +163,14 @@ def test_request_account_links_migration_is_idempotent_with_and_without_legacy_d
         db.executescript(migration)
         assert database_state(db) == once
         assert db.execute("PRAGMA table_info(exploration_requests)").fetchall()[1][1] == "account_sub"
+        assert "account_sub" not in {
+            row[1] for row in db.execute("PRAGMA table_info(exploration_shared_requests)").fetchall()
+        }
         assert db.execute(
             "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='exploration_request_accounts'"
         ).fetchone() == (1,)
         assert once[1] == [(request_id, "account-a", 1, request_json, created_at, expires_at)]
+        assert once[2] == [(request_id, 1, request_json, created_at, expires_at)]
         assert db.execute("SELECT * FROM exploration_request_links").fetchall() == [
             (request_id, "account-a", created_at, expires_at)
         ]
