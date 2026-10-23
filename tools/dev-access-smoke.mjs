@@ -49,6 +49,23 @@ const season = (value) => typeof value === 'string' && /^\d{4}-\d{2}$/.test(valu
 const safeErrorClass = (error) => ['AbortError', 'TimeoutError', 'TypeError', 'SyntaxError'].includes(error?.name)
   ? error.name : 'Error';
 
+export function classifySeasonExplore(body, locale, canonical) {
+  const languagePass = body.includes(`lang="${locale}"`);
+  const canonicalPass = body.includes(`<link rel="canonical" href="${canonical}">`);
+  const states = locale === 'es' ? [
+    ['result_table', 'Rendimiento por temporada'],
+    ['season_absent', '2014-15: Sin cobertura de desgloses'],
+    ['capability_unavailable', 'La capacidad de desgloses por temporada no está publicada.'],
+  ] : [
+    ['result_table', 'Season performance'],
+    ['season_absent', '2014-15: Missing split coverage'],
+    ['capability_unavailable', 'Season splits capability is not published.'],
+  ];
+  const state = states.find(([, marker]) => body.includes(marker))?.[0] ?? null;
+  const assertion = !languagePass ? 'language' : !canonicalPass ? 'canonical' : !state ? 'state_marker' : null;
+  return { state, assertion };
+}
+
 /** Independent deployed-wire validator. Returns only a safe finite state; raw
  * publication metadata never reaches CLI output. */
 export function validateHealthPayload(value) {
@@ -188,8 +205,8 @@ export async function smoke(env, request = fetch) {
     { path: '/es', marker: 'Pregunta sobre el Manchester United' },
     { path: '/en/data', marker: 'Data and sources' },
     { path: '/es/data', marker: 'Datos y fuentes' },
-    { path: '/en/seasons/explore?schema_version=1&competition=PL&seasons=2014-15&group_by=venue', locale: 'en', canonical: '/en/seasons/explore?schema_version=1&amp;competition=PL&amp;seasons=2014-15&amp;group_by=venue' },
-    { path: '/es/seasons/explore?schema_version=1&competition=PL&seasons=2014-15&group_by=venue', locale: 'es', canonical: '/es/seasons/explore?schema_version=1&amp;competition=PL&amp;seasons=2014-15&amp;group_by=venue' },
+    { path: '/en/seasons/explore?schema_version=1&competition=PL&seasons=2014-15&group_by=venue', locale: 'en', seasonExplore: true, canonical: '/en/seasons/explore?schema_version=1&amp;competition=PL&amp;seasons=2014-15&amp;group_by=venue' },
+    { path: '/es/seasons/explore?schema_version=1&competition=PL&seasons=2014-15&group_by=venue', locale: 'es', seasonExplore: true, canonical: '/es/seasons/explore?schema_version=1&amp;competition=PL&amp;seasons=2014-15&amp;group_by=venue' },
     { path: '/en/season/2015-16', markers: ['League season comparison', '49–35 goals', '>1.74</td>'] },
     { path: '/es/season/2015-16', markers: ['Comparación de temporadas de liga', '49–35 goles', '>1,74</td>'] },
     { path: '/en/season/2014-15', markers: ['League season comparison', '62–37 goals', '>1.84</td>'] },
@@ -261,9 +278,14 @@ export async function smoke(env, request = fetch) {
       } catch { compareIds = null; }
     }
     const expectedStatus = check.unsupported ? 422 : 200;
-    const contentPass = check.locale ? body.includes(`lang="${check.locale}"`) &&
-      body.includes(`<link rel="canonical" href="${check.canonical}">`) &&
-      (body.includes('No exploration data') || body.includes('exploration-table'))
+    let seasonState = null;
+    let seasonAssertion = null;
+    if (check.seasonExplore) {
+      ({ state: seasonState, assertion: seasonAssertion } = classifySeasonExplore(body, check.locale, check.canonical));
+    }
+    const contentPass = check.seasonExplore ? seasonAssertion === null
+      : check.locale ? body.includes(`lang="${check.locale}"`) &&
+      body.includes(`<link rel="canonical" href="${check.canonical}">`)
       : check.health ? healthState !== null
       : check.chat ? modelStatus !== null
       : check.unsupported ? unsupported
@@ -274,7 +296,8 @@ export async function smoke(env, request = fetch) {
     results.push({ path: check.path, status: response.status, pass,
       ...(check.health ? { health_state: pass ? healthState : 'invalid' } : {}),
       ...(check.chat ? { model_status: pass ? modelStatus : 'invalid' } : {}),
-      ...(check.unsupported ? { gate_status: pass ? 'unsupported_semantics' : 'invalid' } : {}) });
+      ...(check.unsupported ? { gate_status: pass ? 'unsupported_semantics' : 'invalid' } : {}),
+      ...(check.seasonExplore ? { season_state: pass ? seasonState : `assertion_failed:${seasonAssertion ?? 'status_or_access'}` } : {}) });
     if (check.query) results.at(-1).query_state = pass ? queryResult.state : 'invalid';
     } catch (error) {
       results.push({ path: check.path, pass: false, error_class: safeErrorClass(error) });

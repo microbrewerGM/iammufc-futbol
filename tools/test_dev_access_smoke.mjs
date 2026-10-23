@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { denialSmoke, runSmoke, smoke, validateChatPayload,
   snapshotContinuitySmoke, validateHealthPayload, validateQueryPayload,
-  validateSnapshotMatch } from './dev-access-smoke.mjs';
+  validateSnapshotMatch, classifySeasonExplore } from './dev-access-smoke.mjs';
 
 const env = { CF_ACCESS_CLIENT_ID: 'synthetic-id', CF_ACCESS_CLIENT_SECRET: 'synthetic-secret' };
 const snapshot = 'a'.repeat(64);
@@ -42,6 +42,31 @@ const validQuery = (state = 'available') => ({
   ],
   attribution: ['Source'],
 });
+test('season explore accepts each localized rendered state and requires canonical link', () => {
+  const markers = {
+    en: [
+      ['result_table', 'Season performance'],
+      ['season_absent', '2014-15: Missing split coverage'],
+      ['capability_unavailable', 'Season splits capability is not published.'],
+    ],
+    es: [
+      ['result_table', 'Rendimiento por temporada'],
+      ['season_absent', '2014-15: Sin cobertura de desgloses'],
+      ['capability_unavailable', 'La capacidad de desgloses por temporada no está publicada.'],
+    ],
+  };
+  for (const [locale, states] of Object.entries(markers)) {
+    const canonical = `/${locale}/seasons/explore?schema_version=1&amp;competition=PL&amp;seasons=2014-15&amp;group_by=venue`;
+    for (const [state, marker] of states) {
+      const body = `<html lang="${locale}"><link rel="canonical" href="${canonical}">${marker}</html>`;
+      assert.deepEqual(classifySeasonExplore(body, locale, canonical), { state, assertion: null });
+      assert.equal(classifySeasonExplore(body.replace(canonical, 'missing'), locale, canonical).assertion, 'canonical');
+    }
+  }
+  assert.deepEqual(classifySeasonExplore('<html lang="en">unexpected</html>', 'en', 'canonical'),
+    { state: null, assertion: 'canonical' });
+});
+
 test('fixed dev origin, manual redirects, private response and all checks', async () => {
   const calls = [];
   let queryCalls = 0;
@@ -75,7 +100,7 @@ test('fixed dev origin, manual redirects, private response and all checks', asyn
       : chat ? JSON.stringify(rejected ? unsupported : validChat)
       : query ? JSON.stringify({ ...validQuery(queryCalls++ === 0 ? 'computable_now_queued' : 'available'),
         rows: [...validQuery().rows].reverse() })
-      : url.includes('/seasons/explore') ? `<html lang="${new URL(url).pathname.startsWith('/es/') ? 'es' : 'en'}"><link rel="canonical" href="${new URL(url).pathname}?schema_version=1&amp;competition=PL&amp;seasons=2014-15&amp;group_by=venue">No exploration data</html>`
+      : url.includes('/seasons/explore') ? `<html lang="${new URL(url).pathname.startsWith('/es/') ? 'es' : 'en'}"><link rel="canonical" href="${new URL(url).pathname}?schema_version=1&amp;competition=PL&amp;seasons=2014-15&amp;group_by=venue">${new URL(url).pathname.startsWith('/es/') ? 'La capacidad de desgloses por temporada no está publicada.' : 'Season splits capability is not published.'}</html>`
       : 'Ask about Manchester United Pregunta sobre el Manchester United Data and sources Datos y fuentes League season comparison Comparación de temporadas de liga 62–37 goals 62–37 goles >1.84</td> >1,84</td> 49–35 goals 49–35 goles >1.74</td> >1,74</td> font-family Assists — 2023-24 PL class="dot" aria-current="page">Dots</a> aria-current="page">Gráfico de puntos</a> <table>',
     { status: rejected ? 422 : 200, headers: { 'cache-control': 'private, no-store',
       ...((health || chat || query) ? { 'content-type': 'application/json; charset=UTF-8' } : {}) } });
@@ -410,7 +435,7 @@ test('combined smoke requires authenticated success and denial success', async (
       chat ? JSON.stringify(rejected ? unsupported : validChat) :
       query ? JSON.stringify(validQuery(queryCalls++ === 0 ? 'computable_now_queued' : 'available')) :
       (path === '/en/seasons/explore' || path === '/es/seasons/explore')
-        ? `<html lang="${path.startsWith('/es/') ? 'es' : 'en'}"><link rel="canonical" href="${path}?schema_version=1&amp;competition=PL&amp;seasons=2014-15&amp;group_by=venue">No exploration data</html>` :
+        ? `<html lang="${path.startsWith('/es/') ? 'es' : 'en'}"><link rel="canonical" href="${path}?schema_version=1&amp;competition=PL&amp;seasons=2014-15&amp;group_by=venue">${path.startsWith('/es/') ? 'La capacidad de desgloses por temporada no está publicada.' : 'Season splits capability is not published.'}</html>` :
       'Ask about Manchester United Pregunta sobre el Manchester United Data and sources Datos y fuentes League season comparison Comparación de temporadas de liga 62–37 goals 62–37 goles >1.84</td> >1,84</td> 49–35 goals 49–35 goles >1.74</td> >1,74</td> font-family Assists — 2023-24 PL class="dot" aria-current="page">Dots</a> aria-current="page">Gráfico de puntos</a> <table>',
     { status: rejected ? 422 : 200, headers: { 'cache-control': 'private, no-store',
       ...((health || chat || query) ? { 'content-type': 'application/json' } : {}) } });
