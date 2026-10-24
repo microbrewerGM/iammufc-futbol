@@ -48,7 +48,15 @@ describe("player trend routes", () => {
     const { env } = fixture();
     const reversed = await app.request(url(locale, basic.replace("seasons=2023-24", "start_season=2024-25&end_season=2023-24")), { headers }, env);
     expect(reversed.status).toBe(400);
-    expect(await reversed.text()).toContain(locale === "es" ? "no válida" : "Invalid");
+    const reversedBody = await reversed.text();
+    expect(reversedBody).toContain(locale === "es" ? "no válida" : "Invalid");
+    expect(reversedBody).toContain("<!doctype html>");
+    const missingStart = await app.request(url(locale, basic.replace("seasons=2023-24&seasons=2024-25", "start_season=1900-01&end_season=2024-25")), { headers }, env);
+    expect(missingStart.status).toBe(400);
+    expect(await missingStart.text()).toContain("<!doctype html>");
+    const missingEnd = await app.request(url(locale, basic.replace("seasons=2023-24&seasons=2024-25", "start_season=2023-24&end_season=1900-01")), { headers }, env);
+    expect(missingEnd.status).toBe(400);
+    expect(await missingEnd.text()).toContain("<!doctype html>");
     const over = await app.request(url(locale, basic + "&seasons=2024-25&seasons=2025-26&seasons=2026-27&seasons=2027-28&seasons=2028-29&seasons=2029-30&seasons=2030-31&seasons=2031-32"), { headers }, env);
     expect(over.status).toBe(400);
   });
@@ -57,7 +65,28 @@ describe("player trend routes", () => {
     const { env } = fixture();
     const response = await app.request(url(locale, basic.replace("code%3A1", "code%3A99")), { headers }, env);
     expect(response.status).toBe(404);
-    expect(await response.text()).toContain(locale === "es" ? "No se encontró" : "not found");
+    const body = await response.text();
+    expect(body).toContain(locale === "es" ? "No se encontró" : "not found");
+    expect(body).toContain("<!doctype html>");
+    expect(body).toContain(locale === "es" ? "No encontrado" : "Not found");
+  });
+
+  it.each(["en", "es"])("returns a localized full unavailable page in %s", async locale => {
+    const { env } = fixture();
+    (env.CFG as unknown as { get: () => Promise<string | null> }).get = async () => "999999";
+    const response = await app.request(url(locale, basic), { headers }, env);
+    expect(response.status).toBe(503);
+    const body = await response.text();
+    expect(body).toContain("<!doctype html>");
+    expect(body).toContain(locale === "es" ? "no está disponible" : "unavailable");
+  });
+
+  it.each(["en", "es"])("returns localized 404 when a requested person has no display label in %s", async locale => {
+    const { env, sqlite } = fixture();
+    sqlite.exec("DELETE FROM players");
+    const response = await app.request(url(locale, basic), { headers }, env);
+    expect(response.status).toBe(404);
+    expect(await response.text()).toContain(locale === "es" ? "No encontrado" : "Not found");
   });
 
   it("canonicalizes query order identically across locale paths", async () => {
