@@ -360,6 +360,24 @@ export async function smoke(env, request = fetch) {
       results.push({ path: `/${locale}/players/trends`, pass: false, error_class: safeErrorClass(error) });
     }
   }
+  for (const [locale, marker] of [['en', 'Opponent history'], ['es', 'Historial contra rivales']]) {
+    const params = new URLSearchParams({ schema_version: '1', competition: 'PL' });
+    params.append('seasons', '2024-25');
+    params.append('seasons', '2025-26');
+    params.set('opponent_id', 'club:1001');
+    const path = `/${locale}/opponents/history?${params.toString()}`;
+    try {
+      const response = await request(origin + path, {
+        method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(15000),
+        headers: { ...headers, 'Sec-Fetch-Site': 'same-origin' },
+      });
+      const body = await response.text();
+      results.push({ path, status: response.status,
+        pass: response.status === 200 && response.headers.get('cache-control')?.includes('no-store') && body.includes(marker) });
+    } catch (error) {
+      results.push({ path: `/${locale}/opponents/history`, pass: false, error_class: safeErrorClass(error) });
+    }
+  }
   return results;
 }
 
