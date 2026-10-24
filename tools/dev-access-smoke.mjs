@@ -207,6 +207,10 @@ export async function smoke(env, request = fetch) {
     { path: '/es/data', marker: 'Datos y fuentes' },
     { path: '/en/seasons/explore?schema_version=1&competition=PL&seasons=2014-15&group_by=venue', locale: 'en', seasonExplore: true, canonical: '/en/seasons/explore?schema_version=1&amp;competition=PL&amp;seasons=2014-15&amp;group_by=venue' },
     { path: '/es/seasons/explore?schema_version=1&competition=PL&seasons=2014-15&group_by=venue', locale: 'es', seasonExplore: true, canonical: '/es/seasons/explore?schema_version=1&amp;competition=PL&amp;seasons=2014-15&amp;group_by=venue' },
+    { path: '/en/seasons/champions-league', marker: 'Champions League history' },
+    { path: '/es/seasons/champions-league', marker: 'Historial de la Liga de Campeones' },
+    { path: '/en', marker: 'Try asking' },
+    { path: '/es', marker: 'Prueba preguntando' },
     { path: '/en/season/2015-16', markers: ['League season comparison', '49–35 goals', '>1.74</td>'] },
     { path: '/es/season/2015-16', markers: ['Comparación de temporadas de liga', '49–35 goles', '>1,74</td>'] },
     { path: '/en/season/2014-15', markers: ['League season comparison', '62–37 goals', '>1.84</td>'] },
@@ -332,6 +336,28 @@ export async function smoke(env, request = fetch) {
     results.push({ path, status: response.status, pass });
     } catch (error) {
       results.push({ path: `/${locale}/players/compare`, pass: false, error_class: safeErrorClass(error) });
+    }
+  }
+  const trendId = compareIds?.[0];
+  for (const [locale, marker] of [['en', 'Player trends'], ['es', 'Evolución de jugadores']]) {
+    if (!trendId) {
+      results.push({ path: `/${locale}/players/trends`, pass: false, error_class: 'PrerequisiteError' });
+      continue;
+    }
+    const params = new URLSearchParams({ schema_version: '1', competition: 'PL',
+      person_ids: trendId, seasons: '2024-25' });
+    const path = `/${locale}/players/trends?${params.toString()}`;
+    try {
+      const response = await request(origin + path, {
+        method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(15000),
+        headers: { ...headers, 'Sec-Fetch-Site': 'same-origin' },
+      });
+      const body = await response.text();
+      const pass = response.status === 200 &&
+        response.headers.get('cache-control')?.includes('no-store') && body.includes(marker);
+      results.push({ path, status: response.status, pass });
+    } catch (error) {
+      results.push({ path: `/${locale}/players/trends`, pass: false, error_class: safeErrorClass(error) });
     }
   }
   return results;
