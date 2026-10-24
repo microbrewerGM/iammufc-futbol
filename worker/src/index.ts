@@ -691,18 +691,7 @@ function registerLocaleRoutes(code: LocaleCode) {
       if (await currentSnapshot(c.env) !== snapshot) return renderError(unavailable, 503);
       const facts = await playerTrendsIdentityLabels(c.env, request.person_ids);
       if (facts.length !== request.person_ids.length || facts.some(person => !person.label?.trim())) return renderError(unknown, 404);
-      const sourceCredits = new Map<string, Set<string>>();
-      for (const cell of catalog.coverage) {
-        const credit = (locale.code === "es" ? cell.attribution_text_es ?? cell.attribution_text : cell.attribution_text) ?? cell.source_name;
-        if (!credit?.trim()) continue;
-        if (!sourceCredits.has(cell.source_id)) sourceCredits.set(cell.source_id, new Set());
-        sourceCredits.get(cell.source_id)!.add(credit);
-      }
-      const lineageRefs = new Set(result.series.flatMap(item => item.cells.flatMap(cell => cell.lineage)));
-      const credits = Object.fromEntries([...lineageRefs].flatMap(ref => {
-        const sourceId = ref.split(":", 1)[0]!;
-        return sourceCredits.has(sourceId) ? [[ref, [...sourceCredits.get(sourceId)!].join(" · ")]] : [];
-      }));
+      const credits = Object.fromEntries(catalog.coverage.map(cell => [`${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`, locale.code === "es" ? cell.attribution_text_es ?? cell.attribution_text ?? "" : cell.attribution_text ?? ""]));
       const form = `<form method="get" action="/${locale.code}/players/trends"><input type="hidden" name="schema_version" value="1"><input type="hidden" name="competition" value="PL"><label>${esc(t.playerTrendsPlayerLabel)}<select name="person_ids">${facts.map(person => `<option value="${esc(person.person_id)}"${person.person_id === request!.person_ids[0] ? " selected" : ""}>${esc(person.label)}</option>`).join("")}</select></label><label>${esc(t.playerTrendsFromLabel)}<select name="start_season">${eligibleSeasons.map(season => `<option value="${esc(season)}"${season === request!.seasons[0] ? " selected" : ""}>${esc(season)}</option>`).join("")}</select></label><label>${esc(t.playerTrendsThroughLabel)}<select name="end_season">${eligibleSeasons.map(season => `<option value="${esc(season)}"${season === request!.seasons[request!.seasons.length - 1] ? " selected" : ""}>${esc(season)}</option>`).join("")}</select></label><button type="submit">${esc(t.playerTrendsSubmit)}</button></form>`;
       const body = form + playerTrendsBody({ ...result, people: facts, credits }, {}, locale);
       const canonical = new URLSearchParams(); canonical.set("schema_version", "1"); canonical.set("competition", "PL"); request.person_ids.forEach(id => canonical.append("person_ids", id)); request.seasons.forEach(season => canonical.append("seasons", season)); canonical.set("metric", request.metric); canonical.set("normalization", request.normalization); canonical.set("min_minutes", String(request.min_minutes)); canonical.set("viz", request.viz);
@@ -736,6 +725,9 @@ function registerLocaleRoutes(code: LocaleCode) {
     const opponent = params.get("opponent_id");
     const seasons = params.getAll("seasons");
     if (!opponent || !APPROVED_OPPONENT_IDS.has(opponent) || seasons.length !== seasonCount) return renderError(invalid, 400);
+    if (new TextEncoder().encode(params.get("schema_version") ?? "").byteLength > 64 ||
+        new TextEncoder().encode(params.get("competition") ?? "").byteLength > 64 ||
+        new TextEncoder().encode(opponent).byteLength > 64) return renderError(invalid, 400);
     const availableSeasons = [...new Set(catalog.coverage.filter(cell => cell.competition === "PL").map(cell => cell.season))].sort();
     const raw = { schema_version: params.has("schema_version") ? Number(params.get("schema_version")) : 1,
       competition: params.get("competition") ?? "PL", seasons, group_by: "opponent", venue: null, opponent_id: opponent };
@@ -752,7 +744,15 @@ function registerLocaleRoutes(code: LocaleCode) {
       const facts = await seasonSplitFacts(c.env, snapshot, request.seasons, { venue: null, opponent_id: opponent });
       const result = await readOpponentHistory(c.env, request, facts.catalog);
       if (await currentSnapshot(c.env) !== snapshot) throw new Error("snapshot changed");
-      const credits = Object.fromEntries(catalog.coverage.map(cell => [`${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`, locale.code === "es" ? cell.attribution_text_es ?? cell.attribution_text ?? "" : cell.attribution_text ?? ""]));
+      // season_splits lineage_json contains bare catalog source IDs.
+      const sourceCredits = new Map<string, Set<string>>();
+      for (const cell of catalog.coverage) {
+        const credit = (locale.code === "es" ? cell.attribution_text_es ?? cell.attribution_text : cell.attribution_text) ?? cell.source_name;
+        if (!credit?.trim()) continue;
+        if (!sourceCredits.has(cell.source_id)) sourceCredits.set(cell.source_id, new Set());
+        sourceCredits.get(cell.source_id)!.add(credit);
+      }
+      const credits = Object.fromEntries([...sourceCredits].map(([id, texts]) => [id, [...texts].join(" · ")]));
       const body = opponentHistoryBody({ result, credits }, locale.code);
       const res = html(page(body, { title: t.opponentHistoryTitle, locale, unprefixedPath: `/opponents/history?${new URLSearchParams(params)}`, snapshotId: snapshot }));
       res.headers.set("Cache-Control", CACHE_CONTROL);

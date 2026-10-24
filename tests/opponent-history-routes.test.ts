@@ -50,12 +50,12 @@ describe("opponent history routes", () => {
       request: { schema_version: 1, competition: "PL", seasons: ["2023-24", "2024-25"], group_by: "opponent", venue: null, opponent_id: "club:1001" },
       snapshot_id: "a".repeat(64), seasons: ["2023-24", "2024-25"].map(season => ({ season, coverage: "complete", status: "available", record: {
         played: 1, won: 1, drawn: 0, lost: 0, goals_for: 1, goals_against: 0, points: 3, goal_difference: 1, rate_denominator: 1,
-        points_per_match: 3, goals_for_per_match: 1, goals_against_per_match: 0, win_rate: 1, lineage: ["fixture_source:asset"],
+        points_per_match: 3, goals_for_per_match: 1, goals_against_per_match: 0, win_rate: 1, lineage: ["football_data_couk"],
       } })), status: "available", partial: false, contributing_seasons: ["2023-24", "2024-25"],
     });
     vi.spyOn(Catalog.prototype, "coverage", "get").mockReturnValue(Array.from({ length: 2 }, (_, i) => ({
       metric: "played", entity_type: "team", granularity: "box_score" as const, season: i === 0 ? "2023-24" : "2024-25", competition: "PL",
-      source_id: "fixture_source", redistributable: true, cost_class: "cheap" as const, attribution_asset: "asset",
+      source_id: "football_data_couk", redistributable: true, cost_class: "cheap" as const, attribution_asset: "asset",
       attribution_text: "Fixture source credit EN", attribution_text_es: "Crédito de fuente ES", source_name: "Fixture source",
     })));
     const response = await app.request(`https://site.invalid/${locale}/opponents/history${query}`, { headers }, env);
@@ -76,6 +76,9 @@ describe("opponent history routes", () => {
       ["?opponent_id=club%3A1001&seasons=2023-24&unexpected=1", 400],
       ["?opponent_id=club%3A1001&seasons=" + "x".repeat(2100), 400],
       ["?opponent_id=club%3A1001&" + Array.from({ length: 17 }, (_, i) => `seasons=20${String(i).padStart(2, "0")}-21`).join("&"), 400],
+      ["?schema_version=" + "1".repeat(65) + "&opponent_id=club%3A1001&seasons=2023-24", 400],
+      ["?competition=" + "P".repeat(65) + "&opponent_id=club%3A1001&seasons=2023-24", 400],
+      ["?opponent_id=" + "x".repeat(65) + "&seasons=2023-24", 400],
     ] as const) {
       expect((await app.request(`https://site.invalid/es/opponents/history${suffix}`, { headers }, env)).status).toBe(status);
     }
