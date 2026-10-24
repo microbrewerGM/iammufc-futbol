@@ -51,6 +51,7 @@ export interface Locale {
     exampleXg: string;
     historyLink: string;
     playerRangeLink: string;
+    playerTrendsLink: string;
     freshnessHeading: string;
     coverageThrough: (season: string) => string;
     lastSuccessfulLoad: string;
@@ -166,6 +167,7 @@ const EN: Locale = {
     exampleXg: "Expected goals",
     historyLink: "Past questions",
     playerRangeLink: "Compare players across seasons",
+    playerTrendsLink: "Player trends",
     freshnessHeading: "Data freshness",
     coverageThrough: (s) => `Coverage through ${s}.`,
     lastSuccessfulLoad: "Last successful load:",
@@ -285,6 +287,7 @@ const ES: Locale = {
     exampleXg: "Goles esperados",
     historyLink: "Preguntas anteriores",
     playerRangeLink: "Comparar jugadores entre temporadas",
+    playerTrendsLink: "Evolución de jugadores",
     freshnessHeading: "Actualización de los datos",
     coverageThrough: (s) => `Cobertura hasta ${s}.`,
     lastSuccessfulLoad: "Última carga correcta:",
