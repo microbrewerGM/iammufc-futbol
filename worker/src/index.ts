@@ -45,6 +45,7 @@ import {
   type QuestionHistoryEntry,
   type PublicationState,
 } from "./core/db";
+import { clHistoryRows } from "./core/cl-history";
 import { decodeCompiledCatalog } from "./core/catalog-contract";
 import { Catalog, columnFeasibility, hasSubstance } from "./core/feasibility";
 import { artifactKey, canonicalize } from "./core/intent";
@@ -61,8 +62,12 @@ import { buildSeasonComparison, eligibleLeagueSeasons } from "./core/season-comp
 import { calculatePlayerRange, parsePlayerRangeRequest } from "./core/player-range";
 import { parseSeasonSplitRequest, querySeasonSplits } from "./core/season-splits";
 import { seasonSplitsBody, seasonSplitSelection } from "./views/season-splits";
+import { championsLeagueHistoryBody } from "./views/cl-history";
 import type { PlayerRangeRequest } from "./core/player-range";
 import { playerRangeBody, playerRangeSelection } from "./views/player-range";
+import { playerTrendsFacts } from "./core/player-trends-db";
+import { calculatePlayerTrends, parsePlayerTrendsRequest } from "./core/player-trends";
+import { playerTrendsBody } from "./views/player-trends";
 import { withSecurityHeaders } from "./security/headers";
 import { accessGate, accessIdentity, type AccessEnv, type AccessIdentity } from "./security/auth";
 import { gateQuestion, type GateRejected } from "./security/askguard";
@@ -349,6 +354,13 @@ function registerLocaleRoutes(code: LocaleCode) {
   const locale = LOCALES[code];
   const p = `/${code}`;
 
+  async function playerTrendsIdentityLabels(env: Env, people: readonly string[]): Promise<{ person_id: string; label: string }[]> {
+    const result = await env.DB.prepare(`SELECT i.person_id, p.web_name AS label FROM player_identities i JOIN players p ON p.player_id = i.player_id WHERE i.person_id IN (${people.map(() => "?").join(",")}) ORDER BY i.person_id, i.season DESC`).bind(...people).all<{ person_id: string; label: string }>();
+    const labels = new Map<string, string>();
+    for (const row of result.results ?? []) if (!labels.has(row.person_id)) labels.set(row.person_id, row.label);
+    return people.filter(id => labels.has(id)).map(person_id => ({ person_id, label: labels.get(person_id)! }));
+  }
+
   app.get(`${p}/data`, () => {
     const res = html(
       page(dataAvailabilityPage(catalog, locale), {
@@ -618,6 +630,75 @@ function registerLocaleRoutes(code: LocaleCode) {
     return html(page(body, { title: locale.strings.playerRangeLink, locale, unprefixedPath: canonicalPath, snapshotId: snapshot }), status);
   });
 
+  app.get(`${p}/players/trends`, async (c) => {
+    const t = locale.strings;
+    const invalid = t.playerTrendsInvalid;
+    const unavailable = t.playerTrendsUnavailable;
+    const unknown = t.playerTrendsUnknown;
+    const renderError = (message: string, status: number) => html(page(`<main><h1>${status === 404 ? t.notFoundHeading : t.playerTrendsLink}</h1><p>${esc(message)}</p></main>`, { title: status === 404 ? t.notFoundHeading : t.playerTrendsLink, locale, unprefixedPath: "/players/trends" }), status);
+    const url = new URL(c.req.url);
+    if (new TextEncoder().encode(url.search).byteLength > 2048) return renderError(invalid, 400);
+    const params = url.searchParams;
+    let peopleCount = 0, seasonCount = 0;
+    for (const [key] of params) {
+      if (key === "person_ids" && ++peopleCount > 5 || key === "seasons" && ++seasonCount > 8) return renderError(invalid, 400);
+    }
+    const allowed = new Set(["schema_version", "competition", "person_ids", "seasons", "start_season", "end_season", "metric", "normalization", "min_minutes", "viz"]);
+    if ([...params.keys()].some(key => !allowed.has(key)) ||
+        [...new Set(params.keys())].some(key => !["person_ids", "seasons"].includes(key) && params.getAll(key).length !== 1) ||
+        (params.has("seasons") && (params.has("start_season") || params.has("end_season"))) || params.has("start_season") !== params.has("end_season")) return renderError(invalid, 400);
+
+    const raw = {
+      schema_version: params.has("schema_version") ? Number(params.get("schema_version")) : 1,
+      competition: params.get("competition") ?? "PL",
+      person_ids: params.getAll("person_ids"), seasons: params.has("seasons") ? params.getAll("seasons") : [],
+      metric: params.get("metric") ?? "goals", normalization: params.get("normalization") ?? "total",
+      min_minutes: params.has("min_minutes") && /^\d+$/.test(params.get("min_minutes")!) ? Number(params.get("min_minutes")) : params.has("min_minutes") ? NaN : (params.get("normalization") === "per90" ? 450 : 0),
+      viz: params.get("viz") ?? "line",
+    };
+    if (params.has("start_season") && params.has("end_season")) {
+      const allSeasons = [...new Set(catalog.coverage.filter(cell => cell.entity_type === "player" && cell.granularity === "box_score" && cell.competition === "PL" && cell.source_id === "fpl" && cell.redistributable && cell.cost_class === "cheap").map(cell => cell.season))].sort();
+      const start = allSeasons.indexOf(params.get("start_season")!), end = allSeasons.indexOf(params.get("end_season")!);
+      if (start < 0 || end < 0 || end < start) return renderError(invalid, 400);
+      raw.seasons = allSeasons.slice(start, end + 1);
+    }
+    const coverageFor = (metric: string, season: string) => catalog.coverage.find(cell => cell.metric === metric && cell.entity_type === "player" && cell.granularity === "box_score" && cell.competition === "PL" && cell.season === season);
+    const eligibleSeasons = [...new Set(catalog.coverage.filter(cell => cell.entity_type === "player" && cell.granularity === "box_score" && cell.competition === "PL" && ["goals", "assists"].every(metric => {
+      const covered = coverageFor(metric, cell.season), minutes = coverageFor("minutes", cell.season);
+      return [covered, minutes].every(item => item?.source_id === "fpl" && item.redistributable && item.cost_class === "cheap");
+    })).map(cell => cell.season))].sort();
+    let request;
+    try {
+      const preflight = parsePlayerTrendsRequest(raw, { snapshot_id: "preflight", person_ids: raw.person_ids, seasons: raw.seasons });
+      if (preflight.seasons.some((season, i) => i > 0 && Number(preflight.seasons[i - 1]!.slice(0, 4)) + 1 !== Number(season.slice(0, 4))) || preflight.seasons.some(season => !eligibleSeasons.includes(season))) return renderError(invalid, 400);
+      request = preflight;
+    } catch {
+      return renderError(invalid, 400);
+    }
+    if (!(await enforceBudget(c.env, { failClosed: true }))) return renderError(unavailable, 503);
+    try {
+      const snapshot = await currentSnapshot(c.env);
+      if (!snapshot) return renderError(unavailable, 503);
+      const identity = await playerRangeIdentityCatalog(c.env, request.person_ids, request.seasons, snapshot);
+      if (identity.person_ids.length !== request.person_ids.length) return renderError(unknown, 404);
+      request = parsePlayerTrendsRequest(raw, identity);
+      const rows = await playerTrendsFacts(c.env.DB, request, snapshot, identity.person_ids, identity.seasons, catalog.coverage.map(cell => ({ ...cell, feasibility: catalog.checkFeasibility({ metric: cell.metric, entity_type: "player", entity_id: "all", season: cell.season, competition: "PL", dimensions: [], filters: {}, viz: "table", limit: 50 }, locale.code).state })));
+      const result = calculatePlayerTrends(request, identity, rows);
+      if (await currentSnapshot(c.env) !== snapshot) return renderError(unavailable, 503);
+      const facts = await playerTrendsIdentityLabels(c.env, request.person_ids);
+      if (facts.length !== request.person_ids.length || facts.some(person => !person.label?.trim())) return renderError(unknown, 404);
+      const credits = Object.fromEntries(catalog.coverage.map(cell => [`${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`, locale.code === "es" ? cell.attribution_text_es ?? cell.attribution_text ?? "" : cell.attribution_text ?? ""]));
+      const form = `<form method="get" action="/${locale.code}/players/trends"><input type="hidden" name="schema_version" value="1"><input type="hidden" name="competition" value="PL"><label>${esc(t.playerTrendsPlayerLabel)}<select name="person_ids">${facts.map(person => `<option value="${esc(person.person_id)}"${person.person_id === request!.person_ids[0] ? " selected" : ""}>${esc(person.label)}</option>`).join("")}</select></label><label>${esc(t.playerTrendsFromLabel)}<select name="start_season">${eligibleSeasons.map(season => `<option value="${esc(season)}"${season === request!.seasons[0] ? " selected" : ""}>${esc(season)}</option>`).join("")}</select></label><label>${esc(t.playerTrendsThroughLabel)}<select name="end_season">${eligibleSeasons.map(season => `<option value="${esc(season)}"${season === request!.seasons[request!.seasons.length - 1] ? " selected" : ""}>${esc(season)}</option>`).join("")}</select></label><button type="submit">${esc(t.playerTrendsSubmit)}</button></form>`;
+      const body = form + playerTrendsBody({ ...result, people: facts, credits }, {}, locale);
+      const canonical = new URLSearchParams(); canonical.set("schema_version", "1"); canonical.set("competition", "PL"); request.person_ids.forEach(id => canonical.append("person_ids", id)); request.seasons.forEach(season => canonical.append("seasons", season)); canonical.set("metric", request.metric); canonical.set("normalization", request.normalization); canonical.set("min_minutes", String(request.min_minutes)); canonical.set("viz", request.viz);
+      const res = html(page(body, { title: locale.strings.playerTrendsLink, locale, unprefixedPath: `/players/trends?${canonical}`, snapshotId: snapshot }));
+      res.headers.set("Cache-Control", CACHE_CONTROL);
+      return res;
+    } catch {
+      return renderError(unavailable, 503);
+    }
+  });
+
   app.get(p, async (c) => {
     const careerSeason = catalog.seasonsFor("goals", "player", "box_score").find((season) =>
       (["goals", "minutes"] as const).every((metric) => {
@@ -797,7 +878,9 @@ function registerLocaleRoutes(code: LocaleCode) {
       seasonHistoryRows(c.env, eligibleSeasons),
     ]);
     const comparison = buildSeasonComparison(history, eligibleSeasons, catalog, code);
-    const body = seasonPageBody(season, squad, record, catalog, locale, europeanRecord, comparison);
+    const seasonBody = seasonPageBody(season, squad, record, catalog, locale, europeanRecord, comparison);
+    const historyLink = `<p><a href="/${code}/seasons/champions-league">${locale.code === "es" ? "Historial de la Liga de Campeones" : "Champions League history"}</a></p>`;
+    const body = `${seasonBody}${historyLink}`;
     const res = html(
       page(body, {
         title: `${season}`,
@@ -814,6 +897,72 @@ function registerLocaleRoutes(code: LocaleCode) {
     }
     // No enforceBudget() call on this route either -- same reasoning as
     // /player above.
+    res.headers.set("Cache-Control", CACHE_CONTROL);
+    return res;
+  });
+
+  app.get(`${p}/seasons/champions-league`, async (c) => {
+    const url = new URL(c.req.url);
+    if (url.search || url.pathname.endsWith("/")) return c.redirect(`/${code}/seasons/champions-league`, 301);
+    const cells = catalog.coverage.filter((cell) => cell.metric === "goals" && cell.entity_type === "season" &&
+      cell.granularity === "box_score" && cell.competition === "CL" && cell.source_id === "openfootball");
+    const seasons = [...new Set(cells.map((cell) => cell.season))];
+    seasons.sort((a, b) => Number(b.slice(0, 4)) - Number(a.slice(0, 4)));
+    let snapshot: string | null = null;
+    let body: string;
+    let credits: (string | null | undefined)[] = [];
+    try {
+      const [publication, result, snapshotMetadata] = await Promise.all([
+        currentPublication(c.env),
+        clHistoryRows(c.env, decodedCatalog),
+        c.env.DB.prepare("SELECT snapshot_id, sources_json FROM snapshots ORDER BY created_at DESC LIMIT 1")
+          .first<{ snapshot_id: unknown; sources_json: unknown }>(),
+      ]);
+      snapshot = result.snapshot_id;
+      if (!publication || publication.snapshotId !== result.snapshot_id || !snapshot ||
+          !snapshotMetadata || snapshotMetadata.snapshot_id !== snapshot || typeof snapshotMetadata.sources_json !== "string") {
+        throw new Error("CL history publication unavailable");
+      }
+      let sourceHashes: unknown;
+      try { sourceHashes = JSON.parse(snapshotMetadata.sources_json); } catch { throw new Error("Invalid snapshot lineage"); }
+      if (!sourceHashes || typeof sourceHashes !== "object" || Array.isArray(sourceHashes)) throw new Error("Invalid snapshot lineage");
+      const hashKeys = sourceHashes as Record<string, unknown>;
+      for (const [key, value] of Object.entries(hashKeys)) {
+        if (!/^[a-z0-9_]+(?::[A-Z]+)?(?::\d{4}-\d{2})?$/.test(key) || typeof value !== "string" || !/^[a-f0-9]{64}$/.test(value)) {
+          throw new Error("Invalid snapshot lineage");
+        }
+      }
+      const source = publication.sources.find((item) => item.id === "openfootball_cl");
+      if (source?.status === "unavailable" && result.entries.some((entry) => entry.status === "observed")) throw new Error("CL source unavailable");
+      if (seasons.length === 0) {
+        if (await currentSnapshot(c.env) !== snapshot) throw new Error("CL history snapshot changed");
+        body = championsLeagueHistoryBody({ entries: [{ state: "out_of_coverage", season: "2026-27" }], credits: {} }, locale.strings.clHistory);
+      } else {
+        const mapped = result.entries.map((entry) => {
+          if (entry.status === "gap") return { state: "gap" as const, season: entry.season };
+          const cell = cells.find((candidate) => candidate.season === entry.row.season);
+          const state = catalog.checkFeasibility({ metric: "goals", entity_type: "season", entity_id: "all", season: entry.row.season,
+            competition: "CL", dimensions: [], filters: {}, viz: "table", limit: 1 }, code).state;
+          if (!cell || !["available", "computable_now_queued"].includes(state)) return { state: "gap" as const, season: entry.row.season };
+          if (hashKeys[`openfootball:CL:${entry.row.season}`] === undefined) {
+            return { state: "observed" as const, row: { ...entry.row, lineage: [] } };
+          }
+          const ref = `${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`;
+          const credit = (code === "es" ? cell.attribution_text_es ?? cell.attribution_text : cell.attribution_text) ?? cell.source_name;
+          if (credit.trim()) credits.push(credit);
+          return { state: "partial" as const, row: { ...entry.row, lineage: [ref] } };
+        });
+        body = championsLeagueHistoryBody({ entries: mapped, credits: Object.fromEntries(cells.map((cell) => [
+          `${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`,
+          (code === "es" ? cell.attribution_text_es ?? cell.attribution_text : cell.attribution_text) ?? cell.source_name,
+        ])), snapshotDate: publication.loadedAt.slice(0, 10) }, locale.strings.clHistory);
+        if (await currentSnapshot(c.env) !== snapshot) throw new Error("CL history snapshot changed");
+      }
+    } catch {
+      body = championsLeagueHistoryBody({ entries: [], credits: {}, unavailable: true }, locale.strings.clHistory);
+      snapshot = null;
+    }
+    const res = html(page(body, { title: locale.strings.clHistory.heading, locale, unprefixedPath: "/seasons/champions-league", snapshotId: snapshot, attribution: credits }));
     res.headers.set("Cache-Control", CACHE_CONTROL);
     return res;
   });

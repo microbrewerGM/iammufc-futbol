@@ -51,6 +51,14 @@ export interface Locale {
     exampleXg: string;
     historyLink: string;
     playerRangeLink: string;
+    playerTrendsLink: string;
+    playerTrendsInvalid: string;
+    playerTrendsUnknown: string;
+    playerTrendsUnavailable: string;
+    playerTrendsPlayerLabel: string;
+    playerTrendsFromLabel: string;
+    playerTrendsThroughLabel: string;
+    playerTrendsSubmit: string;
     freshnessHeading: string;
     coverageThrough: (season: string) => string;
     lastSuccessfulLoad: string;
@@ -166,6 +174,14 @@ const EN: Locale = {
     exampleXg: "Expected goals",
     historyLink: "Past questions",
     playerRangeLink: "Compare players across seasons",
+    playerTrendsLink: "Player trends",
+    playerTrendsInvalid: "Invalid trend selection.",
+    playerTrendsUnknown: "Player not found.",
+    playerTrendsUnavailable: "Trend unavailable.",
+    playerTrendsPlayerLabel: "Player",
+    playerTrendsFromLabel: "From",
+    playerTrendsThroughLabel: "Through",
+    playerTrendsSubmit: "View trend",
     freshnessHeading: "Data freshness",
     coverageThrough: (s) => `Coverage through ${s}.`,
     lastSuccessfulLoad: "Last successful load:",
@@ -285,6 +301,14 @@ const ES: Locale = {
     exampleXg: "Goles esperados",
     historyLink: "Preguntas anteriores",
     playerRangeLink: "Comparar jugadores entre temporadas",
+    playerTrendsLink: "Evolución de jugadores",
+    playerTrendsInvalid: "Selección de evolución no válida.",
+    playerTrendsUnknown: "No se encontró el jugador.",
+    playerTrendsUnavailable: "La evolución no está disponible.",
+    playerTrendsPlayerLabel: "Jugador",
+    playerTrendsFromLabel: "Desde",
+    playerTrendsThroughLabel: "Hasta",
+    playerTrendsSubmit: "Ver evolución",
     freshnessHeading: "Actualización de los datos",
     coverageThrough: (s) => `Cobertura hasta ${s}.`,
     lastSuccessfulLoad: "Última carga correcta:",
