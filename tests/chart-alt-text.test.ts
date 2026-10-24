@@ -26,4 +26,26 @@ describe("chart alt text", () => {
     });
     expect(result).toBe("&lt;none&gt;");
   });
+
+  it.each([
+    ["English", chartAltTextTemplates.en],
+    ["Spanish", chartAltTextTemplates.es],
+  ])("escapes hostile season labels in every interpolated position (%s)", (_language, templates) => {
+    const hostile = "<S&'\" >";
+    const escaped = "&lt;S&amp;&#39;&quot; &gt;";
+    const cases = [
+      [{ season: "2021-22", value: 1 }, { season: hostile, value: null }, { season: "2023-24", value: 3 }],
+      [{ season: hostile, value: 1 }, { season: "2022-23", value: 3 }],
+      [{ season: "2021-22", value: 1 }, { season: hostile, value: 3 }],
+      [{ season: hostile, value: 1 }, { season: "2022-23", value: 3 }],
+      [{ season: "2021-22", value: 1 }, { season: hostile, value: 3 }],
+    ] satisfies { season: string; value: number | null }[][];
+
+    for (const points of cases) {
+      const output = buildChartAltText(points, templates);
+      expect(output).toContain(escaped);
+      expect(output).not.toContain(hostile);
+      expect(output).not.toMatch(/[<>'"]/);
+    }
+  });
 });
