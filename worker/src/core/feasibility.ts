@@ -73,7 +73,7 @@ export interface CompiledCatalog {
 export type OutputCoverageState = "clear" | "absent" | "partial" | "unknown";
 
 export interface OutputCoverage {
-  output_id: "shot_map" | "season_splits" | "arrival_manager_groups";
+  output_id: "shot_map" | "season_splits" | "arrival_manager_groups" | "manager_era_records";
   state: "clear" | "absent" | "partial" | "unknown";
 }
 

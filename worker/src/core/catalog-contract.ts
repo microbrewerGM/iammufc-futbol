@@ -12,7 +12,7 @@ const SOURCE_ID = /^[a-z][a-z0-9_]*$/;
 
 const ROOT_KEYS = ["version", "metrics", "coverage"];
 const OUTPUT_COVERAGE_KEYS = ["output_id", "state"];
-const OUTPUT_IDS = new Set(["shot_map", "season_splits", "arrival_manager_groups"]);
+const OUTPUT_IDS = new Set(["shot_map", "season_splits", "arrival_manager_groups", "manager_era_records"]);
 const OUTPUT_STATES = new Set(["clear", "absent", "partial", "unknown"]);
 const METRIC_KEYS = [
   "metric_id",
@@ -136,7 +136,7 @@ function decodeOutputCoverage(value: unknown, index: number) {
   const item = record(value, path);
   exactKeys(item, OUTPUT_COVERAGE_KEYS, path);
   return {
-    output_id: enumString<"shot_map" | "season_splits" | "arrival_manager_groups">(
+    output_id: enumString<"shot_map" | "season_splits" | "arrival_manager_groups" | "manager_era_records">(
       item.output_id,
       OUTPUT_IDS,
       `${path}.output_id`,
@@ -159,8 +159,8 @@ export function decodeCompiledCatalog(value: unknown): CompiledCatalog {
   if (hasOutputCoverage && !Array.isArray(root.output_coverage)) {
     invalid("$.output_coverage", "must be an array");
   }
-  if (hasOutputCoverage && (root.output_coverage as unknown[]).length > 3) {
-    invalid("$.output_coverage", "must contain at most three entries");
+  if (hasOutputCoverage && (root.output_coverage as unknown[]).length > 4) {
+    invalid("$.output_coverage", "must contain at most four entries");
   }
 
   const metrics = root.metrics.map(decodeMetric);
