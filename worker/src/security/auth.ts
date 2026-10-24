@@ -67,7 +67,9 @@ export function accessGate(verifier: AccessVerifier = verifyAccess) {
     const unsafe = !["GET", "HEAD", "OPTIONS"].includes(c.req.method);
     // Use the same decoded path as Hono's router (for example /en/%71).
     const protectedGet = /^\/(?:en\/|es\/)?(?:q|players\/compare|seasons\/explore)\/?$/.test(c.req.path);
-    if (unsafe || protectedGet) {
+    const verifiedServicePost = unsafe && "serviceClientId" in identity &&
+      !c.req.header("Cookie")?.split(";").some((cookie) => cookie.trim().startsWith("CF_Authorization="));
+    if ((unsafe && !verifiedServicePost) || protectedGet) {
       const origin = c.req.header("Origin");
       const site = c.req.header("Sec-Fetch-Site");
       const sameOrigin = origin === url.origin;
