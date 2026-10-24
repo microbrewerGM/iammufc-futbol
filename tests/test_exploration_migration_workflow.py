@@ -43,9 +43,13 @@ def test_season_migration_is_ordered_before_worker_and_private_seed() -> None:
     assert all(set(step["with"]) == {"apiToken", "accountId", "command"} for step in migration_steps)
 
     deploy_0008 = next(i for i, command in enumerate(deploy_commands) if "0008_exploration_request_links.sql" in command)
+    deploy_0009 = next(i for i, command in enumerate(deploy_commands) if "0009_manager_era_records.sql" in command)
     consumer_0008 = next(i for i, command in enumerate(consumer_commands) if "0008_exploration_request_links.sql" in command)
+    consumer_0009 = next(i for i, command in enumerate(consumer_commands) if "0009_manager_era_records.sql" in command)
     assert deploy_0006 + 1 == deploy_0008 < worker
-    assert consumer_0006 + 1 == consumer_0008 < seed
+    assert deploy_0008 + 1 == deploy_0009 < worker
+    assert consumer_0006 + 1 == consumer_0008
+    assert consumer_0008 + 1 == consumer_0009 < seed
     link_steps = [
         step
         for job in deploy["jobs"].values()
