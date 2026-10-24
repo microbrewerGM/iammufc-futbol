@@ -109,6 +109,41 @@ describe("Cloudflare Access boundary", () => {
     }
   });
 
+  it("skips Origin only for verified service POSTs without the Access browser cookie", async () => {
+    const env = {
+      ACCESS_ISSUER: "https://example.cloudflareaccess.com",
+      ACCESS_AUD: "a".repeat(64),
+      ACCESS_OWNER_EMAILS: "owner@example.invalid",
+      ACCESS_SERVICE_CLIENT_IDS: "test-service",
+    } as unknown as Env;
+    const serviceApp = new Hono<AccessEnv>();
+    serviceApp.use("*", accessGate(async (token) => {
+      if (token !== "verified-service") throw new Error("denied");
+      return { sub: "", serviceClientId: "test-service" };
+    }));
+    serviceApp.all("*", (c) => c.text("protected"));
+    const request = (headers: Record<string, string>) => serviceApp.request("https://site.invalid/en/ask", {
+      method: "POST", headers: { "cf-access-jwt-assertion": "verified-service", ...headers },
+    }, env);
+
+    expect((await request({})).status).toBe(200);
+    expect((await request({ Cookie: "CF_Authorization=browser-session" })).status).toBe(403);
+    expect((await request({ Cookie: "other=value; CF_Authorization=browser-session" })).status).toBe(403);
+    expect((await request({ Cookie: "cf_authorization=browser-session" })).status).toBe(403);
+    expect((await request({ Cookie: "  CF_Authorization  =browser-session" })).status).toBe(403);
+    expect((await request({ Cookie: "CF_AppSession=browser-session" })).status).toBe(403);
+    expect((await request({ Cookie: "other=value; another=value; CF_Authorization=browser-session" })).status).toBe(403);
+    expect((await request({ Origin: "https://foreign.invalid" })).status).toBe(200);
+    expect((await request({ "cf-access-jwt-assertion": "forged" })).status).toBe(403);
+  });
+
+  it("keeps the Origin check for human POSTs with missing or cross-site Origin", async () => {
+    const { request } = setup();
+    expect((await request("/en/ask", { method: "POST" })).status).toBe(403);
+    expect((await request("/en/ask", { method: "POST", headers: { Origin: "https://foreign.invalid" } })).status).toBe(403);
+    expect((await request("/en/ask", { method: "POST", headers: { Origin: "https://site.invalid" } })).status).toBe(200);
+  });
+
   it("requires same-origin proof for cost-causing GET and HEAD queries", async () => {
     const { request } = setup();
     for (const path of ["/en/q", "/es/q", "/seasons/explore", "/en/seasons/explore", "/es/seasons/explore", "/en/seasons/explore/", "/%65n/%73easons/%65xplore", "/es/seasons/%65xplore"]) {
@@ -178,7 +213,7 @@ describe("Access JWT verification uses signatures and required claims", () => {
         const res = await application.request(`https://site.invalid${path}`, {
           method, headers: { "cf-access-jwt-assertion": token, Origin: origin },
         }, env);
-        expect(res.status).toBe(origin === "https://site.invalid" ? 200 : 403);
+        expect(res.status).toBe(path === "/en/ask" || origin === "https://site.invalid" ? 200 : 403);
       }
     }
   });

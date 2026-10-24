@@ -95,17 +95,22 @@ test('fixed dev origin, manual redirects, private response and all checks', asyn
       return new Response(`${marker}<link rel="canonical" href="/${locale}/players/compare?${canonicalParams.toString().replaceAll('&', '&amp;')}">`,
         { status: 200, headers: { 'cache-control': 'private, no-store' } });
     }
+    const trend = path.includes('/players/trends');
+    const locale = path.startsWith('/es/') ? 'es' : 'en';
     return new Response(health
       ? JSON.stringify(validHealth)
       : chat ? JSON.stringify(rejected ? unsupported : validChat)
       : query ? JSON.stringify({ ...validQuery(queryCalls++ === 0 ? 'computable_now_queued' : 'available'),
         rows: [...validQuery().rows].reverse() })
       : url.includes('/seasons/explore') ? `<html lang="${new URL(url).pathname.startsWith('/es/') ? 'es' : 'en'}"><link rel="canonical" href="${new URL(url).pathname}?schema_version=1&amp;competition=PL&amp;seasons=2014-15&amp;group_by=venue">${new URL(url).pathname.startsWith('/es/') ? 'La capacidad de desgloses por temporada no está publicada.' : 'Season splits capability is not published.'}</html>`
+      : trend ? (locale === 'es' ? 'Evolución de jugadores' : 'Player trends')
+      : path.includes('/seasons/champions-league') ? (locale === 'es' ? 'Historial de la Liga de Campeones' : 'Champions League history')
+      : path === '/en' || path === '/es' ? (url.includes('/es') ? 'Pregunta sobre el Manchester United Prueba preguntando' : 'Ask about Manchester United Try asking')
       : 'Ask about Manchester United Pregunta sobre el Manchester United Data and sources Datos y fuentes League season comparison Comparación de temporadas de liga 62–37 goals 62–37 goles >1.84</td> >1,84</td> 49–35 goals 49–35 goles >1.74</td> >1,74</td> font-family Assists — 2023-24 PL class="dot" aria-current="page">Dots</a> aria-current="page">Gráfico de puntos</a> <table>',
     { status: rejected ? 422 : 200, headers: { 'cache-control': 'private, no-store',
       ...((health || chat || query) ? { 'content-type': 'application/json; charset=UTF-8' } : {}) } });
   });
-  assert.equal(calls.length, 21);
+  assert.equal(calls.length, 27);
   assert.equal(calls.find((call) => new URL(call.url).pathname === '/en/ask').init.method, 'POST');
   assert.equal(calls.find((call) => new URL(call.url).pathname === '/api/health').init.method, 'GET');
   for (const locale of ['en', 'es']) {
@@ -117,14 +122,26 @@ test('fixed dev origin, manual redirects, private response and all checks', asyn
     assert.equal(call.init.headers.Origin, url.origin);
     assert.equal(call.init.headers['Sec-Fetch-Site'], 'same-origin');
   }
+  for (const [locale, marker] of [['en', 'Player trends'], ['es', 'Evolución de jugadores']]) {
+    const call = calls.find(({ url }) => new URL(url).pathname === `/${locale}/players/trends`);
+    assert.ok(call);
+    const url = new URL(call.url);
+    assert.equal(url.searchParams.get('schema_version'), '1');
+    assert.equal(url.searchParams.get('competition'), 'PL');
+    assert.equal(url.searchParams.get('person_ids'), 'fpl:code:2');
+    assert.equal(url.searchParams.get('seasons'), '2024-25');
+    assert.equal(call.init.headers['Sec-Fetch-Site'], 'same-origin');
+    assert.ok(results.some((result) => result.path === `${url.pathname}${url.search}` && result.pass));
+    assert.ok(marker === (locale === 'es' ? 'Evolución de jugadores' : 'Player trends'));
+  }
   assert.ok(results.every((result) => result.pass), JSON.stringify(results.filter((result) => !result.pass)));
-  assert.deepEqual(results.at(-6), { path: '/api/chat', status: 200, pass: true,
+  assert.deepEqual(results.at(-8), { path: '/api/chat', status: 200, pass: true,
     model_status: 'accepted' });
-  assert.deepEqual(results.at(-5), { path: '/api/chat', status: 422, pass: true,
+  assert.deepEqual(results.at(-7), { path: '/api/chat', status: 422, pass: true,
     gate_status: 'unsupported_semantics' });
-  assert.deepEqual(results.at(-4), { path: '/api/query', status: 200, pass: true,
+  assert.deepEqual(results.at(-6), { path: '/api/query', status: 200, pass: true,
     query_state: 'computable_now_queued' });
-  assert.deepEqual(results.at(-3), { path: '/api/query', status: 200, pass: true,
+  assert.deepEqual(results.at(-5), { path: '/api/query', status: 200, pass: true,
     query_state: 'available' });
   for (const locale of ['en', 'es']) {
     const call = calls.find(({ url }) => new URL(url).pathname === `/${locale}/players/compare`);
@@ -417,6 +434,12 @@ test('combined smoke requires authenticated success and denial success', async (
     const chat = path === '/api/chat';
     const query = path === '/api/query';
     const rejected = chat && init.body.includes('per 90');
+    if (path.includes('/players/trends')) {
+      const params = new URL(url).searchParams;
+      assert.equal(params.get('person_ids'), 'fpl:code:1');
+      return new Response(path.startsWith('/es/') ? 'Evolución de jugadores' : 'Player trends',
+        { status: 200, headers: { 'cache-control': 'private, no-store' } });
+    }
     if (path.includes('/players/compare')) {
       const locale = path.startsWith('/es/') ? 'es' : 'en';
       const params = new URL(url).searchParams;
@@ -436,10 +459,10 @@ test('combined smoke requires authenticated success and denial success', async (
       query ? JSON.stringify(validQuery(queryCalls++ === 0 ? 'computable_now_queued' : 'available')) :
       (path === '/en/seasons/explore' || path === '/es/seasons/explore')
         ? `<html lang="${path.startsWith('/es/') ? 'es' : 'en'}"><link rel="canonical" href="${path}?schema_version=1&amp;competition=PL&amp;seasons=2014-15&amp;group_by=venue">${path.startsWith('/es/') ? 'La capacidad de desgloses por temporada no está publicada.' : 'Season splits capability is not published.'}</html>` :
-      'Ask about Manchester United Pregunta sobre el Manchester United Data and sources Datos y fuentes League season comparison Comparación de temporadas de liga 62–37 goals 62–37 goles >1.84</td> >1,84</td> 49–35 goals 49–35 goles >1.74</td> >1,74</td> font-family Assists — 2023-24 PL class="dot" aria-current="page">Dots</a> aria-current="page">Gráfico de puntos</a> <table>',
+      'Ask about Manchester United Try asking Pregunta sobre el Manchester United Prueba preguntando Champions League history Historial de la Liga de Campeones Data and sources Datos y fuentes League season comparison Comparación de temporadas de liga 62–37 goals 62–37 goles >1.84</td> >1,84</td> 49–35 goals 49–35 goles >1.74</td> >1,74</td> font-family Assists — 2023-24 PL class="dot" aria-current="page">Dots</a> aria-current="page">Gráfico de puntos</a> <table>',
     { status: rejected ? 422 : 200, headers: { 'cache-control': 'private, no-store',
       ...((health || chat || query) ? { 'content-type': 'application/json' } : {}) } });
   });
-  assert.equal(results.length, 82);
+  assert.equal(results.length, 88);
   assert.ok(results.every((result) => result.pass), JSON.stringify(results.filter((result) => !result.pass)));
 });
