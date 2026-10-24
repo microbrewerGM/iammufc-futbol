@@ -22,12 +22,14 @@ import { readOpponentHistory } from "../worker/src/core/opponent-history";
 import { Catalog } from "../worker/src/core/feasibility";
 
 const env = { ACCESS_ISSUER: "https://example.cloudflareaccess.com", ACCESS_AUD: "a".repeat(64), ACCESS_OWNER_EMAILS: "owner@example.invalid",
-  DB: { prepare: () => ({ first: async () => ({ count: 1 }), bind: () => ({ first: async () => ({ count: 1 }) }) }) } } as unknown as Env;
+  DB: { prepare: vi.fn(() => ({ first: async () => ({ count: 1 }), bind: () => ({ first: async () => ({ count: 1 }) }) })) } } as unknown as Env;
 const headers = { "cf-access-jwt-assertion": "synthetic", Origin: "https://site.invalid" };
 const clear = vi.spyOn(Catalog.prototype, "outputCapability").mockReturnValue("clear");
+const actualCoverage = Object.getOwnPropertyDescriptor(Catalog.prototype, "coverage")!.get!;
+const coverage = vi.spyOn(Catalog.prototype, "coverage", "get");
 const query = "?opponent_id=club%3A1001&seasons=2023-24&seasons=2024-25";
 
-beforeEach(() => { vi.clearAllMocks(); clear.mockReturnValue("clear"); });
+beforeEach(() => { vi.clearAllMocks(); clear.mockReturnValue("clear"); coverage.mockImplementation(function (this: Catalog) { return actualCoverage.call(this); }); });
 
 describe("opponent history routes", () => {
   it("denies anonymous access before budget or data reads", async () => {
@@ -43,13 +45,62 @@ describe("opponent history routes", () => {
     expect(seasonSplitFacts).toHaveBeenCalledWith(env, "a".repeat(64), ["2023-24", "2024-25"], { venue: null, opponent_id: "club:1001" });
     expect(readOpponentHistory).toHaveBeenCalledTimes(1);
   });
-  it("rejects invalid, duplicate, overlong and unapproved selections before SQL", async () => {
-    for (const suffix of ["?opponent_id=club%3A9999&seasons=2023-24", "?opponent_id=club%3A1001&seasons=1900-01",
-      "?opponent_id=club%3A1001&seasons=2023-24&seasons=2023-24", "?opponent_id=club%3A1001&" + Array.from({ length: 17 }, (_, i) => `seasons=20${String(i).padStart(2, "0")}-21`).join("&")]) {
-      expect((await app.request(`https://site.invalid/es/opponents/history${suffix}`, { headers }, env)).status).toBe(400);
+  it.each(["en", "es"])("renders selected row attribution in %s", async locale => {
+    vi.mocked(readOpponentHistory).mockResolvedValueOnce({
+      request: { schema_version: 1, competition: "PL", seasons: ["2023-24", "2024-25"], group_by: "opponent", venue: null, opponent_id: "club:1001" },
+      snapshot_id: "a".repeat(64), seasons: ["2023-24", "2024-25"].map(season => ({ season, coverage: "complete", status: "available", record: {
+        played: 1, won: 1, drawn: 0, lost: 0, goals_for: 1, goals_against: 0, points: 3, goal_difference: 1, rate_denominator: 1,
+        points_per_match: 3, goals_for_per_match: 1, goals_against_per_match: 0, win_rate: 1, lineage: ["fixture_source:asset"],
+      } })), status: "available", partial: false, contributing_seasons: ["2023-24", "2024-25"],
+    });
+    vi.spyOn(Catalog.prototype, "coverage", "get").mockReturnValue(Array.from({ length: 2 }, (_, i) => ({
+      metric: "played", entity_type: "team", granularity: "box_score" as const, season: i === 0 ? "2023-24" : "2024-25", competition: "PL",
+      source_id: "fixture_source", redistributable: true, cost_class: "cheap" as const, attribution_asset: "asset",
+      attribution_text: "Fixture source credit EN", attribution_text_es: "Crédito de fuente ES", source_name: "Fixture source",
+    })));
+    const response = await app.request(`https://site.invalid/${locale}/opponents/history${query}`, { headers }, env);
+    const body = await response.text();
+    expect(response.status).toBe(200);
+    expect(body).toContain(locale === "en" ? "Fixture source credit EN" : "Crédito de fuente ES");
+  });
+  it("rejects malformed selections before SQL", async () => {
+    const duplicate = await app.request(`https://site.invalid/es/opponents/history?opponent_id=club%3A1001&seasons=2023-24&seasons=2023-24`, { headers }, env);
+    expect(duplicate.status).toBe(400);
+    expect(await duplicate.text()).toContain("Selección de historial de rival no válida.");
+    expect(env.DB.prepare).not.toHaveBeenCalled();
+
+    for (const [suffix, status] of [
+      ["?opponent_id=club%3A9999&seasons=2023-24", 400],
+      ["?opponent_id=club%3A1016&seasons=2023-24", 400],
+      ["?opponent_id=club%3A1001&seasons=1900-01", 400],
+      ["?opponent_id=club%3A1001&seasons=2023-24&unexpected=1", 400],
+      ["?opponent_id=club%3A1001&seasons=" + "x".repeat(2100), 400],
+      ["?opponent_id=club%3A1001&" + Array.from({ length: 17 }, (_, i) => `seasons=20${String(i).padStart(2, "0")}-21`).join("&"), 400],
+    ] as const) {
+      expect((await app.request(`https://site.invalid/es/opponents/history${suffix}`, { headers }, env)).status).toBe(status);
     }
     expect(seasonSplitFacts).not.toHaveBeenCalled();
     expect(enforceBudget).not.toHaveBeenCalled();
+    expect(env.DB.prepare).not.toHaveBeenCalled();
+  });
+  it("accepts exactly 16 selected seasons and rejects 17 before SQL", async () => {
+    const seasons = Array.from({ length: 16 }, (_, i) => `${String(2000 + i).padStart(4, "0")}-${String((i + 1) % 100).padStart(2, "0")}`);
+    coverage.mockReturnValue(Array.from({ length: 16 }, (_, i) => ({
+      metric: "played", entity_type: "team", granularity: "box_score" as const, season: seasons[i]!, competition: "PL",
+      source_id: "fixture_source", redistributable: true, cost_class: "cheap" as const, attribution_asset: "asset",
+      attribution_text: "Fixture source credit EN", attribution_text_es: "Crédito de fuente ES", source_name: "Fixture source",
+    })));
+    const params = new URLSearchParams({ opponent_id: "club:1001" });
+    seasons.forEach(season => params.append("seasons", season));
+    const response = await app.request(`https://site.invalid/en/opponents/history?${params}`, { headers }, env);
+    expect(response.status).toBe(200);
+    expect(seasonSplitFacts).toHaveBeenCalledTimes(1);
+    vi.clearAllMocks();
+    coverage.mockImplementation(function (this: Catalog) { return actualCoverage.call(this); });
+    const tooMany = new URLSearchParams({ opponent_id: "club:1001" });
+    [...seasons, seasons[0]!].forEach(season => tooMany.append("seasons", season));
+    expect((await app.request(`https://site.invalid/en/opponents/history?${tooMany}`, { headers }, env)).status).toBe(400);
+    expect(vi.mocked(env.DB.prepare)).not.toHaveBeenCalled();
   });
   it("fails closed when the output capability is not clear", async () => {
     clear.mockReturnValue("partial");

@@ -691,7 +691,18 @@ function registerLocaleRoutes(code: LocaleCode) {
       if (await currentSnapshot(c.env) !== snapshot) return renderError(unavailable, 503);
       const facts = await playerTrendsIdentityLabels(c.env, request.person_ids);
       if (facts.length !== request.person_ids.length || facts.some(person => !person.label?.trim())) return renderError(unknown, 404);
-      const credits = Object.fromEntries(catalog.coverage.map(cell => [`${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`, locale.code === "es" ? cell.attribution_text_es ?? cell.attribution_text ?? "" : cell.attribution_text ?? ""]));
+      const sourceCredits = new Map<string, Set<string>>();
+      for (const cell of catalog.coverage) {
+        const credit = (locale.code === "es" ? cell.attribution_text_es ?? cell.attribution_text : cell.attribution_text) ?? cell.source_name;
+        if (!credit?.trim()) continue;
+        if (!sourceCredits.has(cell.source_id)) sourceCredits.set(cell.source_id, new Set());
+        sourceCredits.get(cell.source_id)!.add(credit);
+      }
+      const lineageRefs = new Set(result.series.flatMap(item => item.cells.flatMap(cell => cell.lineage)));
+      const credits = Object.fromEntries([...lineageRefs].flatMap(ref => {
+        const sourceId = ref.split(":", 1)[0]!;
+        return sourceCredits.has(sourceId) ? [[ref, [...sourceCredits.get(sourceId)!].join(" · ")]] : [];
+      }));
       const form = `<form method="get" action="/${locale.code}/players/trends"><input type="hidden" name="schema_version" value="1"><input type="hidden" name="competition" value="PL"><label>${esc(t.playerTrendsPlayerLabel)}<select name="person_ids">${facts.map(person => `<option value="${esc(person.person_id)}"${person.person_id === request!.person_ids[0] ? " selected" : ""}>${esc(person.label)}</option>`).join("")}</select></label><label>${esc(t.playerTrendsFromLabel)}<select name="start_season">${eligibleSeasons.map(season => `<option value="${esc(season)}"${season === request!.seasons[0] ? " selected" : ""}>${esc(season)}</option>`).join("")}</select></label><label>${esc(t.playerTrendsThroughLabel)}<select name="end_season">${eligibleSeasons.map(season => `<option value="${esc(season)}"${season === request!.seasons[request!.seasons.length - 1] ? " selected" : ""}>${esc(season)}</option>`).join("")}</select></label><button type="submit">${esc(t.playerTrendsSubmit)}</button></form>`;
       const body = form + playerTrendsBody({ ...result, people: facts, credits }, {}, locale);
       const canonical = new URLSearchParams(); canonical.set("schema_version", "1"); canonical.set("competition", "PL"); request.person_ids.forEach(id => canonical.append("person_ids", id)); request.seasons.forEach(season => canonical.append("seasons", season)); canonical.set("metric", request.metric); canonical.set("normalization", request.normalization); canonical.set("min_minutes", String(request.min_minutes)); canonical.set("viz", request.viz);
@@ -712,7 +723,13 @@ function registerLocaleRoutes(code: LocaleCode) {
     if (new TextEncoder().encode(url.search).byteLength > 2048) return renderError(invalid, 400);
     const params = url.searchParams;
     let seasonCount = 0;
-    for (const [key] of params) if (key === "seasons" && ++seasonCount > 16) return renderError(invalid, 400);
+    const seenSeasons = new Set<string>();
+    for (const [key, value] of params) {
+      if (key === "seasons") {
+        if (++seasonCount > 16 || seenSeasons.has(value)) return renderError(invalid, 400);
+        seenSeasons.add(value);
+      }
+    }
     const allowed = new Set(["schema_version", "competition", "seasons", "opponent_id"]);
     if ([...params.keys()].some(key => !allowed.has(key)) ||
         [...params.keys()].some(key => key !== "seasons" && params.getAll(key).length !== 1)) return renderError(invalid, 400);
