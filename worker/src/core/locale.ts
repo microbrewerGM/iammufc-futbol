@@ -59,6 +59,10 @@ export interface Locale {
     playerTrendsFromLabel: string;
     playerTrendsThroughLabel: string;
     playerTrendsSubmit: string;
+    opponentHistoryTitle: string;
+    opponentHistoryInvalid: string;
+    opponentHistoryUnavailable: string;
+    opponentHistoryLink: string;
     freshnessHeading: string;
     coverageThrough: (season: string) => string;
     lastSuccessfulLoad: string;
@@ -182,6 +186,10 @@ const EN: Locale = {
     playerTrendsFromLabel: "From",
     playerTrendsThroughLabel: "Through",
     playerTrendsSubmit: "View trend",
+    opponentHistoryTitle: "Opponent history",
+    opponentHistoryInvalid: "Invalid opponent history selection.",
+    opponentHistoryUnavailable: "Opponent history is temporarily unavailable.",
+    opponentHistoryLink: "Opponent history",
     freshnessHeading: "Data freshness",
     coverageThrough: (s) => `Coverage through ${s}.`,
     lastSuccessfulLoad: "Last successful load:",
@@ -309,6 +317,10 @@ const ES: Locale = {
     playerTrendsFromLabel: "Desde",
     playerTrendsThroughLabel: "Hasta",
     playerTrendsSubmit: "Ver evolución",
+    opponentHistoryTitle: "Historial contra rivales",
+    opponentHistoryInvalid: "Selección de historial de rival no válida.",
+    opponentHistoryUnavailable: "El historial del rival no está disponible temporalmente.",
+    opponentHistoryLink: "Historial contra rivales",
     freshnessHeading: "Actualización de los datos",
     coverageThrough: (s) => `Cobertura hasta ${s}.`,
     lastSuccessfulLoad: "Última carga correcta:",

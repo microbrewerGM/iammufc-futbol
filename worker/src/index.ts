@@ -68,6 +68,8 @@ import { playerRangeBody, playerRangeSelection } from "./views/player-range";
 import { playerTrendsFacts } from "./core/player-trends-db";
 import { calculatePlayerTrends, parsePlayerTrendsRequest } from "./core/player-trends";
 import { playerTrendsBody } from "./views/player-trends";
+import { APPROVED_OPPONENT_IDS, readOpponentHistory } from "./core/opponent-history";
+import { opponentHistoryBody } from "./views/opponent-history";
 import { withSecurityHeaders } from "./security/headers";
 import { accessGate, accessIdentity, type AccessEnv, type AccessIdentity } from "./security/auth";
 import { createExplorationBridgeRouter } from "./routes/exploration-bridge";
@@ -699,6 +701,46 @@ function registerLocaleRoutes(code: LocaleCode) {
     } catch {
       return renderError(unavailable, 503);
     }
+  });
+
+  app.get(`${p}/opponents/history`, async (c) => {
+    const t = locale.strings;
+    const invalid = t.opponentHistoryInvalid;
+    const unavailable = t.opponentHistoryUnavailable;
+    const renderError = (message: string, status: number) => html(page(`<h1>${esc(t.opponentHistoryTitle)}</h1><p>${esc(message)}</p>`, { title: t.opponentHistoryTitle, locale, unprefixedPath: "/opponents/history" }), status);
+    const url = new URL(c.req.url);
+    if (new TextEncoder().encode(url.search).byteLength > 2048) return renderError(invalid, 400);
+    const params = url.searchParams;
+    let seasonCount = 0;
+    for (const [key] of params) if (key === "seasons" && ++seasonCount > 16) return renderError(invalid, 400);
+    const allowed = new Set(["schema_version", "competition", "seasons", "opponent_id"]);
+    if ([...params.keys()].some(key => !allowed.has(key)) ||
+        [...params.keys()].some(key => key !== "seasons" && params.getAll(key).length !== 1)) return renderError(invalid, 400);
+    const opponent = params.get("opponent_id");
+    const seasons = params.getAll("seasons");
+    if (!opponent || !APPROVED_OPPONENT_IDS.has(opponent) || seasons.length !== seasonCount) return renderError(invalid, 400);
+    const availableSeasons = [...new Set(catalog.coverage.filter(cell => cell.competition === "PL").map(cell => cell.season))].sort();
+    const raw = { schema_version: params.has("schema_version") ? Number(params.get("schema_version")) : 1,
+      competition: params.get("competition") ?? "PL", seasons, group_by: "opponent", venue: null, opponent_id: opponent };
+    let request;
+    try { request = parseSeasonSplitRequest(raw, availableSeasons); }
+    catch { return renderError(invalid, 400); }
+    if (catalog.outputCapability("season_splits") !== "clear") return renderError(unavailable, 503);
+    if (!(await enforceBudget(c.env, { failClosed: true }))) return renderError(unavailable, 503);
+    let snapshot: string | null = null;
+    try {
+      const publication = await currentPublication(c.env);
+      snapshot = publication?.snapshotId ?? null;
+      if (!snapshot) throw new Error("snapshot unavailable");
+      const facts = await seasonSplitFacts(c.env, snapshot, request.seasons, { venue: null, opponent_id: opponent });
+      const result = await readOpponentHistory(c.env, request, facts.catalog);
+      if (await currentSnapshot(c.env) !== snapshot) throw new Error("snapshot changed");
+      const credits = Object.fromEntries(catalog.coverage.map(cell => [`${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`, locale.code === "es" ? cell.attribution_text_es ?? cell.attribution_text ?? "" : cell.attribution_text ?? ""]));
+      const body = opponentHistoryBody({ result, credits }, locale.code);
+      const res = html(page(body, { title: t.opponentHistoryTitle, locale, unprefixedPath: `/opponents/history?${new URLSearchParams(params)}`, snapshotId: snapshot }));
+      res.headers.set("Cache-Control", CACHE_CONTROL);
+      return res;
+    } catch { return renderError(unavailable, 503); }
   });
 
   app.get(p, async (c) => {
