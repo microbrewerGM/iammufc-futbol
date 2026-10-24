@@ -24,6 +24,7 @@ export function createExplorationBridgeRouter(resolveCaller: (c: import("hono").
   const identity = accessIdentity(c);
   if (!identity || !("serviceClientId" in identity) ||
     !c.env.ACCESS_SERVICE_CLIENT_IDS?.split(",").map((id) => id.trim()).includes(identity.serviceClientId)) return null;
+  if (identity.serviceClientId.includes("_") || /[A-Z]/.test(identity.serviceClientId)) return null;
   const service = identity.serviceClientId.toLowerCase().replace(/\./g, "_");
   if (!/^[a-z0-9][a-z0-9:_-]{0,95}$/.test(service)) return null;
   return { service, capability: "arrival_manager:bridge:v1" };
