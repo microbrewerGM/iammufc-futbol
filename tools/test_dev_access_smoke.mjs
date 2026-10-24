@@ -76,7 +76,8 @@ test('fixed dev origin, manual redirects, private response and all checks', asyn
     assert.equal(init.redirect, 'manual');
     assert.equal(init.headers.Origin, new URL(url).origin);
     assert.equal(init.headers['CF-Access-Client-Secret'], env.CF_ACCESS_CLIENT_SECRET);
-    const path = new URL(url).pathname;
+    const pathname = new URL(url).pathname;
+    const path = pathname;
     const health = path === '/api/health';
     const chat = path === '/api/chat';
     const query = path === '/api/query';
@@ -102,15 +103,27 @@ test('fixed dev origin, manual redirects, private response and all checks', asyn
       : chat ? JSON.stringify(rejected ? unsupported : validChat)
       : query ? JSON.stringify({ ...validQuery(queryCalls++ === 0 ? 'computable_now_queued' : 'available'),
         rows: [...validQuery().rows].reverse() })
-      : url.includes('/seasons/explore') ? `<html lang="${new URL(url).pathname.startsWith('/es/') ? 'es' : 'en'}"><link rel="canonical" href="${new URL(url).pathname}?schema_version=1&amp;competition=PL&amp;seasons=2014-15&amp;group_by=venue">${new URL(url).pathname.startsWith('/es/') ? 'La capacidad de desgloses por temporada no está publicada.' : 'Season splits capability is not published.'}</html>`
+      : ['/en/seasons/explore', '/es/seasons/explore'].includes(pathname) ? `<html lang="${pathname.startsWith('/es/') ? 'es' : 'en'}"><link rel="canonical" href="${pathname}?schema_version=1&amp;competition=PL&amp;seasons=2014-15&amp;group_by=venue">${pathname.startsWith('/es/') ? 'La capacidad de desgloses por temporada no está publicada.' : 'Season splits capability is not published.'}</html>`
       : trend ? (locale === 'es' ? 'Evolución de jugadores' : 'Player trends')
-      : path.includes('/seasons/champions-league') ? (locale === 'es' ? 'Historial de la Liga de Campeones' : 'Champions League history')
+      : ['/en/opponents/history', '/es/opponents/history'].includes(pathname) ? (locale === 'es' ? 'Historial contra rivales' : 'Opponent history')
+      : ['/en/seasons/champions-league', '/es/seasons/champions-league'].includes(pathname) ? (locale === 'es' ? 'Historial de la Liga de Campeones' : 'Champions League history')
       : path === '/en' || path === '/es' ? (url.includes('/es') ? 'Pregunta sobre el Manchester United Prueba preguntando' : 'Ask about Manchester United Try asking')
       : 'Ask about Manchester United Pregunta sobre el Manchester United Data and sources Datos y fuentes League season comparison Comparación de temporadas de liga 62–37 goals 62–37 goles >1.84</td> >1,84</td> 49–35 goals 49–35 goles >1.74</td> >1,74</td> font-family Assists — 2023-24 PL class="dot" aria-current="page">Dots</a> aria-current="page">Gráfico de puntos</a> <table>',
     { status: rejected ? 422 : 200, headers: { 'cache-control': 'private, no-store',
-      ...((health || chat || query) ? { 'content-type': 'application/json; charset=UTF-8' } : {}) } });
+      ...((health || chat || query) ? { 'content-type': 'application/json; charset=UTF-8' } : {}),
+      ...(['/en/opponents/history', '/es/opponents/history'].includes(pathname) ? { 'cache-control': 'private, no-store' } : {}) } });
   });
-  assert.equal(calls.length, 27);
+  assert.equal(calls.length, 29);
+  for (const locale of ['en', 'es']) {
+    const call = calls.find(({ url }) => new URL(url).pathname === `/${locale}/opponents/history`);
+    const url = new URL(call.url);
+    assert.equal(call.init.method, 'GET');
+    assert.deepEqual([...url.searchParams.entries()], [
+      ['schema_version', '1'], ['competition', 'PL'], ['seasons', '2024-25'],
+      ['seasons', '2025-26'], ['opponent_id', 'club:1001'],
+    ]);
+    assert.equal(new Headers(call.init.headers).has('CF-Access-Client-Id'), true);
+  }
   assert.equal(calls.find((call) => new URL(call.url).pathname === '/en/ask').init.method, 'POST');
   assert.equal(calls.find((call) => new URL(call.url).pathname === '/api/health').init.method, 'GET');
   for (const locale of ['en', 'es']) {
@@ -135,13 +148,13 @@ test('fixed dev origin, manual redirects, private response and all checks', asyn
     assert.ok(marker === (locale === 'es' ? 'Evolución de jugadores' : 'Player trends'));
   }
   assert.ok(results.every((result) => result.pass), JSON.stringify(results.filter((result) => !result.pass)));
-  assert.deepEqual(results.at(-8), { path: '/api/chat', status: 200, pass: true,
+  assert.deepEqual(results.find((result) => result.path === '/api/chat' && result.status === 200), { path: '/api/chat', status: 200, pass: true,
     model_status: 'accepted' });
-  assert.deepEqual(results.at(-7), { path: '/api/chat', status: 422, pass: true,
+  assert.deepEqual(results.find((result) => result.path === '/api/chat' && result.status === 422), { path: '/api/chat', status: 422, pass: true,
     gate_status: 'unsupported_semantics' });
-  assert.deepEqual(results.at(-6), { path: '/api/query', status: 200, pass: true,
+  assert.deepEqual(results.filter((result) => result.path === '/api/query')[0], { path: '/api/query', status: 200, pass: true,
     query_state: 'computable_now_queued' });
-  assert.deepEqual(results.at(-5), { path: '/api/query', status: 200, pass: true,
+  assert.deepEqual(results.filter((result) => result.path === '/api/query')[1], { path: '/api/query', status: 200, pass: true,
     query_state: 'available' });
   for (const locale of ['en', 'es']) {
     const call = calls.find(({ url }) => new URL(url).pathname === `/${locale}/players/compare`);
@@ -459,10 +472,11 @@ test('combined smoke requires authenticated success and denial success', async (
       query ? JSON.stringify(validQuery(queryCalls++ === 0 ? 'computable_now_queued' : 'available')) :
       (path === '/en/seasons/explore' || path === '/es/seasons/explore')
         ? `<html lang="${path.startsWith('/es/') ? 'es' : 'en'}"><link rel="canonical" href="${path}?schema_version=1&amp;competition=PL&amp;seasons=2014-15&amp;group_by=venue">${path.startsWith('/es/') ? 'La capacidad de desgloses por temporada no está publicada.' : 'Season splits capability is not published.'}</html>` :
+      ['/en/opponents/history', '/es/opponents/history'].includes(path) ? (path.startsWith('/es/') ? 'Historial contra rivales' : 'Opponent history') :
       'Ask about Manchester United Try asking Pregunta sobre el Manchester United Prueba preguntando Champions League history Historial de la Liga de Campeones Data and sources Datos y fuentes League season comparison Comparación de temporadas de liga 62–37 goals 62–37 goles >1.84</td> >1,84</td> 49–35 goals 49–35 goles >1.74</td> >1,74</td> font-family Assists — 2023-24 PL class="dot" aria-current="page">Dots</a> aria-current="page">Gráfico de puntos</a> <table>',
     { status: rejected ? 422 : 200, headers: { 'cache-control': 'private, no-store',
       ...((health || chat || query) ? { 'content-type': 'application/json' } : {}) } });
   });
-  assert.equal(results.length, 88);
+  assert.equal(results.length, 90);
   assert.ok(results.every((result) => result.pass), JSON.stringify(results.filter((result) => !result.pass)));
 });
