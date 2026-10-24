@@ -129,6 +129,10 @@ describe("Cloudflare Access boundary", () => {
     expect((await request({})).status).toBe(200);
     expect((await request({ Cookie: "CF_Authorization=browser-session" })).status).toBe(403);
     expect((await request({ Cookie: "other=value; CF_Authorization=browser-session" })).status).toBe(403);
+    expect((await request({ Cookie: "cf_authorization=browser-session" })).status).toBe(403);
+    expect((await request({ Cookie: "  CF_Authorization  =browser-session" })).status).toBe(403);
+    expect((await request({ Cookie: "CF_AppSession=browser-session" })).status).toBe(403);
+    expect((await request({ Cookie: "other=value; another=value; CF_Authorization=browser-session" })).status).toBe(403);
     expect((await request({ Origin: "https://foreign.invalid" })).status).toBe(200);
     expect((await request({ "cf-access-jwt-assertion": "forged" })).status).toBe(403);
   });
