@@ -58,10 +58,12 @@ describe("Champions League history routes", () => {
 
   it("renders the no-results state for in-coverage seasons with no rows", async () => {
     readState.fail = false;
-    readState.rows = [];
+    readState.rows = readState.seasons.map((season) => ({ status: "gap", season }));
     const response = await app.request("https://site.invalid/en/seasons/champions-league", { headers }, env);
     const text = await response.text();
     expect(text).toContain(LOCALES.en.strings.clHistory.noResults);
+    expect(text).toContain(LOCALES.en.strings.clHistory.gap);
+    expect(text).toContain("2024-25");
     expect(text).not.toContain(LOCALES.en.strings.clHistory.outsideCoverage);
   });
 

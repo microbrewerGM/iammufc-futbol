@@ -52,7 +52,6 @@ export function championsLeagueHistoryBody(
   strings: ChampionsLeagueHistoryStrings,
 ): string {
   if (model.unavailable) return `<h1>${esc(strings.heading)}</h1><p role="status">${esc(strings.unavailable)}</p>`;
-  if (!model.entries.length) return `<h1>${esc(strings.heading)}</h1><p role="status">${esc(strings.noResults)}</p>`;
   const eligible = model.entries.filter((entry) => entry.state !== "out_of_coverage");
   if (!eligible.length) return `<h1>${esc(strings.heading)}</h1><p role="status">${esc(strings.outsideCoverage)}</p>`;
 
