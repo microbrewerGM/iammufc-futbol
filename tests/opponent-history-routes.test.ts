@@ -105,11 +105,15 @@ describe("opponent history routes", () => {
     expect((await app.request(`https://site.invalid/en/opponents/history?${tooMany}`, { headers }, env)).status).toBe(400);
     expect(vi.mocked(env.DB.prepare)).not.toHaveBeenCalled();
   });
-  it("fails closed when the output capability is not clear", async () => {
+  it.each([["en", "Season splits capability is not published."], ["es", "La capacidad de desgloses por temporada no está publicada."]])("serves a 200 unpublished state in %s when the output capability is not clear", async (locale, message) => {
     clear.mockReturnValue("partial");
-    const response = await app.request(`https://site.invalid/es/opponents/history${query}`, { headers }, env);
-    expect(response.status).toBe(503);
-    expect(await response.text()).toContain("no está disponible temporalmente");
+    const response = await app.request(`https://site.invalid/${locale}/opponents/history${query}`, { headers }, env);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toContain("no-store");
+    expect(await response.text()).toContain(message);
+    expect(enforceBudget).not.toHaveBeenCalled();
     expect(seasonSplitFacts).not.toHaveBeenCalled();
+    expect(readOpponentHistory).not.toHaveBeenCalled();
+    expect(vi.mocked(env.DB.prepare)).not.toHaveBeenCalled();
   });
 });

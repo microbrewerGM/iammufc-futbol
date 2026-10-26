@@ -69,7 +69,7 @@ import { playerTrendsFacts } from "./core/player-trends-db";
 import { calculatePlayerTrends, parsePlayerTrendsRequest } from "./core/player-trends";
 import { playerTrendsBody } from "./views/player-trends";
 import { APPROVED_OPPONENT_IDS, readOpponentHistory } from "./core/opponent-history";
-import { opponentHistoryBody } from "./views/opponent-history";
+import { opponentHistoryBody, opponentHistoryUnpublishedBody } from "./views/opponent-history";
 import { withSecurityHeaders } from "./security/headers";
 import { accessGate, accessIdentity, type AccessEnv, type AccessIdentity } from "./security/auth";
 import { createExplorationBridgeRouter } from "./routes/exploration-bridge";
@@ -734,7 +734,11 @@ function registerLocaleRoutes(code: LocaleCode) {
     let request;
     try { request = parseSeasonSplitRequest(raw, availableSeasons); }
     catch { return renderError(invalid, 400); }
-    if (catalog.outputCapability("season_splits") !== "clear") return renderError(unavailable, 503);
+    if (catalog.outputCapability("season_splits") !== "clear") {
+      const res = html(page(opponentHistoryUnpublishedBody(locale.code), { title: t.opponentHistoryTitle, locale, unprefixedPath: "/opponents/history" }));
+      res.headers.set("Cache-Control", CACHE_CONTROL);
+      return res;
+    }
     if (!(await enforceBudget(c.env, { failClosed: true }))) return renderError(unavailable, 503);
     let snapshot: string | null = null;
     try {

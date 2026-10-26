@@ -105,7 +105,7 @@ test('fixed dev origin, manual redirects, private response and all checks', asyn
         rows: [...validQuery().rows].reverse() })
       : ['/en/seasons/explore', '/es/seasons/explore'].includes(pathname) ? `<html lang="${pathname.startsWith('/es/') ? 'es' : 'en'}"><link rel="canonical" href="${pathname}?schema_version=1&amp;competition=PL&amp;seasons=2014-15&amp;group_by=venue">${pathname.startsWith('/es/') ? 'La capacidad de desgloses por temporada no está publicada.' : 'Season splits capability is not published.'}</html>`
       : trend ? (locale === 'es' ? 'Evolución de jugadores' : 'Player trends')
-      : ['/en/opponents/history', '/es/opponents/history'].includes(pathname) ? (locale === 'es' ? 'Historial contra rivales' : 'Opponent history')
+      : ['/en/opponents/history', '/es/opponents/history'].includes(pathname) ? (locale === 'es' ? 'Historial contra rivales La capacidad de desgloses por temporada no está publicada.' : 'Opponent history Season splits capability is not published.')
       : ['/en/seasons/champions-league', '/es/seasons/champions-league'].includes(pathname) ? (locale === 'es' ? 'Historial de la Liga de Campeones' : 'Champions League history')
       : path === '/en' || path === '/es' ? (url.includes('/es') ? 'Pregunta sobre el Manchester United Prueba preguntando' : 'Ask about Manchester United Try asking')
       : 'Ask about Manchester United Pregunta sobre el Manchester United Data and sources Datos y fuentes League season comparison Comparación de temporadas de liga 62–37 goals 62–37 goles >1.84</td> >1,84</td> 49–35 goals 49–35 goles >1.74</td> >1,74</td> font-family Assists — 2023-24 PL class="dot" aria-current="page">Dots</a> aria-current="page">Gráfico de puntos</a> <table>',
@@ -123,6 +123,9 @@ test('fixed dev origin, manual redirects, private response and all checks', asyn
       ['seasons', '2025-26'], ['opponent_id', 'club:1001'],
     ]);
     assert.equal(new Headers(call.init.headers).has('CF-Access-Client-Id'), true);
+    const row = results.find((result) => result.path === `${url.pathname}${url.search}`);
+    assert.equal(row.pass, true);
+    assert.equal(row.opponent_state, 'capability_unavailable');
   }
   assert.equal(calls.find((call) => new URL(call.url).pathname === '/en/ask').init.method, 'POST');
   assert.equal(calls.find((call) => new URL(call.url).pathname === '/api/health').init.method, 'GET');
@@ -200,6 +203,14 @@ test('chat validator accepts finite model outcomes and rejects drift', () => {
   assert.equal(validateChatPayload({ ...validChat, source: 'rules', model_status: 'accepted' }), null);
   assert.equal(validateChatPayload({ ...validChat, source: 'rules', model_status: 'provider_error',
     notes: ['AI proposal unavailable (provider_error); using rules.'] }), 'provider_error');
+});
+test('opponent history vector fails on 5xx even with the unpublished text', async () => {
+  const results = await smoke(env, async (url) => new Response(
+    new URL(url).pathname.includes('/opponents/history') ? 'Opponent history Season splits capability is not published.' : 'x',
+    { status: new URL(url).pathname.includes('/opponents/history') ? 503 : 200, headers: { 'cache-control': 'private, no-store' } }));
+  const opp = results.filter((result) => result.path.includes('/opponents/history'));
+  assert.equal(opp.length, 2);
+  assert.ok(opp.every((result) => result.status === 503 && result.pass === false && result.opponent_state === 'invalid'));
 });
 test('login redirects and non-private responses fail without following redirects', async () => {
   const results = await smoke(env, async () => new Response('', { status: 302,
