@@ -66,6 +66,15 @@ export function classifySeasonExplore(body, locale, canonical) {
   return { state, assertion };
 }
 
+const OPPONENT_UNPUBLISHED = {
+  en: 'Season splits capability is not published.',
+  es: 'La capacidad de desgloses por temporada no está publicada.',
+};
+
+/** Opponent history is either the published view or the localized unpublished state. */
+export const classifyOpponentHistory = (body, locale) =>
+  body.includes(OPPONENT_UNPUBLISHED[locale]) ? 'capability_unavailable' : 'published';
+
 /** Independent deployed-wire validator. Returns only a safe finite state; raw
  * publication metadata never reaches CLI output. */
 export function validateHealthPayload(value) {
@@ -372,8 +381,9 @@ export async function smoke(env, request = fetch) {
         headers: { ...headers, 'Sec-Fetch-Site': 'same-origin' },
       });
       const body = await response.text();
-      results.push({ path, status: response.status,
-        pass: response.status === 200 && response.headers.get('cache-control')?.includes('no-store') && body.includes(marker) });
+      const pass = response.status === 200 && response.headers.get('cache-control')?.includes('no-store') && body.includes(marker);
+      results.push({ path, status: response.status, pass,
+        opponent_state: pass ? classifyOpponentHistory(body, locale) : 'invalid' });
     } catch (error) {
       results.push({ path: `/${locale}/opponents/history`, pass: false, error_class: safeErrorClass(error) });
     }

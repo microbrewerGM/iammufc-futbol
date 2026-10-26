@@ -39,6 +39,15 @@ const defaultStrings: Record<LocaleCode, OpponentHistoryStrings> = {
   es: { opponent: "Rival", title: "Historial contra rivales", context: "Manchester United · Premier League · temporadas seleccionadas", season: "Temporada", played: "Jugados", wins: "Victorias", draws: "Empates", losses: "Derrotas", goalsFor: "Goles a favor", goalsAgainst: "Goles en contra", points: "Puntos", combined: "Balance conjunto de las temporadas seleccionadas", partial: "Subtotal registrado; faltan datos seleccionados o son parciales", missing: "Balance no disponible; los partidos ausentes no equivalen a cero", noMatches: "Ningún partido finalizado coincide con esta selección.", failure: "El historial contra rivales no está disponible temporalmente", available: "Disponible", status: "Estado", complete: "Completa", source: "Fuentes y versión de datos", attributionUnavailable: "Atribución de fuente no disponible para algunos datos.", snapshot: "Versión de datos", chart: "Puntos por partido por temporada", chartDescription: "Gráfico de puntos por partido observados por temporada seleccionada, en una escala de 0 a 3.", chartUnavailable: "Sin marca de tasa: el resultado no está disponible o no hubo partidos coincidentes.", pointsPerMatch: "Puntos / partido", venueBoth: "Todas las localías", venueHome: "Local", venueAway: "Visitante" },
 };
 
+const unpublishedStrings: Record<LocaleCode, { title: string; message: string }> = {
+  en: { title: "Opponent history", message: "Season splits capability is not published." },
+  es: { title: "Historial contra rivales", message: "La capacidad de desgloses por temporada no está publicada." },
+};
+
+/** Localized state shown while the season_splits capability is not clear. */
+export const opponentHistoryUnpublishedBody = (locale: LocaleCode): string =>
+  `<h1>${esc(unpublishedStrings[locale].title)}</h1><p>${esc(unpublishedStrings[locale].message)}</p>`;
+
 export interface OpponentHistoryView {
   result: OpponentHistoryResult;
   opponentLabel?: string;
