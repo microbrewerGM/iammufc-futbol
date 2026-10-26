@@ -73,7 +73,11 @@ describe("bilingual per-90 leaderboard parity", () => {
   it.each(["en", "es"] as const)("renders an empty season without fabricated ranking facts in %s", locale => {
     // Other-season facts are present: no cross-season fallback may populate the ranking.
     const html = render(locale, facts, "2025-26");
-    expect(tableRows(html, labels[locale])).toEqual([]);
+    const message = locale === "en" ? "No players have enough minutes to be ranked." : "Ningún jugador tiene minutos suficientes para clasificarse.";
+    expect(html).toContain(`<p role="status">${message}</p>`);
+    expect(html).not.toContain(`<div role="region" tabindex="0" aria-label="${labels[locale]}">`);
+    expect(html).not.toContain("<td>1</td><th scope=\"row\">");
+    expect(html).not.toMatch(/<td>\d[\d.,]*<\/td><\/tr>/);
     const missing = locale === "en" ? "Data unavailable" : "Datos no disponibles";
     expect(tableRows(html, exclusions[locale])).toEqual([1, 2, 3, 4, 5].map(id => [`Player ${id}`, missing]));
   });
