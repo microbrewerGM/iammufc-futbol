@@ -95,6 +95,20 @@ const decodedCatalog = decodeCompiledCatalog(compiledCatalog);
 const catalog = new Catalog(decodedCatalog);
 const app = new Hono<AccessEnv>();
 
+/** Fire-and-forget the demand-aggregate write: never awaited by the response,
+ * never throws, and survives the response via waitUntil when a context exists. */
+function deferAggregate(
+  c: { executionCtx: { waitUntil(promise: Promise<unknown>): void } },
+  write: Promise<void>,
+): void {
+  const safe = write.catch(() => {});
+  try {
+    c.executionCtx.waitUntil(safe);
+  } catch {
+    // No execution context (unit tests): the write is already detached and error-safe.
+  }
+}
+
 /** Choose a default only from metric/season pairs with executable catalog coverage. */
 export function selectComparisonDefaults(
   seasonsByMetric: Readonly<Record<ComparisonRequest["metric"], readonly string[]>>,
@@ -209,8 +223,7 @@ app.post("/api/query", async (c) => {
   const feasibility = catalog.checkFeasibility(intent);
 
   if (feasibility.state === "no_data" || feasibility.state === "no_rights") {
-    await logQueryAggregate(c.env, intent, feasibility.state, "not_applicable", "refused", "api", "query_api")
-      .catch(() => {});
+    deferAggregate(c, logQueryAggregate(c.env, intent, feasibility.state, "not_applicable", "refused", "api", "query_api"));
     return c.json({ artifact_key: key, intent, feasibility, rows: [] }, 200);
   }
   const executionIssue = validateExecutionSupport(intent);
@@ -225,8 +238,8 @@ app.post("/api/query", async (c) => {
   const resultOutcome = execution.overBudget
     ? "budget_exceeded"
     : execution.result ? "success" : "refused";
-  await logQueryAggregate(c.env, intent, responseFeasibility.state, execution.cacheOutcome,
-    resultOutcome, "api", "query_api").catch(() => {});
+  deferAggregate(c, logQueryAggregate(c.env, intent, responseFeasibility.state, execution.cacheOutcome,
+    resultOutcome, "api", "query_api"));
   if (execution.overBudget) {
     return c.json(
       { error: "budget_exceeded", message: "Daily compute budget spent. Try again after midnight UTC." },
@@ -1269,7 +1282,7 @@ async function propose(
 }
 
 async function renderChat(
-  c: { env: Env },
+  c: { env: Env; executionCtx: { waitUntil(promise: Promise<unknown>): void } },
   locale: Locale,
   proposal: Proposal,
   question: string | null,
@@ -1323,7 +1336,7 @@ ${intentPanel(proposal, locale)}
   const responseFeasibility = execution.cacheOutcome === "hit"
     ? catalog.checkFeasibility(proposal.intent, locale.code, true)
     : feasibility;
-  await logQueryAggregate(
+  deferAggregate(c, logQueryAggregate(
     c.env,
     proposal.intent,
     responseFeasibility.state,
@@ -1331,7 +1344,7 @@ ${intentPanel(proposal, locale)}
     execution.overBudget ? "budget_exceeded" : execution.result ? "success" : "refused",
     locale.code,
     routeFamily,
-  ).catch(() => {});
+  ));
   const overBudget = execution.overBudget;
   if (question !== null && identity?.sub && !overBudget && responseFeasibility.state !== "no_rights") {
     await saveQuestionHistory(c.env, identity.sub, question, proposal.intent, locale.code).catch(() => {});
