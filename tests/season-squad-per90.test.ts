@@ -21,8 +21,13 @@ const dashCell = new RegExp(`^<td class="num no" title="[^"]+">${DASH}</td>$`);
 
 describe("season squad per-90 columns", () => {
   it("renders 0.20 in EN and 0,20 in ES for 2 goals over 900 minutes", () => {
-    expect(cells(render(900, "en")).join("")).toContain(">0.20<");
-    expect(cells(render(900, "es")).join("")).toContain(">0,20<");
+    // 2 goals / 900 min -> 0.20 ; 1 assist / 900 min -> 0.10 ; pinned by position.
+    const en = cells(render(900, "en")).slice(-3, -1);
+    expect(en[0]).toBe('<td class="num">0.20</td>');
+    expect(en[1]).toBe('<td class="num">0.10</td>');
+    const es = cells(render(900, "es")).slice(-3, -1);
+    expect(es[0]).toBe('<td class="num">0,20</td>');
+    expect(es[1]).toBe('<td class="num">0,10</td>');
   });
 
   it("orders per-90 headers after the metric columns and before position", () => {

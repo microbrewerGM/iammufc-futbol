@@ -393,7 +393,7 @@ function metricHeadCells(catalog: Catalog, feas: Map<string, FeasibilityResult>,
     if (!catalog.metric(id)) return "";
     const ok = feas.get(id)?.state === "computable_now_queued" || feas.get(id)?.state === "available";
     const label = metricLabel(catalog, id, locale.code);
-    return `<th class="num"${ok ? "" : ` title="${esc(locale.strings.legendNoSource)}"`}>${esc(label)}</th>`;
+    return `<th scope="col" class="num"${ok ? "" : ` title="${esc(locale.strings.legendNoSource)}"`}>${esc(label)}</th>`;
   }).join("");
 }
 
@@ -555,7 +555,35 @@ ${comparisonMarkup}
 
   const feas = columnFeasibility(catalog, "player", season, "PL", locale.code);
   const head = metricHeadCells(catalog, feas, locale) +
-    `<th class="num">${esc(t.goalsPer90Col)}</th><th class="num">${esc(t.assistsPer90Col)}</th>`;
+    `<th scope="col" class="num">${esc(t.goalsPer90Col)}</th><th scope="col" class="num">${esc(t.assistsPer90Col)}</th>`;
+  const sum = (pick: (p: SquadRow) => number | null | undefined): number | null =>
+    squad.reduce<number | null>((acc, p, i) => {
+      const v = pick(p);
+      // One unknown row makes the whole total unknown; never understate it.
+      if (v === null || v === undefined || (i > 0 && acc === null)) return null;
+      return (acc ?? 0) + v;
+    }, 0);
+  const totals = {
+    goals: sum((p) => p.goals),
+    assists: sum((p) => p.assists),
+    minutes: sum((p) => p.minutes),
+    points: sum((p) => p.points),
+    xg: sum((p) => p.xg),
+  };
+  const totalLabel = locale.code === "es" ? "Total de la plantilla" : "Squad total";
+  const es = locale.code === "es";
+  const totalRateTitles = {
+    goals: es ? "Goles de la plantilla por 90 minutos de jugador" : "Squad goals per 90 player-minutes",
+    assists: es ? "Asistencias de la plantilla por 90 minutos de jugador" : "Squad assists per 90 player-minutes",
+  };
+  const totalRate = (m: "goals" | "assists") =>
+    rateValueCell(feas, m, totals[m], totals.minutes, locale).replace(
+      '<td class="num">',
+      `<td class="num" title="${esc(totalRateTitles[m])}">`,
+    );
+  const totalRow = `<tfoot><tr class="total"><th scope="row">${esc(totalLabel)}</th>` +
+    `${metricValueCells(catalog, feas, totals, locale)}` +
+    `${totalRate("goals")}${totalRate("assists")}<td></td></tr></tfoot>`;
   const rows = squad
     .map(
       (p) =>
@@ -610,8 +638,10 @@ ${recordLine}
 ${europeanLine}
 ${comparisonMarkup}
 <div class="squad-table" tabindex="0" role="region" aria-label="${esc(t.squadTableLabel(season))}"><table>
-<thead><tr><th>${esc(t.playerCol)}</th>${head}<th>${esc(t.posCol)}</th></tr></thead>
+<caption class="sr-only">${esc(t.squadTableLabel(season))}</caption>
+<thead><tr><th scope="col">${esc(t.playerCol)}</th>${head}<th scope="col">${esc(t.posCol)}</th></tr></thead>
 <tbody>${rows}</tbody>
+${totalRow}
 </table></div>
 ${attribution ? `<p class="tagline">${esc(attribution)}</p>` : ""}
 ${clAttribution ? `<p class="tagline">${esc(clAttribution)}</p>` : ""}
