@@ -16,6 +16,9 @@ export interface ComparisonRow {
   total: number | null;
   minutes: number | null;
   snapshot_id: string;
+  /** Other metric's total, read in the same statement (side-by-side column). */
+  goals?: number | null;
+  assists?: number | null;
 }
 
 export interface RankedRow {
@@ -136,10 +139,14 @@ export async function executeComparison(
     return { ok: false as const, reason: "coverage_or_rights_unavailable" as const };
   }
 
+  const otherMetric = request.metric === "goals" ? "assists" : "goals";
+  const otherFeasibility = catalog.checkFeasibility({ ...intent, metric: otherMetric, filters: {} }, locale);
+  const otherCovered =
+    canExecute(otherFeasibility.state) && sourceFor(otherMetric) === "fpl";
   const column = request.metric === "goals" ? "s.goals" : "s.assists";
   const { results } = await env.DB.prepare(
     `SELECT p.player_id, p.web_name AS label, ${column} AS total,
-      s.minutes, s.snapshot_id
+      s.minutes, s.snapshot_id, s.goals AS goals, s.assists AS assists
     FROM players p JOIN player_season_stats s
       ON p.player_id = s.player_id AND p.season = s.season
     WHERE p.season = ? AND s.competition = 'PL'
@@ -154,9 +161,22 @@ export async function executeComparison(
     return { ok: false as const, reason: "inconsistent_snapshot" as const };
   }
   const snapshot = sourceRows[0]!.snapshot_id;
+  const byId = new Map(sourceRows.map((row) => [row.player_id, row]));
+  const rows = rankComparison(sourceRows, request.minMinutes).map((ranked) => {
+    const raw = byId.get(ranked.player_id)?.[otherMetric];
+    const valid =
+      otherCovered && typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 0;
+    return {
+      ...ranked,
+      other_total: valid ? raw : null,
+      other_rate: valid ? per90(raw, ranked.minutes) : null,
+    };
+  });
   return {
     ok: true as const,
-    rows: rankComparison(sourceRows, request.minMinutes),
+    rows,
+    otherCovered,
+    otherAttribution: otherCovered ? otherFeasibility.attribution_text : null,
     snapshot,
     key: await artifactKey(intent, snapshot),
     attribution: numerator.attribution_text,

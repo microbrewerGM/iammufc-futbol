@@ -30,6 +30,7 @@ function setup() {
       all: vi.fn(async () => ({
         results: fixture.map((r) => ({
           player_id: r.player_id, label: r.label, minutes: r.minutes, snapshot_id: r.snapshot_id,
+          goals: r.goals, assists: r.assists,
           total: query.includes("s.assists AS total") ? r.assists : r.goals,
         })),
       })),
@@ -78,20 +79,20 @@ describe("compare goals + assists per 90", () => {
     expect(all).toContain("Synthetic Gamma");
   });
 
-  it("uses two bounded SELECTs and charges no budget", async () => {
+  it("uses one bounded SELECT for both metrics and charges no budget", async () => {
     const { env, prepare } = setup();
     await get(env, "/en/compare?season=2024-25&metric=goals&min_minutes=100");
     const queries = prepare.mock.calls.map((c) => c[0]);
-    expect(queries).toHaveLength(2);
+    expect(queries).toHaveLength(1);
     expect(queries.filter((q) => q.includes("budget_counter"))).toHaveLength(0);
-    expect(queries[0]).toContain("s.goals AS total");
-    expect(queries[1]).toContain("s.assists AS total");
+    expect(queries[0]).toContain("s.goals AS goals");
+    expect(queries[0]).toContain("s.assists AS assists");
   });
 
   it("shows a refusal, not zeros, when the other metric has no coverage", async () => {
     const result = {
-      ok: true as const, snapshot: "synthetic", key: "k", attribution: "attr",
-      rows: [{ player_id: "p1", label: "Synthetic Alpha", total: 2, minutes: 180, rate: 1 }],
+      ok: true as const, snapshot: "synthetic", key: "k", attribution: "attr", otherCovered: false, otherAttribution: null,
+      rows: [{ player_id: "p1", label: "Synthetic Alpha", total: 2, minutes: 180, rate: 1, other_total: null, other_rate: null }],
     };
     for (const code of ["en", "es"] as const) {
       const body = await comparisonPage(
