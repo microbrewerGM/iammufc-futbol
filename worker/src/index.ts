@@ -135,8 +135,8 @@ export function selectComparisonDefaults(
 const CACHE_CONTROL = "private, no-store";
 
 type CachedExecution =
-  | { result: Awaited<ReturnType<typeof runQuery>>; cacheOutcome: CacheOutcome; overBudget: false }
-  | { result: null; cacheOutcome: CacheOutcome; overBudget: boolean };
+  | { result: Awaited<ReturnType<typeof runQuery>>; cacheOutcome: CacheOutcome; overBudget: false; budgetUnavailable: false }
+  | { result: null; cacheOutcome: CacheOutcome; overBudget: boolean; budgetUnavailable: boolean };
 
 /** Cache hits are free; only a miss reaches the budget breaker and executor.
  * Cache storage is advisory, so every read/write failure degrades to compute. */
@@ -153,11 +153,13 @@ async function executeWithCache(
     // Publication can change after the route's initial snapshot read even
     // when the result comes from cache rather than a new data SELECT.
     if (await currentSnapshot(env) !== snapshot) throw new Error("snapshot_changed_during_query");
-    return { result: cached.result, cacheOutcome: "hit", overBudget: false };
+    return { result: cached.result, cacheOutcome: "hit", overBudget: false, budgetUnavailable: false };
   }
-  if (!allowCompute) return { result: null, cacheOutcome: cached.outcome, overBudget: false };
-  if (!(await enforceBudget(env, budgetOptions))) {
-    return { result: null, cacheOutcome: cached.outcome, overBudget: true };
+  if (!allowCompute) return { result: null, cacheOutcome: cached.outcome, overBudget: false, budgetUnavailable: false };
+  const denial: { reason?: "over_limit" | "unavailable" } = {};
+  if (!(await enforceBudget(env, { ...budgetOptions, denial }))) {
+    const unavailable = denial.reason === "unavailable";
+    return { result: null, cacheOutcome: cached.outcome, overBudget: !unavailable, budgetUnavailable: unavailable };
   }
   const result = await runQuery(env, intent, snapshot);
   // The seed import is atomic, but it can commit between the first snapshot
@@ -167,7 +169,7 @@ async function executeWithCache(
   if (snapshotAfterExecution !== snapshot) throw new Error("snapshot_changed_during_query");
   const stored = await writeQueryCache(env, key, snapshot, result, intent);
   const cacheOutcome = cached.outcome === "unavailable" || !stored ? "unavailable" : cached.outcome;
-  return { result, cacheOutcome, overBudget: false };
+  return { result, cacheOutcome, overBudget: false, budgetUnavailable: false };
 }
 
 app.use("*", async (c, next) => {
@@ -239,11 +241,19 @@ app.post("/api/query", async (c) => {
   const responseFeasibility = execution.cacheOutcome === "hit"
     ? catalog.checkFeasibility(intent, "en", true)
     : feasibility;
+  // The aggregate CHECK enum has no outage value (and no migration here), so a
+  // storage outage logs "refused" -- distinct from "budget_exceeded".
   const resultOutcome = execution.overBudget
     ? "budget_exceeded"
     : execution.result ? "success" : "refused";
   deferAggregate(c, logQueryAggregate(c.env, intent, responseFeasibility.state, execution.cacheOutcome,
     resultOutcome, "api", "query_api"));
+  if (execution.budgetUnavailable) {
+    return c.json(
+      { error: "budget_unavailable", message: "Compute budget storage is unavailable. Try again shortly." },
+      503,
+    );
+  }
   if (execution.overBudget) {
     return c.json(
       { error: "budget_exceeded", message: "Daily compute budget spent. Try again after midnight UTC." },
@@ -1329,8 +1339,9 @@ ${intentPanel(proposal, locale)}
         key,
         snapshot,
         feasibility.state !== "computable_but_expensive",
+        { failClosed: true },
       )
-    : { result: null, cacheOutcome: "not_applicable" as const, overBudget: false as const };
+    : { result: null, cacheOutcome: "not_applicable" as const, overBudget: false as const, budgetUnavailable: false as const };
   const responseFeasibility = execution.cacheOutcome === "hit"
     ? catalog.checkFeasibility(proposal.intent, locale.code, true)
     : feasibility;
@@ -1343,6 +1354,8 @@ ${intentPanel(proposal, locale)}
     locale.code,
     routeFamily,
   ));
+  // Storage outage: same generic 503 as app.onError; never the 429 budget page.
+  if (execution.budgetUnavailable) return new Response("Request unavailable.", { status: 503 });
   const overBudget = execution.overBudget;
   if (question !== null && identity?.sub && !overBudget && responseFeasibility.state !== "no_rights") {
     await saveQuestionHistory(c.env, identity.sub, question, proposal.intent, locale.code).catch(() => {});

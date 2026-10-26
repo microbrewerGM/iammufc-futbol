@@ -307,14 +307,24 @@ function utcDay(): string {
  * Returns false if D1 cannot confirm the authoritative count. KV remains an
  * advisory pre-filter; callers can choose route-specific failure handling.
  */
-export async function enforceBudget(env: Env, options: { failClosed?: boolean } = {}): Promise<boolean> {
+export async function enforceBudget(
+  env: Env,
+  options: { failClosed?: boolean; denial?: { reason?: "over_limit" | "unavailable" } } = {},
+): Promise<boolean> {
+  // `denial` is an optional out-param: on false it says whether the budget is
+  // really spent ("over_limit") or storage could not confirm ("unavailable").
+  // A non-finite stored count is always denied as "unavailable".
+  const deny = (reason: "over_limit" | "unavailable") => {
+    if (options.denial) options.denial.reason = reason;
+    return false;
+  };
   const day = utcDay();
 
   try {
     const kvKey = `budget:${day}`;
     const raw = await env.CFG.get(kvKey);
     const kvCount = raw ? Number(raw) : 0;
-    if (Number.isFinite(kvCount) && kvCount >= BUDGET_FAST_LIMIT) return false;
+    if (Number.isFinite(kvCount) && kvCount >= BUDGET_FAST_LIMIT) return deny("over_limit");
     // Best-effort increment. KV's eventual consistency means this can race --
     // deliberately not the enforcement point, see the D1 check below.
     await env.CFG.put(kvKey, String(kvCount + 1), { expirationTtl: 172800 }); // 2 days, covers UTC-boundary clock skew
@@ -331,10 +341,10 @@ export async function enforceBudget(env: Env, options: { failClosed?: boolean } 
     )
       .bind(day)
       .first<{ count: number }>();
-    if (!row || !Number.isFinite(row.count)) return options.failClosed !== true;
-    return row.count <= BUDGET_HARD_LIMIT;
+    if (!row || !Number.isFinite(row.count)) return deny("unavailable");
+    return row.count <= BUDGET_HARD_LIMIT ? true : deny("over_limit");
   } catch {
-    return options.failClosed === true ? false : true;
+    return options.failClosed === true ? deny("unavailable") : true;
   }
 }
 

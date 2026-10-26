@@ -87,11 +87,11 @@ describe("enforceBudget single D1 statement", () => {
   });
 
   it.each([null, {}, { count: null }, { count: "1" }, { count: NaN }, { count: Infinity }, { count: -Infinity }])(
-    "uses the D1 failure policy for invalid RETURNING row %j",
+    "denies regardless of failure policy for invalid RETURNING row %j",
     async (d1Row) => {
       for (const failClosed of [true, false, undefined]) {
         const { env, sql } = fakeEnv({ d1Row });
-        expect(await realDb.enforceBudget(env, { failClosed })).toBe(failClosed !== true);
+        expect(await realDb.enforceBudget(env, { failClosed })).toBe(false);
         expect(sql).toHaveLength(1);
       }
     },

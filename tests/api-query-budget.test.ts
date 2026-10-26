@@ -59,8 +59,10 @@ describe("API query authoritative compute budget", () => {
   it.each([false, true])("denies D1 failure with KV failure=%s before compute", async (kvFails) => {
     const f = fixture({ d1Fails: true, kvFails });
     const response = await post(f.env);
-    expect(response.status).toBe(429);
-    expect(await response.json()).toEqual(denied);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: "budget_unavailable", message: "Compute budget storage is unavailable. Try again shortly.",
+    });
     expect(f.first).toHaveBeenCalledOnce();
     expect(runQuery).not.toHaveBeenCalled();
     expect(writeQueryCache).not.toHaveBeenCalled();
@@ -101,13 +103,12 @@ describe("API query authoritative compute budget", () => {
     expect(runQuery).not.toHaveBeenCalled();
     expect(writeQueryCache).not.toHaveBeenCalled();
   });
-  it.each(["en", "es"])("preserves existing %s HTML budget failure policy", async (locale) => {
+  it.each(["en", "es"])("fails closed on %s /q when budget storage fails", async (locale) => {
     const f = fixture({ d1Fails: true });
     const query = new URLSearchParams({ metric: "goals", season: "2024-25", entity_type: "player", entity_id: "all", viz: "bar" });
     const response = await app.request(`https://site.invalid/${locale}/q?${query}`, { headers: auth }, f.env);
-    expect(response.status).toBe(200);
-    expect(await response.text()).toContain("Synthetic");
-    expect(runQuery).toHaveBeenCalledOnce();
+    expect(response.status).toBe(503);
+    expect(runQuery).not.toHaveBeenCalled();
     expect(f.first).toHaveBeenCalledOnce();
   });
 });
