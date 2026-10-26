@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Env } from "../worker/src/core/db";
+import { LOCALES } from "../worker/src/core/locale";
 
 vi.mock("jose", async (original) => ({
   ...await original<typeof import("jose")>(),
@@ -14,6 +15,11 @@ vi.mock("../worker/src/core/cl-history", async (original) => ({
     return { result: { snapshot_id: "a".repeat(64), entries: readState.rows as never }, sourcesJson: JSON.stringify(readState.sourceHashes) };
   }),
 }));
+const decoded = vi.hoisted(() => ({ catalog: undefined as undefined | { coverage: unknown[] } }));
+vi.mock("../worker/src/core/catalog-contract", async (original) => {
+  const actual = await original<typeof import("../worker/src/core/catalog-contract")>();
+  return { ...actual, decodeCompiledCatalog: ((value: unknown) => { const out = actual.decodeCompiledCatalog(value as never); decoded.catalog = out as never; return out; }) as typeof actual.decodeCompiledCatalog };
+});
 vi.mock("../worker/src/core/db", async (original) => ({
   ...await original<typeof import("../worker/src/core/db")>(),
   currentSnapshot: vi.fn(async () => "a".repeat(64)),
@@ -50,11 +56,28 @@ describe("Champions League history routes", () => {
     expect(await (await app.request(`https://site.invalid/${locale}/season/2024-25`, { headers }, env)).text()).toContain(`href="/${locale}/seasons/champions-league"`);
   });
 
-  it("renders the explicit empty-coverage state", async () => {
+  it("renders the no-results state for in-coverage seasons with no rows", async () => {
     readState.fail = false;
     readState.rows = [];
     const response = await app.request("https://site.invalid/en/seasons/champions-league", { headers }, env);
-    expect(await response.text()).toContain("outside current coverage");
+    const text = await response.text();
+    expect(text).toContain(LOCALES.en.strings.clHistory.noResults);
+    expect(text).not.toContain(LOCALES.en.strings.clHistory.outsideCoverage);
+  });
+
+  it("keeps the outside-coverage state when the catalog has zero CL seasons", async () => {
+    readState.fail = false;
+    readState.rows = [];
+    const cat = decoded.catalog!;
+    const saved = [...cat.coverage];
+    cat.coverage.length = 0;
+    try {
+      const text = await (await app.request("https://site.invalid/en/seasons/champions-league", { headers }, env)).text();
+      expect(text).toContain(LOCALES.en.strings.clHistory.outsideCoverage);
+      expect(text).not.toContain(LOCALES.en.strings.clHistory.noResults);
+    } finally {
+      cat.coverage.push(...saved);
+    }
   });
 
   it("withholds an observed row without its expected publication lineage key", async () => {
