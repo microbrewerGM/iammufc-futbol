@@ -755,6 +755,8 @@ export async function resolvePlayerIdentity(
     return row ? { person_id: row.person_id, web_name: row.web_name } : null;
   }
 
+  // Keep user punctuation literal in LIKE; exact comparisons still use n.
+  const aliasPattern = n.replace(/[!%_]/g, "!$&");
   const { results } = await env.DB.prepare(
     `SELECT i.person_id, p.web_name,
             CASE WHEN i.person_id = ?
@@ -768,13 +770,13 @@ export async function resolvePlayerIdentity(
       WHERE s.competition = ?
         AND (
           i.person_id = ?
-          OR LOWER(replace(p.web_name, '.', '')) LIKE '%' || ? || '%'
-          OR LOWER(p.second_name) LIKE '%' || ? || '%'
-          OR LOWER(p.first_name || ' ' || p.second_name) LIKE '%' || ? || '%'
+          OR LOWER(replace(p.web_name, '.', '')) LIKE '%' || ? || '%' ESCAPE '!'
+          OR LOWER(p.second_name) LIKE '%' || ? || '%' ESCAPE '!'
+          OR LOWER(p.first_name || ' ' || p.second_name) LIKE '%' || ? || '%' ESCAPE '!'
         )
       ORDER BY p.season DESC`,
   )
-    .bind(n, n, n, n, competition, n, n, n, n)
+    .bind(n, n, n, n, competition, n, aliasPattern, aliasPattern, aliasPattern)
     .all<IdentityCandidate>();
 
   const rows = results ?? [];
