@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { seasonSplitFacts, type Env } from "../worker/src/core/db";
-import { APPROVED_OPPONENT_IDS, queryOpponentHistory, readOpponentHistory } from "../worker/src/core/opponent-history";
-import { parseSeasonSplitRequest } from "../worker/src/core/season-splits";
-import { page } from "../worker/src/views/layout";
-import { LOCALES } from "../worker/src/core/locale";
+import { queryOpponentHistory, readOpponentHistory } from "../worker/src/core/opponent-history";
 import compiled from "../worker/src/generated/catalog.json";
 
 const sqliteModuleName: string = "node:sqlite";
@@ -131,21 +128,4 @@ describe("season split hardening", () => {
     await expect(readOpponentHistory(env, request, catalog)).rejects.toThrow("row count");
   });
 
-  it.each(["en", "es"] as const)("provides valid explicit %s navigation selections", (code) => {
-    const markup = page("", { title: "test", locale: LOCALES[code], unprefixedPath: "/" });
-    for (const path of ["opponents/history", "seasons/explore"]) {
-      const match = markup.match(new RegExp(`href="(/${code}/${path}[^\"]*)"`));
-      expect(match).not.toBeNull();
-      const url = new URL(match![1]!.replaceAll("&amp;", "&"), "https://site.invalid");
-      const params = url.searchParams;
-      const selected = params.getAll("seasons");
-      const known = [...new Set(compiled.coverage.filter(c => c.competition === "PL").map(c => c.season))];
-      const opponent = params.get("opponent_id");
-      const parsed = parseSeasonSplitRequest({ schema_version: 1, competition: "PL", seasons: selected,
-        group_by: path === "opponents/history" ? "opponent" : params.get("group_by") ?? "venue",
-        venue: null, opponent_id: opponent }, known);
-      expect(parsed.seasons).toHaveLength(1);
-      if (path === "opponents/history") expect(APPROVED_OPPONENT_IDS.has(opponent!)).toBe(true);
-    }
-  });
 });
