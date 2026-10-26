@@ -1,4 +1,4 @@
-import type { SeasonSplitRequest, SeasonSplitResult } from "../core/season-splits";
+import type { SeasonSplitGroup, SeasonSplitRequest, SeasonSplitResult } from "../core/season-splits";
 import { formatNumber, type Locale } from "../core/locale";
 import { esc } from "./layout";
 
@@ -49,7 +49,17 @@ export function seasonSplitsBody(model: SeasonSplitView, locale: Locale): string
   const coverage = `<ul aria-label="${t("Season coverage", "Cobertura por temporada")}">${result.coverage.map(c => `<li>${esc(c.season)}: ${coverageLabel[c.coverage]}</li>`).join("")}</ul>`;
   const headers = [result.request.group_by === "venue" ? t("Venue", "Localía") : t("Opponent", "Rival"), t("Played", "Jugados"), t("Wins", "Victorias"), t("Draws", "Empates"), t("Losses", "Derrotas"), t("Goals for", "Goles a favor"), t("Goals against", "Goles en contra"), t("Goal difference", "Diferencia de goles"), t("Points", "Puntos"), t("Points / match", "Puntos / partido"), t("Goals for / match", "Goles a favor / partido"), t("Goals against / match", "Goles en contra / partido"), t("Win rate (%)", "Victorias (%)"), t("Contributing seasons", "Temporadas con datos")];
   const rows = result.groups.map(g => `<tr><th scope="row">${esc(result.request.group_by === "venue" ? venueName(g.key) : opponentName(g.key))}</th>${[g.played, g.won, g.drawn, g.lost, g.goals_for, g.goals_against, g.goal_difference, g.points].map(v => `<td>${num(v)}</td>`).join("")}<td>${num(g.points_per_match, 2)}</td><td>${num(g.goals_for_per_match, 2)}</td><td>${num(g.goals_against_per_match, 2)}</td><td>${num(g.win_rate === null ? null : 100 * g.win_rate, 2)}</td><td>${esc(g.contributing_seasons.join(", "))}</td></tr>`).join("");
-  const table = result.groups.length ? `<div class="comparison-table" role="region" tabindex="0" aria-label="${title}"><table aria-describedby="splits-summary splits-method${result.partial ? " splits-warning" : ""}"><caption>${t("Season performance", "Rendimiento por temporada")}${result.partial ? ` · ${t("partial subtotals", "subtotales parciales")}` : ""}</caption><thead><tr>${headers.map(h => `<th scope="col">${h}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>` : `<p>${result.status === "no_matches" ? t("No completed matches match this selection.", "Ningún partido finalizado coincide con esta selección.") : t("Split coverage is unavailable for this selection. No zero-match total is implied.", "La cobertura de desgloses no está disponible para esta selección. No se afirma un total de cero partidos.")}</p>`;
+  const sum = (pick: (g: SeasonSplitGroup) => number) => result.groups.reduce((a, g) => a + pick(g), 0);
+  const totalRow = (): string => {
+    const [played, won, drawn, lost, gf, ga, gd, points] = [sum(g => g.played), sum(g => g.won), sum(g => g.drawn), sum(g => g.lost), sum(g => g.goals_for), sum(g => g.goals_against), sum(g => g.goal_difference), sum(g => g.points)];
+    const per = (v: number) => played > 0 ? v / played : null;
+    const winRate = per(won);
+    const seasonsUsed = [...new Set(result.groups.flatMap(g => g.contributing_seasons))].sort();
+    const label = `${t("All matches", "Todos los partidos")}${result.partial ? ` · ${t("partial subtotals", "subtotales parciales")}` : ""}`;
+    return `<tr><th scope="row">${label}</th>${[played, won, drawn, lost, gf, ga, gd, points].map(v => `<td>${num(v)}</td>`).join("")}<td>${num(per(points), 2)}</td><td>${num(per(gf), 2)}</td><td>${num(per(ga), 2)}</td><td>${num(winRate === null ? null : 100 * winRate, 2)}</td><td>${esc(seasonsUsed.join(", "))}</td></tr>`;
+  };
+  const total = result.request.group_by === "venue" && result.request.venue === null && result.groups.length ? totalRow() : "";
+  const table = result.groups.length ? `<div class="comparison-table" role="region" tabindex="0" aria-label="${title}"><table aria-describedby="splits-summary splits-method${result.partial ? " splits-warning" : ""}"><caption>${t("Season performance", "Rendimiento por temporada")}${result.partial ? ` · ${t("partial subtotals", "subtotales parciales")}` : ""}</caption><thead><tr>${headers.map(h => `<th scope="col">${h}</th>`).join("")}</tr></thead><tbody>${rows}${total}</tbody></table></div>` : `<p>${result.status === "no_matches" ? t("No completed matches match this selection.", "Ningún partido finalizado coincide con esta selección.") : t("Split coverage is unavailable for this selection. No zero-match total is implied.", "La cobertura de desgloses no está disponible para esta selección. No se afirma un total de cero partidos.")}</p>`;
   const lineage = [...new Set(result.groups.flatMap(g => g.lineage))];
   const creditFor = (ref: string): string | undefined => {
     const value: unknown = Object.hasOwn(model.credits, ref) ? model.credits[ref] : undefined;
