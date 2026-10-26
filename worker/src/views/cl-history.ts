@@ -44,6 +44,10 @@ export interface ChampionsLeagueHistoryStrings {
   snapshotDate: string;
   sources: string;
   attributionUnavailable: string;
+  /** Contains {n}. */
+  observedSeasons: string;
+  /** Contains {n}. */
+  seasonsExcluded: string;
 }
 
 /** Render-only fragment. The caller owns localization, coverage resolution and page shell. */
@@ -62,21 +66,30 @@ export function championsLeagueHistoryBody(
   };
   const credits = [...new Set(lineage.map(creditFor).filter((value): value is string => value !== undefined))];
   const headers = [strings.season, strings.played, strings.won, strings.drawn, strings.lost, strings.goalsFor, strings.goalsAgainst];
+  const validLineage = (row: ChampionsLeagueTotals): boolean => {
+    const refs = Array.isArray(row.lineage) ? row.lineage.filter((ref) => typeof ref === "string" && ref.trim()) : [];
+    return refs.length > 0 && refs.every((ref) => creditFor(ref) !== undefined);
+  };
+  const totalled = eligible.flatMap((entry) => (entry.state !== "gap" && validLineage(entry.row) ? [entry] : []));
+  const sum = (pick: (row: ChampionsLeagueTotals) => number): number => totalled.reduce((total, entry) => total + pick(entry.row), 0);
+  const notTotalled = eligible.length - totalled.length;
+  const totalsLabel = `${strings.observedSeasons.replace("{n}", String(totalled.length))}${totalled.some((entry) => entry.state === "partial") ? `, ${strings.partial.toLowerCase()}` : ""}`;
+  const totalsRow = totalled.length
+    ? `<tfoot><tr><th scope="row">${esc(totalsLabel)}${notTotalled ? ` <span>${esc(strings.seasonsExcluded.replace("{n}", String(notTotalled)))}</span>` : ""}</th>${[sum((r) => r.played), sum((r) => r.won), sum((r) => r.drawn), sum((r) => r.lost), sum((r) => r.goals), sum((r) => r.goals_against)].map((value) => `<td>${value}</td>`).join("")}</tr></tfoot>`
+    : "";
   const rows = eligible.map((entry) => {
     if (entry.state === "gap") {
       return `<tr><th scope="row">${esc(entry.season)}</th><td colspan="6"><span aria-label="${esc(strings.gap)}">—</span> <span>${esc(strings.gap)}</span></td></tr>`;
     }
     const row = entry.row;
-    const refs = Array.isArray(row.lineage) ? row.lineage.filter((ref) => typeof ref === "string" && ref.trim()) : [];
-    const hasValidLineage = refs.length > 0 && refs.every((ref) => creditFor(ref) !== undefined);
     const seasonLabel = `${esc(row.season)}${entry.state === "partial" ? ` <span>(${esc(strings.partial)})</span>` : ""}`;
-    if (!hasValidLineage) {
+    if (!validLineage(row)) {
       return `<tr><th scope="row">${seasonLabel}</th><td colspan="6"><span aria-label="${esc(strings.attributionUnavailable)}">—</span> <span>${esc(strings.attributionUnavailable)}</span></td></tr>`;
     }
     const values = [row.played, row.won, row.drawn, row.lost, row.goals, row.goals_against];
     return `<tr><th scope="row">${seasonLabel}</th>${values.map((value) => `<td>${value}</td>`).join("")}</tr>`;
   }).join("");
-  const table = `<div class="comparison-table" role="region" tabindex="0" aria-label="${esc(strings.heading)}"><table><caption>${esc(strings.caption)}</caption><thead><tr>${headers.map((header) => `<th scope="col">${esc(header)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>`;
+  const table = `<div class="comparison-table" role="region" tabindex="0" aria-label="${esc(strings.heading)}"><table><caption>${esc(strings.caption)}</caption><thead><tr>${headers.map((header) => `<th scope="col">${esc(header)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody>${totalsRow}</table></div>`;
   const sourceSection = lineage.length
     ? `<section aria-label="${esc(strings.sources)}"><h2>${esc(strings.sources)}</h2>${credits.map((credit) => `<p>${esc(credit)}</p>`).join("")}${lineage.some((ref) => creditFor(ref) === undefined) ? `<p>${esc(strings.attributionUnavailable)}</p>` : ""}${model.snapshotDate ? `<p>${esc(strings.snapshotDate)}: ${esc(model.snapshotDate)}</p>` : ""}</section>`
     : "";
