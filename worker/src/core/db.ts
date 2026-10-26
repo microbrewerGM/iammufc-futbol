@@ -456,6 +456,49 @@ export async function seasonSplitFacts(
     rows: rows.filter((row) => completeSeasons.has(row.season)) };
 }
 
+export const PLAYER_CHOICES_DEFAULT_LIMIT = 60;
+export const PLAYER_CHOICES_MAX_LIMIT = 100;
+
+/** Stable `{ person_id, label }` choices for the player trends form: players
+ * with minutes in the seasons/competition, most minutes first. Rows are bound
+ * to the caller's snapshot id, so they never mix snapshots. The
+ * label is the latest season's `web_name`, as in `playerRangeFacts`. */
+export async function playerChoices(
+  env: Env,
+  snapshotId: string,
+  { seasons, competition = "PL", limit = PLAYER_CHOICES_DEFAULT_LIMIT }:
+    { seasons: readonly string[]; competition?: "PL" | "CL"; limit?: number },
+): Promise<{ person_id: string; label: string }[]> {
+  if (!SNAPSHOT_RE.test(snapshotId)) throw new Error("invalid player choices snapshot");
+  if (competition !== "PL" && competition !== "CL") throw new Error("invalid player choices competition");
+  const unique = [...new Set(seasons)];
+  if (unique.length === 0) return [];
+  if (unique.length > 16 || !unique.every((season) => SEASON_RE.test(season))) {
+    throw new Error("invalid player choices seasons");
+  }
+  const capped = Number.isInteger(limit) && limit >= 1
+    ? Math.min(limit, PLAYER_CHOICES_MAX_LIMIT)
+    : PLAYER_CHOICES_DEFAULT_LIMIT;
+  const marks = unique.map(() => "?").join(",");
+  const { results } = await env.DB.prepare(
+    `SELECT i.person_id AS person_id,
+            (SELECT p2.web_name FROM player_identities i2
+               JOIN players p2 ON p2.player_id = i2.player_id
+              WHERE i2.person_id = i.person_id
+              ORDER BY i2.season DESC LIMIT 1) AS label,
+            SUM(s.minutes) AS total_minutes
+       FROM player_season_stats s
+       JOIN player_identities i ON i.player_id = s.player_id
+      WHERE s.season IN (${marks}) AND s.competition = ?
+        AND s.snapshot_id = ?
+      GROUP BY i.person_id
+     HAVING SUM(s.minutes) > 0
+      ORDER BY total_minutes DESC, i.person_id
+      LIMIT ?`,
+  ).bind(...unique, competition, snapshotId, capped).all<{ person_id: string; label: string }>();
+  return (results ?? []).map((row) => ({ person_id: row.person_id, label: row.label }));
+}
+
 /** Bounded, stable-ID-only facts for the selected-player comparison. */
 export async function playerRangeFacts(
   env: Env, request: PlayerRangeRequest, snapshotId: string, coverage: readonly CoverageCell[],
