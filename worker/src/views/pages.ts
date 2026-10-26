@@ -554,12 +554,14 @@ ${comparisonMarkup}
   }
 
   const feas = columnFeasibility(catalog, "player", season, "PL", locale.code);
-  const head = metricHeadCells(catalog, feas, locale);
+  const head = metricHeadCells(catalog, feas, locale) +
+    `<th class="num">${esc(t.goalsPer90Col)}</th><th class="num">${esc(t.assistsPer90Col)}</th>`;
   const rows = squad
     .map(
       (p) =>
         `<tr><td><a href="${base(locale)}/player/${encodeURIComponent(p.route_key)}/${esc(season)}">${esc(p.label)}</a></td>` +
-        `${metricValueCells(catalog, feas, p, locale)}<td>${esc(positionLabel(p.secondary, locale.code))}</td></tr>`,
+        `${metricValueCells(catalog, feas, p, locale)}` +
+        `${rateValueCell(feas, "goals", p.goals, p.minutes, locale)}${rateValueCell(feas, "assists", p.assists, p.minutes, locale)}<td>${esc(positionLabel(p.secondary, locale.code))}</td></tr>`,
     )
     .join("");
 
