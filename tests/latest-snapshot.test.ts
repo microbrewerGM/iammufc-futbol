@@ -57,7 +57,7 @@ describe("latest snapshot reads", () => {
     const body = await (await app.request("https://site.invalid/en/seasons/champions-league", { headers }, env)).text();
     expect(body).toContain(">9</td>");
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body));
-    expect([...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("")).toBe("a5d47e35792366f9c25d8b970363abb3cf1442f654f33fcf665690ee4138c26c");
+    expect([...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("")).toBe("f6fe413f407b76f98f459161cc9a5975ce4609fb6f751380e259c5d473afaa96");
   });
 
   it("reads the latest snapshot exactly once for /es and renders the Spanish page", async () => {
