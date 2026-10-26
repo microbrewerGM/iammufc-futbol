@@ -460,14 +460,17 @@ export const PLAYER_CHOICES_DEFAULT_LIMIT = 60;
 export const PLAYER_CHOICES_MAX_LIMIT = 100;
 
 /** Stable `{ person_id, label }` choices for the player trends form: players
- * with minutes in the seasons/competition, most minutes first. One statement
- * reads the newest snapshot via a subquery, so rows never mix snapshots. The
+ * with minutes in the seasons/competition, most minutes first. Rows are bound
+ * to the caller's snapshot id, so they never mix snapshots. The
  * label is the latest season's `web_name`, as in `playerRangeFacts`. */
 export async function playerChoices(
   env: Env,
+  snapshotId: string,
   { seasons, competition = "PL", limit = PLAYER_CHOICES_DEFAULT_LIMIT }:
-    { seasons: readonly string[]; competition?: string; limit?: number },
+    { seasons: readonly string[]; competition?: "PL" | "CL"; limit?: number },
 ): Promise<{ person_id: string; label: string }[]> {
+  if (!SNAPSHOT_RE.test(snapshotId)) throw new Error("invalid player choices snapshot");
+  if (competition !== "PL" && competition !== "CL") throw new Error("invalid player choices competition");
   const unique = [...new Set(seasons)];
   if (unique.length === 0) return [];
   if (unique.length > 16 || !unique.every((season) => SEASON_RE.test(season))) {
@@ -487,12 +490,12 @@ export async function playerChoices(
        FROM player_season_stats s
        JOIN player_identities i ON i.player_id = s.player_id
       WHERE s.season IN (${marks}) AND s.competition = ?
-        AND s.snapshot_id = (SELECT snapshot_id FROM snapshots ORDER BY created_at DESC LIMIT 1)
+        AND s.snapshot_id = ?
       GROUP BY i.person_id
      HAVING SUM(s.minutes) > 0
       ORDER BY total_minutes DESC, i.person_id
       LIMIT ?`,
-  ).bind(...unique, competition, capped).all<{ person_id: string; label: string }>();
+  ).bind(...unique, competition, snapshotId, capped).all<{ person_id: string; label: string }>();
   return (results ?? []).map((row) => ({ person_id: row.person_id, label: row.label }));
 }
 

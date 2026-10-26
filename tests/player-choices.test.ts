@@ -60,7 +60,7 @@ describe("playerChoices", () => {
     add(sqlite, 1, "2024-25", 400);
     add(sqlite, 1, "2023-24", 600);
     add(sqlite, 2, "2024-25", 1000);
-    const rows = await playerChoices(env, { seasons: ["2023-24", "2024-25"] });
+    const rows = await playerChoices(env, NEW, { seasons: ["2023-24", "2024-25"] });
     expect(rows).toEqual([
       { person_id: "fpl:code:1", label: "P1-2024-25" },
       { person_id: "fpl:code:2", label: "P2-2024-25" },
@@ -72,16 +72,16 @@ describe("playerChoices", () => {
     const { sqlite, env } = fixture();
     add(sqlite, 9, "2024-25", 100);
     add(sqlite, 4, "2024-25", 100);
-    const rows = await playerChoices(env, { seasons: ["2024-25"] });
+    const rows = await playerChoices(env, NEW, { seasons: ["2024-25"] });
     expect(rows.map((r) => r.person_id)).toEqual(["fpl:code:4", "fpl:code:9"]);
   });
 
   it("defaults to 60 and hard-caps at 100", async () => {
     const { sqlite, env, reads } = fixture();
     for (let code = 1; code <= 120; code++) add(sqlite, code, "2024-25", 1000 - code);
-    expect(await playerChoices(env, { seasons: ["2024-25"] })).toHaveLength(60);
-    expect(await playerChoices(env, { seasons: ["2024-25"], limit: 5 })).toHaveLength(5);
-    expect(await playerChoices(env, { seasons: ["2024-25"], limit: 500 })).toHaveLength(100);
+    expect(await playerChoices(env, NEW, { seasons: ["2024-25"] })).toHaveLength(60);
+    expect(await playerChoices(env, NEW, { seasons: ["2024-25"], limit: 5 })).toHaveLength(5);
+    expect(await playerChoices(env, NEW, { seasons: ["2024-25"], limit: 500 })).toHaveLength(100);
     expect(reads.at(-1)!.values.at(-1)).toBe(100);
   });
 
@@ -89,7 +89,7 @@ describe("playerChoices", () => {
     const { sqlite, env } = fixture();
     add(sqlite, 1, "2023-24", 900);
     add(sqlite, 2, "2024-25", 900);
-    const rows = await playerChoices(env, { seasons: ["2023-24"] });
+    const rows = await playerChoices(env, NEW, { seasons: ["2023-24"] });
     expect(rows.map((r) => r.person_id)).toEqual(["fpl:code:1"]);
   });
 
@@ -97,43 +97,50 @@ describe("playerChoices", () => {
     const { sqlite, env } = fixture();
     add(sqlite, 1, "2024-25", 900);
     add(sqlite, 2, "2024-25", 900, { competition: "CL" });
-    expect((await playerChoices(env, { seasons: ["2024-25"] })).map((r) => r.person_id)).toEqual(["fpl:code:1"]);
-    expect((await playerChoices(env, { seasons: ["2024-25"], competition: "CL" })).map((r) => r.person_id)).toEqual(["fpl:code:2"]);
+    expect((await playerChoices(env, NEW, { seasons: ["2024-25"] })).map((r) => r.person_id)).toEqual(["fpl:code:1"]);
+    expect((await playerChoices(env, NEW, { seasons: ["2024-25"], competition: "CL" })).map((r) => r.person_id)).toEqual(["fpl:code:2"]);
   });
 
   it("omits players with no minutes", async () => {
     const { sqlite, env } = fixture();
     add(sqlite, 1, "2024-25", 0);
-    expect(await playerChoices(env, { seasons: ["2024-25"] })).toEqual([]);
+    expect(await playerChoices(env, NEW, { seasons: ["2024-25"] })).toEqual([]);
   });
 
   it("returns [] for empty seasons without querying", async () => {
     const { env, reads } = fixture();
-    expect(await playerChoices(env, { seasons: [] })).toEqual([]);
+    expect(await playerChoices(env, NEW, { seasons: [] })).toEqual([]);
     expect(reads).toHaveLength(0);
   });
 
   it("rejects malformed seasons", async () => {
     const { env } = fixture();
-    await expect(playerChoices(env, { seasons: ["x' OR 1=1"] })).rejects.toThrow();
+    await expect(playerChoices(env, NEW, { seasons: ["x' OR 1=1"] })).rejects.toThrow();
   });
 
-  it("reads one snapshot only: the newest", async () => {
+  it("reads the given snapshot only", async () => {
     const { sqlite, env } = fixture();
     add(sqlite, 1, "2024-25", 900, { snapshot: OLD });
     add(sqlite, 2, "2024-25", 100, { snapshot: NEW });
-    const rows = await playerChoices(env, { seasons: ["2024-25"] });
+    const rows = await playerChoices(env, NEW, { seasons: ["2024-25"] });
     expect(rows.map((r) => r.person_id)).toEqual(["fpl:code:2"]);
+    expect((await playerChoices(env, OLD, { seasons: ["2024-25"] })).map((r) => r.person_id)).toEqual(["fpl:code:1"]);
+  });
+
+  it("rejects an invalid snapshot id", async () => {
+    const { env, reads } = fixture();
+    await expect(playerChoices(env, "nope", { seasons: ["2024-25"] })).rejects.toThrow();
+    expect(reads).toHaveLength(0);
   });
 
   it("uses an index on player_season_stats (no full scan)", async () => {
     const { sqlite, env, reads } = fixture();
     add(sqlite, 1, "2024-25", 900);
-    await playerChoices(env, { seasons: ["2024-25"] });
+    await playerChoices(env, NEW, { seasons: ["2024-25"] });
     const { sql, values } = reads[0]!;
     const plan = sqlite.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...values).map((r) => String(r.detail));
     expect(plan.some((l) => /^SEARCH s USING (COVERING )?INDEX /.test(l)), plan.join("\n")).toBe(true);
-    expect(plan.some((l) => /^SCAN (s|player_season_stats)\b/.test(l)), plan.join("\n")).toBe(false);
+    expect(plan.some((l) => l.startsWith("SCAN ")), plan.join("\n")).toBe(false);
     expect(sql).not.toMatch(/\bLIKE\b/i);
   });
 });
