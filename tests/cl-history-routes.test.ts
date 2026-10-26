@@ -9,9 +9,9 @@ vi.mock("jose", async (original) => ({
 const readState = vi.hoisted(() => ({ rows: [] as Record<string, unknown>[], fail: false, seasons: ["2024-25", "2023-24"] as string[], sourceHashes: { "openfootball:CL:2024-25": "b".repeat(64) } as Record<string, string> }));
 vi.mock("../worker/src/core/cl-history", async (original) => ({
   ...await original<typeof import("../worker/src/core/cl-history")>(),
-  clHistoryRows: vi.fn(async () => {
+  clHistoryRead: vi.fn(async () => {
     if (readState.fail) throw new Error("synthetic database failure");
-    return { snapshot_id: "a".repeat(64), entries: readState.rows as never };
+    return { result: { snapshot_id: "a".repeat(64), entries: readState.rows as never }, sourcesJson: JSON.stringify(readState.sourceHashes) };
   }),
 }));
 vi.mock("../worker/src/core/db", async (original) => ({

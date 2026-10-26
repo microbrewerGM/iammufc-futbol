@@ -45,7 +45,7 @@ import {
   type QuestionHistoryEntry,
   type PublicationState,
 } from "./core/db";
-import { clHistoryRows } from "./core/cl-history";
+import { clHistoryRead } from "./core/cl-history";
 import { decodeCompiledCatalog } from "./core/catalog-contract";
 import { Catalog, columnFeasibility, hasSubstance } from "./core/feasibility";
 import { artifactKey, canonicalize } from "./core/intent";
@@ -990,20 +990,14 @@ function registerLocaleRoutes(code: LocaleCode) {
     let body: string;
     let credits: (string | null | undefined)[] = [];
     try {
-      const [publication, snapshotMetadata] = await Promise.all([
-        currentPublication(c.env),
-        c.env.DB.prepare("SELECT snapshot_id, sources_json FROM snapshots ORDER BY created_at DESC LIMIT 1")
-          .first<{ snapshot_id: unknown; sources_json: unknown }>(),
-      ]);
-      if (!snapshotMetadata || typeof snapshotMetadata.snapshot_id !== "string") throw new Error("CL history publication unavailable");
-      const result = await clHistoryRows(c.env, decodedCatalog, snapshotMetadata.snapshot_id);
+      const [publication, read] = await Promise.all([currentPublication(c.env), clHistoryRead(c.env, decodedCatalog)]);
+      const result = read.result;
       snapshot = result.snapshot_id;
-      if (!publication || publication.snapshotId !== result.snapshot_id || !snapshot ||
-          snapshotMetadata.snapshot_id !== snapshot || typeof snapshotMetadata.sources_json !== "string") {
+      if (!publication || publication.snapshotId !== result.snapshot_id || !snapshot || typeof read.sourcesJson !== "string") {
         throw new Error("CL history publication unavailable");
       }
       let sourceHashes: unknown;
-      try { sourceHashes = JSON.parse(snapshotMetadata.sources_json); } catch { throw new Error("Invalid snapshot lineage"); }
+      try { sourceHashes = JSON.parse(read.sourcesJson); } catch { throw new Error("Invalid snapshot lineage"); }
       if (!sourceHashes || typeof sourceHashes !== "object" || Array.isArray(sourceHashes)) throw new Error("Invalid snapshot lineage");
       const hashKeys = sourceHashes as Record<string, unknown>;
       for (const [key, value] of Object.entries(hashKeys)) {
