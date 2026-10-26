@@ -44,6 +44,14 @@ function fixture() {
 }
 
 describe("literal player alias search on real SQLite", () => {
+  it.each(["\0aa", "alpha\0suffix", "alpha\0", "\0alpha", "fpl:code:1\0", decodeURIComponent("%00aa"), decodeURIComponent(decodeURIComponent("%2500aa"))])(
+    "rejects NUL-bearing alias %j before querying SQLite", async needle => {
+      const { env, queries, add } = fixture();
+      add({ web: "Alpha" });
+      await expect(resolvePlayerIdentity(env, needle)).resolves.toBeNull();
+      expect(queries).toHaveLength(0);
+    },
+  );
   it.each(["web", "second", "full"] as const)("treats wildcard punctuation literally in %s names", async field => {
     const { env, add } = fixture();
     add(field === "full" ? { first: "Alpha", second: "Beta" } : { [field]: "AlphaBeta" });

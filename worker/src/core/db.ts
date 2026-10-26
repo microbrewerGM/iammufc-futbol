@@ -731,6 +731,8 @@ export async function resolvePlayerIdentity(
   needle: string,
   competition = "PL",
 ): Promise<PlayerIdentity | null> {
+  // SQLite LIKE truncates at NUL, which can turn a literal alias into a wildcard.
+  if (needle.includes("\0")) return null;
   const n = needle.toLowerCase().replaceAll(".", "").trim();
   if (n.length < 3) return null; // avoid pathological short-substring collisions
 
