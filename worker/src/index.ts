@@ -926,7 +926,7 @@ function registerLocaleRoutes(code: LocaleCode) {
   });
 
   app.get(`${p}/player/:name/:season?`, async (c) => {
-    const nameParam = decodeURIComponent(c.req.param("name"));
+    const nameParam = c.req.param("name");
     const seasonParam = c.req.param("season");
 
     const identity = await resolvePlayerIdentity(c.env, nameParam);

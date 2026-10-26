@@ -722,6 +722,8 @@ interface IdentityCandidate extends PlayerIdentity {
   exact_match: number;
 }
 
+const D1_LIKE_PATTERN_MAX_BYTES = 50;
+
 /**
  * Resolve a source-namespaced person id or loose historical alias to one
  * stable identity. Exact aliases win only when they identify one person;
@@ -772,6 +774,10 @@ export async function resolvePlayerIdentity(
 
   // Keep user punctuation literal in LIKE; exact comparisons still use n.
   const aliasPattern = n.replace(/[!%_]/g, "!$&");
+  // D1 caps a LIKE pattern at 50 bytes (developers.cloudflare.com/d1/platform/limits);
+  // longer ones throw "LIKE or GLOB pattern too complex". Count the bound
+  // pattern, escapes and both % wildcards included, and treat overflow as not found.
+  if (new TextEncoder().encode(aliasPattern).length + 2 > D1_LIKE_PATTERN_MAX_BYTES) return null;
   const { results } = await env.DB.prepare(
     `SELECT i.person_id, p.web_name,
             CASE WHEN i.person_id = ?
