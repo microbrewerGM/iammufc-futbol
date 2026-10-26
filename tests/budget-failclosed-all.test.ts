@@ -97,7 +97,15 @@ describe("budget fails closed on every compute route", () => {
     const outcomes = vi.mocked(logQueryAggregate).mock.calls.map(call => call[4]);
     expect(outcomes).toEqual(["refused", "budget_exceeded"]);
   });
-  it.each([NaN, Infinity, null, "1"])("non-finite count %j denies regardless of policy", async (count) => {
+  it("clears a stale denial reason on entry and fails closed by default", async () => {
+    const denial: { reason?: "over_limit" | "unavailable" } = { reason: "over_limit" };
+    expect(await realDb.enforceBudget(fixture({ count: 1 }).env, { denial })).toBe(true);
+    expect(denial.reason).toBeUndefined();
+    expect(await realDb.enforceBudget(fixture({ d1Fails: true }).env, { denial })).toBe(false);
+    expect(denial.reason).toBe("unavailable");
+    expect(await realDb.enforceBudget(fixture({ d1Fails: true }).env, { failClosed: false })).toBe(true);
+  });
+  it.each([NaN,Infinity, null, "1"])("non-finite count %j denies regardless of policy", async (count) => {
     for (const failClosed of [true, false, undefined]) {
       const denial: { reason?: "over_limit" | "unavailable" } = {};
       expect(await realDb.enforceBudget(fixture({ count }).env, { failClosed, denial })).toBe(false);

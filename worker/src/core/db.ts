@@ -314,6 +314,9 @@ export async function enforceBudget(
   // `denial` is an optional out-param: on false it says whether the budget is
   // really spent ("over_limit") or storage could not confirm ("unavailable").
   // A non-finite stored count is always denied as "unavailable".
+  if (options.denial) options.denial.reason = undefined;
+  // Fail closed unless the caller explicitly passes failClosed: false.
+  const failClosed = options.failClosed !== false;
   const deny = (reason: "over_limit" | "unavailable") => {
     if (options.denial) options.denial.reason = reason;
     return false;
@@ -344,7 +347,7 @@ export async function enforceBudget(
     if (!row || !Number.isFinite(row.count)) return deny("unavailable");
     return row.count <= BUDGET_HARD_LIMIT ? true : deny("over_limit");
   } catch {
-    return options.failClosed === true ? deny("unavailable") : true;
+    return failClosed ? deny("unavailable") : true;
   }
 }
 
