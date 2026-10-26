@@ -55,7 +55,7 @@ function fixture(changeOnPublicationRead?: number) {
   function addSeason(season: string, snapshot = snapshotA, lineage = '["football_data_couk"]', expectedPlayed = 2) {
     sqlite.prepare("INSERT INTO season_stats VALUES (?, ?, 'PL', ?)").run(snapshot, season, expectedPlayed);
     for (const venue of ["home", "away"]) {
-      sqlite.prepare("INSERT INTO season_splits VALUES (?, ?, 'PL', ?, 'club:1', 1, 1, 0, 0, 2, 0, ?)")
+      sqlite.prepare("INSERT INTO season_splits VALUES (?, ?, 'PL', ?, 'club:1001', 1, 1, 0, 0, 2, 0, ?)")
         .run(snapshot, season, venue, lineage);
     }
   }
@@ -203,11 +203,11 @@ describe.each(["en", "es"] as const)("%s season trust projection", locale => {
   it("reopens canonical filters with identical explanations and follows a new publication honestly", async () => {
     const store = fixture();
     seasons.forEach(season => store.addSeason(season));
-    const response = await app.request(`https://site.invalid/${locale}/seasons/explore?venue=away&seasons=2024-25&opponent_id=club%3A1&seasons=2023-24&group_by=opponent`, { headers }, store.env);
+    const response = await app.request(`https://site.invalid/${locale}/seasons/explore?venue=away&seasons=2024-25&opponent_id=club%3A1001&seasons=2023-24&group_by=opponent`, { headers }, store.env);
     const body = await response.text();
     expect(response.status).toBe(200);
     const path = canonical(body);
-    expect(path).toBe(`/${locale}/seasons/explore?schema_version=1&competition=PL&seasons=2023-24&seasons=2024-25&group_by=opponent&venue=away&opponent_id=club%3A1`);
+    expect(path).toBe(`/${locale}/seasons/explore?schema_version=1&competition=PL&seasons=2023-24&seasons=2024-25&group_by=opponent&venue=away&opponent_id=club%3A1001`);
     const replay = await app.request(`https://site.invalid${path}`, { headers }, store.env);
     expect(replay.status).toBe(200);
     const replayBody = await replay.text();
