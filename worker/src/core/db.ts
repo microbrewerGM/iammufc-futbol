@@ -331,7 +331,8 @@ export async function enforceBudget(env: Env, options: { failClosed?: boolean } 
     )
       .bind(day)
       .first<{ count: number }>();
-    return (row?.count ?? 0) <= BUDGET_HARD_LIMIT;
+    if (!row || !Number.isFinite(row.count)) return options.failClosed !== true;
+    return row.count <= BUDGET_HARD_LIMIT;
   } catch {
     return options.failClosed === true ? false : true;
   }
