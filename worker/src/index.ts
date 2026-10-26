@@ -423,6 +423,11 @@ function registerLocaleRoutes(code: LocaleCode) {
       group_by: params.get("group_by") ?? "venue", venue: params.get("venue") || null,
       opponent_id: params.get("opponent_id") || null };
     const availableSeasons = [...new Set(catalog.coverage.filter((cell) => cell.competition === "PL").map((cell) => cell.season))].sort();
+    // No seasons param: preselect the newest catalog season when the compiled
+    // season_splits capability is clear. Explicit params are never altered.
+    if (raw.seasons.length === 0 && availableSeasons.length > 0 && catalog.outputCapability("season_splits") === "clear") {
+      raw.seasons = [availableSeasons[availableSeasons.length - 1]!];
+    }
     let request;
     let result;
     let error: string | undefined;
