@@ -110,3 +110,46 @@ describe("player trend routes", () => {
     for (const locale of [LOCALES.en, LOCALES.es]) expect(page("", { title: "x", locale, unprefixedPath: "/players/trends" })).toContain(`<a href="/${locale.code}/players/trends">`);
   });
 });
+
+describe("player trends per-90 leaderboard wiring", () => {
+  const per90 = "schema_version=1&competition=PL&person_ids=fpl%3Acode%3A1&person_ids=fpl%3Acode%3A2&person_ids=fpl%3Acode%3A3&seasons=2023-24&metric=goals&normalization=per90&viz=table";
+  function seeded() {
+    const f = fixture();
+    // Blair 3/1350 and Alex 2/900 tie on rate, so more minutes ranks first; Casey is below 450 minutes.
+    f.sqlite.exec(`INSERT INTO players VALUES ('p2','Blair'),('p3','Casey');
+      INSERT INTO player_identities VALUES ('fpl:code:2','p2','2023-24'),('fpl:code:3','p3','2023-24');`);
+    f.sqlite.prepare("INSERT INTO player_season_stats VALUES ('p2','2023-24','PL',3,0,1350,?)").run(snapshot);
+    f.sqlite.prepare("INSERT INTO player_season_stats VALUES ('p3','2023-24','PL',1,0,200,?)").run(snapshot);
+    return f;
+  }
+  const section = (body: string, label: string) => body.split(`aria-label="${label}"><h2>`)[1]!.split("</section>")[0]!;
+  const names = (html: string) => [...html.matchAll(/<th scope="row">([^<]+)<\/th>/g)].map(m => m[1]);
+
+  it.each([["en", "Per-90 leaderboard", "Excluded players"], ["es", "Clasificación por 90 minutos", "Jugadores excluidos"]])("ranks leaders and lists the low-minute player only as excluded in %s", async (locale, label, excluded) => {
+    const { env, sqlite } = seeded();
+    const response = await app.request(url(locale, per90), { headers }, env);
+    expect(response.status).toBe(200);
+    const board = section(await response.text(), label!);
+    const [ranked, exclusions] = board.split(`<h3>${excluded}</h3>`);
+    expect(names(ranked!)).toEqual(["Blair", "Alex"]);
+    expect(names(exclusions!)).toEqual(["Casey"]);
+    expect(ranked).not.toContain("Casey");
+    expect((sqlite.prepare("SELECT count FROM budget_counter").all() as { count: number }[]).map(r => r.count)).toEqual([1]);
+  });
+
+  it.each([["en", "Per-90 leaderboard", "Data unavailable"], ["es", "Clasificación por 90 minutos", "Datos no disponibles"]])("renders every player as excluded for a season without rows in %s", async (locale, label, reason) => {
+    const { env } = seeded();
+    const response = await app.request(url(locale, per90.replace("seasons=2023-24", "seasons=2024-25")), { headers }, env);
+    expect(response.status).toBe(200);
+    const board = section(await response.text(), label!);
+    expect(board).not.toContain("<td>1</td><th");
+    expect(names(board)).toEqual(["Alex", "Blair", "Casey"]);
+    expect(board).toContain(reason);
+  });
+
+  it("omits the leaderboard for total normalization", async () => {
+    const { env } = seeded();
+    const body = await (await app.request(url("en", per90.replace("normalization=per90", "normalization=total&min_minutes=0")), { headers }, env)).text();
+    expect(body).not.toContain("Per-90 leaderboard");
+  });
+});
