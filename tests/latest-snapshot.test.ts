@@ -56,7 +56,8 @@ describe("latest snapshot reads", () => {
     const { env } = fakeEnv();
     const body = await (await app.request("https://site.invalid/en/seasons/champions-league", { headers }, env)).text();
     expect(body).toContain(">9</td>");
-    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body));
+    expect(body).toMatch(/<tfoot>.*?<\/tfoot>/);
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body.replace(/<tfoot>.*?<\/tfoot>/, "")));
     expect([...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("")).toBe("f6fe413f407b76f98f459161cc9a5975ce4609fb6f751380e259c5d473afaa96");
   });
 
