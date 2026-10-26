@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../worker/src/core/db";
 import { LOCALES } from "../worker/src/core/locale";
+import compiledCatalog from "../worker/src/generated/catalog.json" with { type: "json" };
 
 const fsModuleName: string = "node:fs";
 const { readFileSync } = await import(fsModuleName) as { readFileSync(path: string, encoding: string): string };
@@ -56,14 +57,15 @@ function fixture() {
     sqlite.prepare("INSERT INTO player_season_stats VALUES (?, '2025-26', 'PL', ?, ?, ?, ?, ?, ?)")
       .run(id, player.goals, player.assists, player.minutes, player.points, player.xg, "a".repeat(64));
   });
-  const reads: Array<{ sql: string; bound: unknown[] }> = [];
+  const reads: Array<{ sql: string; bound: unknown[]; results: unknown[] }> = [];
   const env = { DB: { prepare(sql: string) {
     let bound: unknown[] = [];
     const statement = {
       bind(...values: unknown[]) { bound = values; return statement; },
       async all() {
-        reads.push({ sql, bound });
-        return { results: sqlite.prepare(sql).all(...bound) };
+        const results = sqlite.prepare(sql).all(...bound);
+        reads.push({ sql, bound, results });
+        return { results };
       },
     };
     return statement;
@@ -106,6 +108,45 @@ describe.each(["en", "es"] as const)("%s example questions return fixture answer
       expect(facts[0]!.bound).toEqual(["2025-26", "PL", 10]);
       expect(logQueryAggregate).toHaveBeenCalledWith(store.env, expect.objectContaining({
         metric: example.metric, viz: example.viz,
+      }), "computable_now_queued", "unavailable", "success", language, "ask_page");
+    } finally { store.sqlite.close(); }
+  });
+
+  it.each(examples)("shows an empty supported season for $key", async (example) => {
+    const store = fixture();
+    const season = "2024-25";
+    try {
+      expect(compiledCatalog.coverage).toEqual(expect.arrayContaining([
+        expect.objectContaining({ metric: example.metric, season, competition: "PL",
+          entity_type: "player", granularity: "box_score", redistributable: true, cost_class: "cheap" }),
+      ]));
+      // Establish missing facts independently of the ask path; other-season facts exist.
+      const expectedRows = store.sqlite.prepare("SELECT * FROM player_season_stats WHERE season = ?").all(season);
+      expect(expectedRows).toEqual([]);
+      expect(store.sqlite.prepare("SELECT * FROM player_season_stats WHERE season = ?").all("2025-26"))
+        .toHaveLength(3);
+
+      const response = await ask(store.env, language, `${LOCALES[language].strings[example.key]} ${season}`);
+      const html = await response.text();
+      expect(response.status).toBe(200);
+      expect(html).toContain(`metric      ${example.metric}`);
+      expect(html).toContain(`viz         ${example.viz}`);
+      expect(html).toContain(`season      ${season}`);
+      const facts = store.reads.filter((read) => read.sql.includes("FROM player_season_stats"));
+      expect(facts).toHaveLength(1);
+      expect(facts[0]!.bound).toEqual([season, "PL", 10]);
+      expect(facts[0]!.results).toEqual(expectedRows);
+      expect(enforceBudget).toHaveBeenCalledExactlyOnceWith(store.env);
+      expect(html).toContain('<p class="state">no rows</p>');
+      expect(html).toContain(language === "es"
+        ? "El catálogo dice que esto es respondible, pero la consulta no devolvió nada. Prueba con un apellido, o pide una clasificación."
+        : "The catalog says this is answerable, but the query returned nothing. Try a surname, or ask for a ranking.");
+      expect(html).not.toContain('<p class="state">no_data</p>');
+      expect(html).not.toContain("<table");
+      expect(html).not.toContain('<div class="chart-region"');
+      for (const name of ["Alpha", "Beta", "Gamma"]) expect(html).not.toContain(name);
+      expect(logQueryAggregate).toHaveBeenCalledWith(store.env, expect.objectContaining({
+        metric: example.metric, viz: example.viz, season,
       }), "computable_now_queued", "unavailable", "success", language, "ask_page");
     } finally { store.sqlite.close(); }
   });
