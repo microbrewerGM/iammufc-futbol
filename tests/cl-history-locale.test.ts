@@ -5,6 +5,7 @@ import type { ChampionsLeagueHistoryStrings } from "../worker/src/views/cl-histo
 const requiredKeys: readonly (keyof ChampionsLeagueHistoryStrings)[] = [
   "heading", "caption", "season", "played", "won", "drawn", "lost", "goalsFor", "goalsAgainst",
   "gap", "partial", "outsideCoverage", "noResults", "unavailable", "snapshotDate", "sources", "attributionUnavailable",
+  "observedSeasons", "seasonsExcluded",
 ];
 
 describe("Champions League history locales", () => {
