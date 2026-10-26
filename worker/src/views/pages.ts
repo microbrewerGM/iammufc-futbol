@@ -557,10 +557,12 @@ ${comparisonMarkup}
   const head = metricHeadCells(catalog, feas, locale) +
     `<th scope="col" class="num">${esc(t.goalsPer90Col)}</th><th scope="col" class="num">${esc(t.assistsPer90Col)}</th>`;
   const sum = (pick: (p: SquadRow) => number | null | undefined): number | null =>
-    squad.reduce<number | null>((acc, p) => {
+    squad.reduce<number | null>((acc, p, i) => {
       const v = pick(p);
-      return v === null || v === undefined ? acc : (acc ?? 0) + v;
-    }, null);
+      // One unknown row makes the whole total unknown; never understate it.
+      if (v === null || v === undefined || (i > 0 && acc === null)) return null;
+      return (acc ?? 0) + v;
+    }, 0);
   const totals = {
     goals: sum((p) => p.goals),
     assists: sum((p) => p.assists),
@@ -569,9 +571,19 @@ ${comparisonMarkup}
     xg: sum((p) => p.xg),
   };
   const totalLabel = locale.code === "es" ? "Total de la plantilla" : "Squad total";
+  const es = locale.code === "es";
+  const totalRateTitles = {
+    goals: es ? "Goles de la plantilla por 90 minutos de jugador" : "Squad goals per 90 player-minutes",
+    assists: es ? "Asistencias de la plantilla por 90 minutos de jugador" : "Squad assists per 90 player-minutes",
+  };
+  const totalRate = (m: "goals" | "assists") =>
+    rateValueCell(feas, m, totals[m], totals.minutes, locale).replace(
+      '<td class="num">',
+      `<td class="num" title="${esc(totalRateTitles[m])}">`,
+    );
   const totalRow = `<tfoot><tr class="total"><th scope="row">${esc(totalLabel)}</th>` +
     `${metricValueCells(catalog, feas, totals, locale)}` +
-    `${rateValueCell(feas, "goals", totals.goals, totals.minutes, locale)}${rateValueCell(feas, "assists", totals.assists, totals.minutes, locale)}<td></td></tr></tfoot>`;
+    `${totalRate("goals")}${totalRate("assists")}<td></td></tr></tfoot>`;
   const rows = squad
     .map(
       (p) =>
