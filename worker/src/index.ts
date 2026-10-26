@@ -440,6 +440,7 @@ function registerLocaleRoutes(code: LocaleCode) {
     }
     const credits = Object.fromEntries([...sourceCredits].map(([id, texts]) => [id, [...texts].join(" · ")]));
     try {
+      if (raw.opponent_id !== null && !APPROVED_OPPONENT_IDS.has(raw.opponent_id)) throw new Error("unsupported opponent");
       request = parseSeasonSplitRequest(raw, availableSeasons);
       if (catalog.outputCapability("season_splits") !== "clear") {
         error = locale.code === "es" ? "La capacidad de desgloses por temporada no está publicada." : "Season splits capability is not published.";

@@ -75,7 +75,7 @@ export function opponentHistoryBody(model: OpponentHistoryView, locale: LocaleCo
     const state = entry.record ? (entry.coverage === "complete" ? s.available : s.partial) : entry.status === "no_matches" ? s.noMatches : s.missing;
     return `<tr><th scope="row">${esc(entry.season)}</th>${recordCells(entry.record, locale)}<td>${esc(state)}</td></tr>`;
   });
-  const combinedState = result.partial ? s.partial : result.combined ? s.available : result.status === "no_matches" ? s.noMatches : s.missing;
+  const combinedState = result.combined ? (result.partial ? s.partial : s.available) : result.status === "no_matches" ? s.noMatches : s.missing;
   rows.push(`<tr><th scope="row">${esc(s.combined)}</th>${recordCells(result.combined, locale)}<td>${esc(combinedState)}</td></tr>`);
   const headers = [s.season, s.played, s.wins, s.draws, s.losses, s.goalsFor, s.goalsAgainst, s.points, s.status];
   const table = `<div class="comparison-table" role="region" tabindex="0" aria-label="${esc(s.title)}"><table aria-describedby="h2h-summary"><caption>${esc(s.title)}${partial ? ` · ${esc(s.partial)}` : ""}</caption><thead><tr>${headers.map(h => `<th scope="col">${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
