@@ -541,13 +541,15 @@ function registerLocaleRoutes(code: LocaleCode) {
         400,
       );
     }
-    return comparisonPage(
-      request,
-      await executeComparison(c.env, catalog, request, locale.code),
-      availableSeasons,
-      availableMetrics,
-      locale,
-    );
+    const otherMetric = request.metric === "goals" ? "assists" : "goals";
+    const primary = await executeComparison(c.env, catalog, request, locale.code);
+    // One extra bounded SELECT for the side-by-side column; skipped when the
+    // catalog has no coverage for it, so the view shows a refusal, not zeros.
+    const other =
+      primary.ok && availableMetrics.includes(otherMetric)
+        ? await executeComparison(c.env, catalog, { ...request, metric: otherMetric }, locale.code)
+        : undefined;
+    return comparisonPage(request, primary, availableSeasons, availableMetrics, locale, other);
   });
 
   app.get(`${p}/players/compare`, async (c) => {

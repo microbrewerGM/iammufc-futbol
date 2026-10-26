@@ -8,6 +8,8 @@ export function comparisonPage(
   seasons: string[],
   metrics: Array<ComparisonRequest["metric"]>,
   locale: Locale,
+  /** Result for the other metric; undefined means its coverage is unavailable. */
+  other?: Awaited<ReturnType<typeof executeComparison>>,
 ): Response {
   const es = locale.code === "es";
   const title = es ? "Producción por 90 minutos" : "Output per 90 minutes";
@@ -29,15 +31,38 @@ export function comparisonPage(
       ? "No hay datos integrados para esta temporada."
       : "No integrated rows are available for this season.",
   };
+  const goalsName = es ? "Goles" : "Goals";
+  const assistsName = es ? "Asistencias FPL" : "FPL assists";
+  const per90Label = es ? "por 90" : "per 90";
+  const refusal = es ? "No disponible: sin cobertura" : "Unavailable: no coverage";
+  const byMetric = (m: ComparisonRequest["metric"]) =>
+    m === request.metric ? result : other;
+  const lookup = (m: ComparisonRequest["metric"]) => {
+    const r = byMetric(m);
+    return r?.ok ? new Map(r.rows.map((row) => [row.player_id, row])) : null;
+  };
+  const goalRows = lookup("goals");
+  const assistRows = lookup("assists");
+  const cells = (map: ReturnType<typeof lookup>, id: string, covered: boolean) => {
+    if (!covered) return `<td>${esc(refusal)}</td><td>${esc(refusal)}</td>`;
+    const row = map?.get(id);
+    return row
+      ? `<td>${row.total}</td><td>${formatNumber(row.rate, 2, locale.code)}</td>`
+      : `<td>—</td><td>—</td>`;
+  };
+  const goalsCovered = byMetric("goals")?.ok === true;
+  const assistsCovered = byMetric("assists")?.ok === true;
+  const rankedHeader = (m: ComparisonRequest["metric"]) =>
+    m === request.metric ? ` aria-sort="descending"` : "";
   const table =
     result.ok && result.rows.length
       ? `<div class="comparison-table" tabindex="0" role="region" aria-label="${esc(title)}"><table>
-    <caption>${esc(metric)} · Premier League · ${esc(request.season)} · ${request.minMinutes} ${es ? "minutos mínimos" : "minimum minutes"}</caption>
-    <thead><tr><th scope="col">${es ? "Jugador" : "Player"}</th><th scope="col">${es ? "Minutos" : "Minutes"}</th><th scope="col">${esc(metric)}</th><th scope="col">${es ? "Por 90" : "Per 90"}</th></tr></thead>
+    <caption>${esc(goalsName)} + ${esc(assistsName)} ${per90Label} · Premier League · ${esc(request.season)} · ${request.minMinutes} ${es ? "minutos mínimos" : "minimum minutes"} · ${es ? "ordenado por" : "ranked by"} ${esc(metric)} ${per90Label}</caption>
+    <thead><tr><th scope="col">${es ? "Jugador" : "Player"}</th><th scope="col">${es ? "Minutos" : "Minutes"}</th><th scope="col">${esc(goalsName)}</th><th scope="col"${rankedHeader("goals")}>${esc(goalsName)} ${per90Label}</th><th scope="col">${esc(assistsName)}</th><th scope="col"${rankedHeader("assists")}>${esc(assistsName)} ${per90Label}</th></tr></thead>
     <tbody>${result.rows
       .map(
         (row) =>
-          `<tr><th scope="row">${esc(row.label)}</th><td>${row.minutes}</td><td>${row.total}</td><td>${formatNumber(row.rate, 2, locale.code)}</td></tr>`,
+          `<tr><th scope="row">${esc(row.label)}</th><td>${row.minutes}</td>${cells(goalRows, row.player_id, goalsCovered)}${cells(assistRows, row.player_id, assistsCovered)}</tr>`,
       )
       .join("")}</tbody></table></div>`
       : `<p role="status">${
