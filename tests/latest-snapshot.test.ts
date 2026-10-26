@@ -58,7 +58,7 @@ describe("latest snapshot reads", () => {
     expect(body).toContain(">9</td>");
     expect(body).toMatch(/<tfoot>.*?<\/tfoot>/);
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body.replace(/<tfoot>.*?<\/tfoot>/, "")));
-    expect([...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("")).toBe("f6fe413f407b76f98f459161cc9a5975ce4609fb6f751380e259c5d473afaa96");
+    expect([...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("")).toBe("58fdbfaed30599d2e6ab2c5513fb96c38367249088a23da6ae670d796cd2ebe5");
   });
 
   it("reads the latest snapshot exactly once for /es and renders the Spanish page", async () => {

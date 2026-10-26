@@ -423,6 +423,15 @@ function registerLocaleRoutes(code: LocaleCode) {
       group_by: params.get("group_by") ?? "venue", venue: params.get("venue") || null,
       opponent_id: params.get("opponent_id") || null };
     const availableSeasons = [...new Set(catalog.coverage.filter((cell) => cell.competition === "PL").map((cell) => cell.season))].sort();
+    // Only a bare URL (no query at all) preselects the newest season that has
+    // season-splits source coverage while the capability is clear. Any submitted
+    // or explicit query, including an empty seasons selection, is never altered.
+    if ([...params.keys()].length === 0 && catalog.outputCapability("season_splits") === "clear") {
+      const splitSeasons = new Set(catalog.coverage.filter((cell) => cell.competition === "PL" && cell.metric === "goals" &&
+        cell.entity_type === "season" && cell.granularity === "box_score" && cell.source_id === "football_data_couk").map((cell) => cell.season));
+      const newest = availableSeasons.filter((season) => splitSeasons.has(season)).at(-1);
+      if (newest) raw.seasons = [newest];
+    }
     let request;
     let result;
     let error: string | undefined;

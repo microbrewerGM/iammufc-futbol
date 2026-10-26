@@ -123,10 +123,17 @@ describe("season splits exploration routes", () => {
 
   it("charges budget only for a bounded aggregate read", async () => {
     const budget = vi.mocked((await import("../worker/src/core/db")).enforceBudget);
+    clearCatalog.mockReturnValue("unknown");
     await app.request("https://site.invalid/en/seasons/explore", { headers }, env);
     expect(budget).not.toHaveBeenCalled();
+    expect(seasonSplitFacts).not.toHaveBeenCalled();
+    clearCatalog.mockReturnValue("clear");
     await app.request("https://site.invalid/en/seasons/explore?seasons=2024-25&seasons=2024-25", { headers }, env);
     expect(budget).not.toHaveBeenCalled();
+    await app.request("https://site.invalid/en/seasons/explore", { headers }, env);
+    expect(budget).toHaveBeenCalledTimes(1);
+    expect(seasonSplitFacts).toHaveBeenCalledTimes(1);
+    vi.clearAllMocks();
     await app.request("https://site.invalid/en/seasons/explore?seasons=2024-25", { headers }, env);
     expect(budget).toHaveBeenCalledTimes(1);
   });
