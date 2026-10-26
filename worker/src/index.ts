@@ -96,17 +96,20 @@ const catalog = new Catalog(decodedCatalog);
 const app = new Hono<AccessEnv>();
 
 /** Fire-and-forget the demand-aggregate write: never awaited by the response,
- * never throws, and survives the response via waitUntil when a context exists. */
+ * tolerates a missing context, and survives the response via waitUntil when one exists. */
 function deferAggregate(
   c: { executionCtx: { waitUntil(promise: Promise<unknown>): void } },
   write: Promise<void>,
 ): void {
   const safe = write.catch(() => {});
+  let ctx: { waitUntil(promise: Promise<unknown>): void };
   try {
-    c.executionCtx.waitUntil(safe);
+    ctx = c.executionCtx;
   } catch {
     // No execution context (unit tests): the write is already detached and error-safe.
+    return;
   }
+  ctx.waitUntil(safe);
 }
 
 /** Choose a default only from metric/season pairs with executable catalog coverage. */

@@ -26,8 +26,9 @@ import { logQueryAggregate, type Env } from "../worker/src/core/db";
 
 const realDb = await vi.importActual<typeof import("../worker/src/core/db")>("../worker/src/core/db");
 
-function fakeEnv(opts: { d1Start?: number; kvStart?: number; kvFails?: boolean; d1Fails?: boolean } = {}) {
+function fakeEnv(opts: { d1Start?: number; kvStart?: number; kvFails?: boolean; d1Fails?: boolean; d1Row?: unknown } = {}) {
   const sql: string[] = [];
+  const bindings: unknown[][] = [];
   let d1 = opts.d1Start ?? 0;
   const kv = new Map<string, string>();
   if (opts.kvStart !== undefined) kv.set(`budget:${new Date().toISOString().slice(0, 10)}`, String(opts.kvStart));
@@ -45,9 +46,10 @@ function fakeEnv(opts: { d1Start?: number; kvStart?: number; kvFails?: boolean; 
     prepare: (text: string) => {
       sql.push(text);
       const stmt = {
-        bind: () => stmt,
+        bind: (...values: unknown[]) => { bindings.push(values); return stmt; },
         first: async () => {
           if (opts.d1Fails) throw new Error("D1 down");
+          if ("d1Row" in opts) return opts.d1Row;
           d1 += 1;
           return { count: d1 };
         },
@@ -58,7 +60,7 @@ function fakeEnv(opts: { d1Start?: number; kvStart?: number; kvFails?: boolean; 
       return stmt;
     },
   } as unknown as D1Database;
-  return { env: { DB, CFG } as Env, sql };
+  return { env: { DB, CFG } as Env, sql, bindings };
 }
 
 describe("enforceBudget single D1 statement", () => {
@@ -71,6 +73,29 @@ describe("enforceBudget single D1 statement", () => {
     expect(sql).toHaveLength(1);
     expect(sql[0]).toMatch(/INSERT INTO budget_counter[\s\S]*ON CONFLICT[\s\S]*RETURNING count/);
   });
+
+  it("binds today's UTC day to the authoritative counter", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-10-26T00:00:01Z"));
+      const { env, bindings } = fakeEnv();
+      expect(await realDb.enforceBudget(env)).toBe(true);
+      expect(bindings).toEqual([["2026-10-26"]]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([null, {}, { count: null }, { count: "1" }, { count: NaN }, { count: Infinity }, { count: -Infinity }])(
+    "uses the D1 failure policy for invalid RETURNING row %j",
+    async (d1Row) => {
+      for (const failClosed of [true, false, undefined]) {
+        const { env, sql } = fakeEnv({ d1Row });
+        expect(await realDb.enforceBudget(env, { failClosed })).toBe(failClosed !== true);
+        expect(sql).toHaveLength(1);
+      }
+    },
+  );
 
   it("KV fast limit: 799 allowed with one D1 statement; 800 and 900 denied with none", async () => {
     const below = fakeEnv({ kvStart: 799 });
@@ -130,6 +155,19 @@ describe("logQueryAggregate deferral", () => {
     const res = await post(ctxWith(waitUntil));
     expect(res.status).toBe(200);
     expect(waitUntil).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows a missing execution context", async () => {
+    expect((await post()).status).toBe(200);
+    expect(logQueryAggregate).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not swallow a waitUntil failure", async () => {
+    const waitUntil = vi.fn(() => { throw new Error("waitUntil unavailable"); });
+    const res = await post(ctxWith(waitUntil));
+    expect(waitUntil).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(503);
+    expect(await res.text()).toBe("Request unavailable.");
   });
 
   it("a rejecting aggregate write never changes the response", async () => {
