@@ -1,9 +1,19 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
 import { resolvePlayerIdentity, type Env } from "../worker/src/core/db";
 
-const databases: DatabaseSync[] = [];
+const sqliteModule: string = "node:sqlite";
+const fsModule: string = "node:fs";
+type Sqlite = {
+  exec(sql: string): void;
+  close(): void;
+  prepare(sql: string): {
+    run(...values: (string | number)[]): unknown;
+    all(...values: (string | number)[]): unknown[];
+  };
+};
+const { DatabaseSync } = await import(sqliteModule) as { DatabaseSync: new (path: string) => Sqlite };
+const { readFileSync } = await import(fsModule) as { readFileSync(path: URL, encoding: "utf8"): string };
+const databases: Sqlite[] = [];
 afterEach(() => { for (const db of databases.splice(0)) db.close(); });
 
 function fixture() {
