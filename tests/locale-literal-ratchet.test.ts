@@ -72,8 +72,12 @@ describe("inline locale literal ratchet", () => {
 
   it("rejects one added ternary in a real view", () => {
     const name = "layout.ts";
+    const current = countLocaleTernaries(views[name]!);
     const added = views[name]! + '\nconst regression = locale.code === "es" ? "Nuevo" : "New";';
-    expect(increases({ ...views, [name]: added })).toContain(`${name}: ${baseline[name]! + 1} > ${baseline[name]}`);
+    // This fixture's ceiling follows the live source so future consolidation
+    // does not break the self-test while remaining below the committed ceiling.
+    expect(increases({ [name]: added }, { [name]: current }))
+      .toEqual([`${name}: ${current + 1} > ${current}`]);
   });
 
   it("gives new view files a zero ceiling", () => {
