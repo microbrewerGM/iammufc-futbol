@@ -44,6 +44,10 @@ export interface ChampionsLeagueHistoryStrings {
   snapshotDate: string;
   sources: string;
   attributionUnavailable: string;
+  /** Contains {n}. */
+  observedSeasons: string;
+  /** Contains {n}. */
+  seasonsExcluded: string;
 }
 
 /** Render-only fragment. The caller owns localization, coverage resolution and page shell. */
@@ -62,6 +66,15 @@ export function championsLeagueHistoryBody(
   };
   const credits = [...new Set(lineage.map(creditFor).filter((value): value is string => value !== undefined))];
   const headers = [strings.season, strings.played, strings.won, strings.drawn, strings.lost, strings.goalsFor, strings.goalsAgainst];
+  const validLineage = (row: ChampionsLeagueTotals): boolean => {
+    const refs = Array.isArray(row.lineage) ? row.lineage.filter((ref) => typeof ref === "string" && ref.trim()) : [];
+    return refs.length > 0 && refs.every((ref) => creditFor(ref) !== undefined);
+  };
+  const observed = model.entries.flatMap((entry) => (entry.state === "observed" && validLineage(entry.row) ? [entry.row] : []));
+  const sum = (pick: (row: ChampionsLeagueTotals) => number): number => observed.reduce((total, row) => total + pick(row), 0);
+  const totalsRow = observed.length
+    ? `<tr><th scope="row">${esc(strings.observedSeasons.replace("{n}", String(observed.length)))} <span>${esc(strings.seasonsExcluded.replace("{n}", String(model.entries.length - observed.length)))}</span></th>${[sum((r) => r.played), sum((r) => r.won), sum((r) => r.drawn), sum((r) => r.lost), sum((r) => r.goals), sum((r) => r.goals_against)].map((value) => `<td>${value}</td>`).join("")}</tr>`
+    : "";
   const rows = eligible.map((entry) => {
     if (entry.state === "gap") {
       return `<tr><th scope="row">${esc(entry.season)}</th><td colspan="6"><span aria-label="${esc(strings.gap)}">—</span> <span>${esc(strings.gap)}</span></td></tr>`;
@@ -75,7 +88,7 @@ export function championsLeagueHistoryBody(
     }
     const values = [row.played, row.won, row.drawn, row.lost, row.goals, row.goals_against];
     return `<tr><th scope="row">${seasonLabel}</th>${values.map((value) => `<td>${value}</td>`).join("")}</tr>`;
-  }).join("");
+  }).join("") + totalsRow;
   const table = `<div class="comparison-table" role="region" tabindex="0" aria-label="${esc(strings.heading)}"><table><caption>${esc(strings.caption)}</caption><thead><tr>${headers.map((header) => `<th scope="col">${esc(header)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>`;
   const sourceSection = lineage.length
     ? `<section aria-label="${esc(strings.sources)}"><h2>${esc(strings.sources)}</h2>${credits.map((credit) => `<p>${esc(credit)}</p>`).join("")}${lineage.some((ref) => creditFor(ref) === undefined) ? `<p>${esc(strings.attributionUnavailable)}</p>` : ""}${model.snapshotDate ? `<p>${esc(strings.snapshotDate)}: ${esc(model.snapshotDate)}</p>` : ""}</section>`
