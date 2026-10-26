@@ -16,7 +16,7 @@ const row = (id: number, total: number, minutes: number): PlayerTrendRow => ({
   total, minutes, snapshot_id: metadata.snapshot_id, lineage: ["fixture:goals"],
 });
 // Equal rates exercise minutes, then canonical-id ties; an eligible zero remains a fact.
-const facts = [row(5, 99, 449), row(3, 1, 450), row(2, 1, 450), row(4, 0, 450), row(1, 2, 900)];
+const facts = [row(5, 99, 449), row(3, 1, 450), row(2, 1, 450), row(4, 0, 450), row(1, 4, 1800)];
 
 function render(locale: "en" | "es", rows = facts, selectedSeason = season, reverse = false) {
   const meta = { ...metadata, person_ids: reverse ? [...ids].reverse() : ids };
@@ -37,7 +37,7 @@ function tableRows(html: string, label: string): string[][] {
 const labels = { en: "Per-90 leaderboard", es: "Clasificación por 90 minutos" };
 const exclusions = { en: "Excluded players", es: "Jugadores excluidos" };
 const expected = [
-  ["1", "Player 1", "2", "900", "0.20"],
+  ["1", "Player 1", "4", "1,800", "0.20"],
   ["2", "Player 2", "1", "450", "0.20"],
   ["3", "Player 3", "1", "450", "0.20"],
   ["4", "Player 4", "0", "450", "0.00"],
@@ -48,8 +48,18 @@ describe("bilingual per-90 leaderboard parity", () => {
     const en = tableRows(render("en", facts, season, reverse), labels.en);
     const es = tableRows(render("es", facts, season, reverse), labels.es);
     expect(en).toEqual(expected);
-    expect(es).toEqual(expected.map(cells => cells.map((value, index) => index === 4 ? value.replace(".", ",") : value)));
-    expect(es.map(cells => cells.map((value, index) => index === 4 ? value.replace(",", ".") : value))).toEqual(en);
+    expect(en[0]![3]).toBe("1,800");
+    // es-ES groups five-digit integers, but leaves four-digit integers ungrouped.
+    expect(es[0]![3]).toBe("1800");
+    expect(es).toEqual([
+      ["1", "Player 1", "4", "1800", "0,20"],
+      ["2", "Player 2", "1", "450", "0,20"],
+      ["3", "Player 3", "1", "450", "0,20"],
+      ["4", "Player 4", "0", "450", "0,00"],
+    ]);
+    const numericCells = (rows: string[][]) => rows.map(cells => cells.map((value, index) =>
+      index === 3 ? value.replace(",", "") : index === 4 ? value.replace(",", ".") : value));
+    expect(numericCells(es)).toEqual(numericCells(en));
   });
 
   it.each(["en", "es"] as const)("lists the low-minute player outside the ranking in %s", locale => {
