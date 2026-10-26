@@ -146,6 +146,7 @@ async function executeWithCache(
   key: string,
   snapshot: string | null,
   allowCompute: boolean,
+  budgetOptions: Parameters<typeof enforceBudget>[1] = {},
 ): Promise<CachedExecution> {
   const cached = await readQueryCache(env, key, snapshot, intent);
   if (cached.result) {
@@ -155,7 +156,7 @@ async function executeWithCache(
     return { result: cached.result, cacheOutcome: "hit", overBudget: false };
   }
   if (!allowCompute) return { result: null, cacheOutcome: cached.outcome, overBudget: false };
-  if (!(await enforceBudget(env))) {
+  if (!(await enforceBudget(env, budgetOptions))) {
     return { result: null, cacheOutcome: cached.outcome, overBudget: true };
   }
   const result = await runQuery(env, intent, snapshot);
@@ -233,7 +234,7 @@ app.post("/api/query", async (c) => {
   if (executionIssue) return c.json({ error: executionIssue }, 422);
 
   const execution = await executeWithCache(
-    c.env, intent, key, snapshot, feasibility.state !== "computable_but_expensive",
+    c.env, intent, key, snapshot, feasibility.state !== "computable_but_expensive", { failClosed: true },
   );
   const responseFeasibility = execution.cacheOutcome === "hit"
     ? catalog.checkFeasibility(intent, "en", true)
