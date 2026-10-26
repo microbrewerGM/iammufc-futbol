@@ -28,7 +28,7 @@ describe("human request admission policy eligibility", () => {
     const p = proof(); p.batch!.audience = audience;
     expect(checkAdmissionEligibility(p, policy)).toEqual({ eligible: false, reason: "audience_denied" });
   });
-  it.each([[], ["other:batch"], ["fixture:batch:extra"], ["FIXTURE:batch"]])("denies capabilities %j", capabilities => {
+  it.each([[], ["other:batch"], ["fixture:batch:extra"], ["FIXTURE:batch"]].map(capabilities => ({ capabilities })))("denies capabilities $capabilities", ({ capabilities }) => {
     const p = proof(); p.batch!.capabilities = capabilities;
     expect(checkAdmissionEligibility(p, policy)).toEqual({ eligible: false, reason: "batch_capability_denied" });
   });
