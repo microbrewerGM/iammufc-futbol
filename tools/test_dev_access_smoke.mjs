@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { denialSmoke, runSmoke, smoke, validateChatPayload,
   snapshotContinuitySmoke, validateHealthPayload, validateQueryPayload,
-  validateSnapshotMatch, classifySeasonExplore } from './dev-access-smoke.mjs';
+  validateSnapshotMatch, classifySeasonExplore, classifyOpponentHistory } from './dev-access-smoke.mjs';
 
 const env = { CF_ACCESS_CLIENT_ID: 'synthetic-id', CF_ACCESS_CLIENT_SECRET: 'synthetic-secret' };
 const snapshot = 'a'.repeat(64);
@@ -42,6 +42,50 @@ const validQuery = (state = 'available') => ({
   ],
   attribution: ['Source'],
 });
+const opponentPage = (locale, path, published = false) => {
+  const title = locale === 'es' ? 'Historial contra rivales' : 'Opponent history';
+  const message = locale === 'es' ? 'La capacidad de desgloses por temporada no está publicada.' : 'Season splits capability is not published.';
+  const canonical = published ? path : `/${locale}/opponents/history`;
+  return `<html lang="${locale}"><link rel="canonical" href="${canonical.replaceAll('&', '&amp;')}">${published ? `<table><caption>${title}</caption></table>` : `<h1>${title}</h1><p>${message}</p>`}</html>`;
+};
+
+test('opponent classification requires localized canonical and a positive state in both languages', () => {
+  for (const locale of ['en', 'es']) {
+    const path = `/${locale}/opponents/history?schema_version=1&competition=PL&seasons=2024-25&seasons=2025-26&opponent_id=club%3A1001`;
+    const title = locale === 'es' ? 'Historial contra rivales' : 'Opponent history';
+    for (const published of [false, true]) {
+      const body = opponentPage(locale, path, published);
+      assert.equal(classifyOpponentHistory(body, locale, path), published ? 'published' : 'capability_unavailable');
+      for (const invalid of [
+        body.replace(`lang="${locale}"`, 'lang="xx"'),
+        body.replace(`lang="${locale}"`, ''),
+        body.replace('rel="canonical"', 'rel="alternate"'),
+        body.replace(`href="/${locale}/opponents/history`, `href="/${locale}/ask`),
+        body.replace(published ? `<caption>${title}</caption>` : `<h1>${title}</h1>`, `<a>${title}</a>`),
+      ]) assert.equal(classifyOpponentHistory(invalid, locale, path), 'invalid');
+    }
+    assert.equal(classifyOpponentHistory(`<html lang="${locale}"><link rel="canonical" href="${path.replaceAll('&', '&amp;')}"><nav>${title}</nav></html>`, locale, path), 'invalid');
+  }
+});
+
+test('opponent smoke rejects nav-only, missing shell and incorrect selected canonical', async () => {
+  for (const mutate of [
+    body => body.replace(/<caption>[^<]+<\/caption>/, '<nav>Opponent history Historial contra rivales</nav>'),
+    body => body.replace(/lang="[a-z]+"/, 'lang="xx"'),
+    body => body.replace('rel="canonical"', 'rel="alternate"'),
+    body => body.replace('seasons=2024-25', 'seasons=1900-01'),
+  ]) {
+    const results = await smoke(env, async url => {
+      const parsed = new URL(url);
+      return new Response(mutate(opponentPage(parsed.pathname.startsWith('/es/') ? 'es' : 'en', parsed.pathname + parsed.search, true)),
+        { headers: { 'cache-control': 'private, no-store' } });
+    });
+    const opponents = results.filter(row => row.path.includes('/opponents/history'));
+    assert.equal(opponents.length, 2);
+    assert.ok(opponents.every(row => row.pass === false && row.opponent_state === 'invalid'));
+  }
+});
+
 test('season explore accepts each localized rendered state and requires canonical link', () => {
   const markers = {
     en: [
@@ -105,7 +149,7 @@ test('fixed dev origin, manual redirects, private response and all checks', asyn
         rows: [...validQuery().rows].reverse() })
       : ['/en/seasons/explore', '/es/seasons/explore'].includes(pathname) ? `<html lang="${pathname.startsWith('/es/') ? 'es' : 'en'}"><link rel="canonical" href="${pathname}?schema_version=1&amp;competition=PL&amp;seasons=2014-15&amp;group_by=venue">${pathname.startsWith('/es/') ? 'La capacidad de desgloses por temporada no está publicada.' : 'Season splits capability is not published.'}</html>`
       : trend ? (locale === 'es' ? 'Evolución de jugadores' : 'Player trends')
-      : ['/en/opponents/history', '/es/opponents/history'].includes(pathname) ? (locale === 'es' ? 'Historial contra rivales La capacidad de desgloses por temporada no está publicada.' : 'Opponent history Season splits capability is not published.')
+      : ['/en/opponents/history', '/es/opponents/history'].includes(pathname) ? opponentPage(locale, pathname)
       : ['/en/seasons/champions-league', '/es/seasons/champions-league'].includes(pathname) ? (locale === 'es' ? 'Historial de la Liga de Campeones' : 'Champions League history')
       : path === '/en' || path === '/es' ? (url.includes('/es') ? 'Pregunta sobre el Manchester United Prueba preguntando' : 'Ask about Manchester United Try asking')
       : 'Ask about Manchester United Pregunta sobre el Manchester United Data and sources Datos y fuentes League season comparison Comparación de temporadas de liga 62–37 goals 62–37 goles >1.84</td> >1,84</td> 49–35 goals 49–35 goles >1.74</td> >1,74</td> font-family Assists — 2023-24 PL class="dot" aria-current="page">Dots</a> aria-current="page">Gráfico de puntos</a> <table>',
@@ -483,7 +527,7 @@ test('combined smoke requires authenticated success and denial success', async (
       query ? JSON.stringify(validQuery(queryCalls++ === 0 ? 'computable_now_queued' : 'available')) :
       (path === '/en/seasons/explore' || path === '/es/seasons/explore')
         ? `<html lang="${path.startsWith('/es/') ? 'es' : 'en'}"><link rel="canonical" href="${path}?schema_version=1&amp;competition=PL&amp;seasons=2014-15&amp;group_by=venue">${path.startsWith('/es/') ? 'La capacidad de desgloses por temporada no está publicada.' : 'Season splits capability is not published.'}</html>` :
-      ['/en/opponents/history', '/es/opponents/history'].includes(path) ? (path.startsWith('/es/') ? 'Historial contra rivales' : 'Opponent history') :
+      ['/en/opponents/history', '/es/opponents/history'].includes(path) ? opponentPage(path.startsWith('/es/') ? 'es' : 'en', path + new URL(url).search, true) :
       'Ask about Manchester United Try asking Pregunta sobre el Manchester United Prueba preguntando Champions League history Historial de la Liga de Campeones Data and sources Datos y fuentes League season comparison Comparación de temporadas de liga 62–37 goals 62–37 goles >1.84</td> >1,84</td> 49–35 goals 49–35 goles >1.74</td> >1,74</td> font-family Assists — 2023-24 PL class="dot" aria-current="page">Dots</a> aria-current="page">Gráfico de puntos</a> <table>',
     { status: rejected ? 422 : 200, headers: { 'cache-control': 'private, no-store',
       ...((health || chat || query) ? { 'content-type': 'application/json' } : {}) } });

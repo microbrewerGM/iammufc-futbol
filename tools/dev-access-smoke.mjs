@@ -71,9 +71,19 @@ const OPPONENT_UNPUBLISHED = {
   es: 'La capacidad de desgloses por temporada no está publicada.',
 };
 
-/** Opponent history is either the published view or the localized unpublished state. */
-export const classifyOpponentHistory = (body, locale) =>
-  body.includes(OPPONENT_UNPUBLISHED[locale]) ? 'capability_unavailable' : 'published';
+/** Require the localized route shell and a positive rendered result state. */
+export function classifyOpponentHistory(body, locale, path) {
+  if (!['en', 'es'].includes(locale) || !body.includes(`<html lang="${locale}">`)) return 'invalid';
+  const title = locale === 'es' ? 'Historial contra rivales' : 'Opponent history';
+  const unpublished = body.includes(`<h1>${title}</h1><p>${OPPONENT_UNPUBLISHED[locale]}</p>`);
+  const published = body.includes(`<caption>${title}</caption>`) ||
+    body.includes(`<caption>${title} · `);
+  if (!unpublished && !published) return 'invalid';
+  // The existing unpublished page deliberately omits filters from its canonical.
+  const canonical = unpublished ? `/${locale}/opponents/history` : path;
+  if (!canonical || !body.includes(`<link rel="canonical" href="${canonical.replaceAll('&', '&amp;')}">`)) return 'invalid';
+  return unpublished ? 'capability_unavailable' : 'published';
+}
 
 /** Independent deployed-wire validator. Returns only a safe finite state; raw
  * publication metadata never reaches CLI output. */
@@ -369,7 +379,7 @@ export async function smoke(env, request = fetch) {
       results.push({ path: `/${locale}/players/trends`, pass: false, error_class: safeErrorClass(error) });
     }
   }
-  for (const [locale, marker] of [['en', 'Opponent history'], ['es', 'Historial contra rivales']]) {
+  for (const locale of ['en', 'es']) {
     const params = new URLSearchParams({ schema_version: '1', competition: 'PL' });
     params.append('seasons', '2024-25');
     params.append('seasons', '2025-26');
@@ -381,9 +391,10 @@ export async function smoke(env, request = fetch) {
         headers: { ...headers, 'Sec-Fetch-Site': 'same-origin' },
       });
       const body = await response.text();
-      const pass = response.status === 200 && response.headers.get('cache-control')?.includes('no-store') && body.includes(marker);
+      const state = classifyOpponentHistory(body, locale, path);
+      const pass = response.status === 200 && Boolean(response.headers.get('cache-control')?.includes('no-store')) && state !== 'invalid';
       results.push({ path, status: response.status, pass,
-        opponent_state: pass ? classifyOpponentHistory(body, locale) : 'invalid' });
+        opponent_state: pass ? state : 'invalid' });
     } catch (error) {
       results.push({ path: `/${locale}/opponents/history`, pass: false, error_class: safeErrorClass(error) });
     }
