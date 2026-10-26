@@ -25,6 +25,7 @@ const env = {
         all: async () => {
           if (sql.includes("exact_match")) {
             bound.push(args);
+            if (args[0] === "%00aa" || args[0] === "%") return { results: [] };
             return { results: [{ person_id: "fpl:code:1", web_name: "Fernandes", exact_match: 1 }] };
           }
           return { results: [] };
@@ -72,20 +73,37 @@ describe("alias LIKE pattern length cap", () => {
 describe("/player/:name decoding", () => {
   const get = (path: string) => app.request(`https://site.invalid${path}`, { headers: { "cf-access-jwt-assertion": "synthetic" } }, env);
 
-  it.each(["/en/player/%25", "/en/player/%2500aa"])("%s gives the not-found page, not 503", async (path) => {
-    const res = await get(path);
-    expect(res.status).toBeLessThan(500);
-  });
+  const notFoundText = { en: "No player matched", es: "Ningún jugador coincide" } as const;
 
-  it("a long escaped-overflow name is not a 503", async () => {
-    const res = await get(`/en/player/${"%25".repeat(300)}`);
-    expect(res.status).toBeLessThan(500);
-    expect(bound).toHaveLength(0);
-  });
+  describe.each(["en", "es"] as const)("%s", (lang) => {
+    const expectNotFound = async (path: string) => {
+      const res = await get(path);
+      expect(res.status).toBe(200);
+      const markup = await res.text();
+      expect(markup).toContain('class="state">no_data');
+      expect(markup).toContain(notFoundText[lang]);
+    };
 
-  it("a normal name still resolves", async () => {
-    const res = await get("/en/player/Fernandes");
-    expect(res.status).toBe(200);
-    expect(await res.text()).toContain("Fernandes");
+    it("/player/%25 is the not-found page", async () => {
+      await expectNotFound(`/${lang}/player/%25`);
+      expect(bound).toHaveLength(0);
+    });
+
+    it("/player/%2500aa is a literal %00aa name, not found", async () => {
+      await expectNotFound(`/${lang}/player/%2500aa`);
+      expect(bound[0]?.[0]).toBe("%00aa");
+    });
+
+    it("escaped-overflow name is the not-found page without querying", async () => {
+      await expectNotFound(`/${lang}/player/${"%25".repeat(300)}`);
+      expect(bound).toHaveLength(0);
+    });
+
+    it("a normal name still resolves", async () => {
+      const res = await get(`/${lang}/player/Fernandes`);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toContain("Fernandes");
+      expect(bound[0]?.[0]).toBe("fernandes");
+    });
   });
 });
