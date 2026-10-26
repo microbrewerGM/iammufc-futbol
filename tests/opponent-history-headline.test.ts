@@ -24,7 +24,7 @@ const result = (over: Partial<OpponentHistoryResult> = {}): OpponentHistoryResul
   seasons: [{ season: "2024-25", coverage: "complete", status: "available", record: record() }], combined: record(), status: "available", partial: false, contributing_seasons: ["2024-25"], ...over });
 const body = (r: OpponentHistoryResult, locale: "en" | "es") => opponentHistoryBody({ result: r, credits: {} }, locale);
 const EN = `<p id="h2h-record">5 played · 2 won · 1 drawn · 2 lost · 9–7</p>`;
-const ES = `<p id="h2h-record">5 jugados · 2 ganados · 1 empatados · 2 perdidos · 9–7</p>`;
+const ES = `<p id="h2h-record">Jugados: 5 · Ganados: 2 · Empatados: 1 · Perdidos: 2 · Goles: 9–7</p>`;
 
 describe("opponent history record headline", () => {
   it("renders exact EN and ES text before the table", () => {
@@ -35,7 +35,12 @@ describe("opponent history record headline", () => {
   it("formats numbers with the locale formatter", () => {
     const big = result({ combined: record({ played: 12345, goals_for: 2500 }) });
     expect(body(big, "en")).toContain("12,345 played");
-    expect(body(big, "es")).toContain("12.345 jugados");
+    expect(body(big, "es")).toContain("Jugados: 12.345");
+  });
+  it("renders counts of 1 without agreement issues", () => {
+    const one = result({ combined: record({ played: 1, won: 1, drawn: 0, lost: 0, goals_for: 1, goals_against: 0 }) });
+    expect(body(one, "es")).toContain(`<p id="h2h-record">Jugados: 1 · Ganados: 1 · Empatados: 0 · Perdidos: 0 · Goles: 1–0</p>`);
+    expect(body(one, "en")).toContain(`<p id="h2h-record">1 played · 1 won · 0 drawn · 0 lost · 1–0</p>`);
   });
   it("says partial when combined is partial", () => {
     const partial = result({ partial: true, status: "partial" });
