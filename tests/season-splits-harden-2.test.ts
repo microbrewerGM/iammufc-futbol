@@ -97,7 +97,8 @@ for (const locale of locales) describe(`${locale} season split navigation and ga
       for (const path of ["opponents/history", "seasons/explore"]) {
         const href = nav.match(new RegExp(`href="(/${locale}/${path}[^" ]*)"`))![1]!.replaceAll("&amp;", "&");
         const url = new URL(href, "https://site.invalid");
-        expect(url.searchParams.getAll("seasons")).toEqual(["2010-11"]);
+        // The explore link is bare so the route preselects the newest clear season.
+        expect(url.searchParams.getAll("seasons")).toEqual(path === "seasons/explore" ? [] : ["2010-11"]);
         if (path === "opponents/history") expect(url.searchParams.get("opponent_id")).toBe("club:1001");
         const response = await app.request(url.toString(), { headers }, env);
         expect(response.status).toBe(200);

@@ -226,14 +226,14 @@ describe("page shell per locale", () => {
     expect(en).toContain('<nav class="analysis-nav" aria-label="Analysis and data">');
     expect(en).toContain('<a href="/en/compare">Compare output per 90</a>');
     expect(en).toContain(`<a href="/en/players/compare">${LOCALES.en.strings.playerRangeLink}</a>`);
-    expect(en).toContain('<a href="/en/seasons/explore?seasons=2010-11">Explore season splits</a>');
+    expect(en).toContain('<a href="/en/seasons/explore">Explore season splits</a>');
     expect(en).toContain('<a href="/en/season/2025-26#team-seasons">Compare league seasons</a>');
     expect(en).toContain('<a href="/en/data">Data and sources</a>');
     const es = render("es");
     expect(es).toContain('<nav class="analysis-nav" aria-label="Análisis y datos">');
     expect(es).toContain('<a href="/es/compare">Comparar por 90 minutos</a>');
     expect(es).toContain(`<a href="/es/players/compare">${LOCALES.es.strings.playerRangeLink}</a>`);
-    expect(es).toContain('<a href="/es/seasons/explore?seasons=2010-11">Explorar desgloses</a>');
+    expect(es).toContain('<a href="/es/seasons/explore">Explorar desgloses</a>');
     expect(es).toContain('<a href="/es/season/2025-26#team-seasons">Comparar temporadas</a>');
     expect(es).toContain('<a href="/es/data">Datos y fuentes</a>');
   });

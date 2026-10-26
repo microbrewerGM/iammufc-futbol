@@ -23,6 +23,7 @@ vi.mock("../worker/src/core/db", async (original) => ({
 }));
 
 import app from "../worker/src/index";
+import { decodeCompiledCatalog } from "../worker/src/core/catalog-contract";
 import compiled from "../worker/src/generated/catalog.json";
 import { enforceBudget, seasonSplitFacts } from "../worker/src/core/db";
 
@@ -66,6 +67,35 @@ describe("seasons explore default season", () => {
     expect(enforceBudget).not.toHaveBeenCalled();
     expect(seasonSplitFacts).not.toHaveBeenCalled();
   });
+
+  it.each(["en", "es"])("bare %s page body equals the explicit default page body", async (locale) => {
+    const bare = await (await app.request(`https://site.invalid/${locale}/seasons/explore`, { headers }, env)).text();
+    const explicit = await (await app.request(`https://site.invalid/${locale}/seasons/explore?seasons=${newest}`, { headers }, env)).text();
+    expect(bare).toBe(explicit);
+  });
+
+  it("never defaults to a newer PL season lacking season-splits source coverage", async () => {
+    type Cells = InstanceType<typeof Catalog>["coverage"];
+    const real = Object.getOwnPropertyDescriptor(Catalog.prototype, "coverage")!.get as () => Cells;
+    const cell = real.call(new Catalog(decodeCompiledCatalog(compiled))).find((c) => c.source_id === "fpl")!;
+    const spy = vi.spyOn(Catalog.prototype, "coverage", "get").mockImplementation(function (this: unknown) {
+      return [...real.call(this), { ...cell, season: "2099-00" }];
+    });
+    try {
+      const body = await (await app.request("https://site.invalid/en/seasons/explore", { headers }, env)).text();
+      expect(body).toContain(`seasons=${newest}&amp;group_by=venue"`);
+      expect(body).not.toContain('value="2099-00" checked');
+      expect(vi.mocked(seasonSplitFacts).mock.calls[0]![2]).toEqual([newest]);
+    } finally { spy.mockRestore(); }
+  });
+
+  it.each(["?seasons=", "?group_by=venue", "?schema_version=1&competition=PL&group_by=venue"])(
+    "does not default when the query %s is submitted without a selection", async (query) => {
+      const response = await app.request(`https://site.invalid/en/seasons/explore${query}`, { headers }, env);
+      expect(response.status).toBe(400);
+      expect(enforceBudget).not.toHaveBeenCalled();
+      expect(seasonSplitFacts).not.toHaveBeenCalled();
+    });
 
   it("keeps existing behavior when no season is clear", async () => {
     capability.mockReturnValue("unknown");
