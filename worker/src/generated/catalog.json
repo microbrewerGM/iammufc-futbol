@@ -948,7 +948,7 @@
   "output_coverage": [
     {
       "output_id": "season_splits",
-      "state": "unknown"
+      "state": "clear"
     },
     {
       "output_id": "arrival_manager_groups",
