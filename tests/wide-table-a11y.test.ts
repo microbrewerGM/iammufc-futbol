@@ -65,8 +65,8 @@ function assertTables(html: string, expectedTables: number) {
   }
   for (const [index, [table]] of tables.entries()) {
     const opening = table.match(/^<table\b[^>]*>/)?.[0] ?? "";
-    const caption = table.match(/<caption\b[^>]*>([\s\S]*?)<\/caption>/)?.[1] ?? "";
-    const named = caption.replace(/<[^>]*>/g, "").trim().length > 0 || /\baria-label="[^"\s][^"]*"/.test(opening);
+    const caption = table.match(/<caption\b[^>]*>([^<]*)<\/caption>/)?.[1] ?? "";
+    const named = caption.trim().length > 0 || /\baria-label="[^"\s][^"]*"/.test(opening);
     expect.soft(named, `table ${index + 1} needs its own caption or aria-label`).toBe(true);
     const headers = [...(table.match(/<thead\b[^>]*>([\s\S]*?)<\/thead>/)?.[1] ?? "").matchAll(/<th\b([^>]*)>/g)];
     expect.soft(headers.length, `table ${index + 1} column headers`).toBeGreaterThan(0);
