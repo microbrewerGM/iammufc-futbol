@@ -57,11 +57,13 @@ describe("seasons explore default season", () => {
     expect(body).toContain("seasons=2019-20&amp;group_by=venue");
     expect(body).not.toContain(`seasons=${newest}`);
     expect(vi.mocked(seasonSplitFacts).mock.calls[0]![2]).toEqual(["2019-20"]);
+    expect(enforceBudget).toHaveBeenCalledTimes(1);
   });
 
   it("keeps parse errors as 400", async () => {
     const response = await app.request("https://site.invalid/en/seasons/explore?seasons=1900-01", { headers }, env);
     expect(response.status).toBe(400);
+    expect(enforceBudget).not.toHaveBeenCalled();
     expect(seasonSplitFacts).not.toHaveBeenCalled();
   });
 
