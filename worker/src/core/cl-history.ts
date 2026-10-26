@@ -67,35 +67,44 @@ function validateRows(rows: unknown[], seasons: readonly string[], snapshotId: s
   });
 }
 
-/** Read observed Champions League season totals against exact catalog coverage. */
-export async function clHistoryRows(env: Env, catalog: CompiledCatalog): Promise<CLHistoryResult> {
+/** Read the latest snapshot row and the CL season rows in one D1 batch (a single
+ * implicit transaction), so a seed load cannot land between the two reads. */
+export async function clHistoryRead(env: Env, catalog: CompiledCatalog): Promise<{ result: CLHistoryResult; sourcesJson: unknown }> {
   const seasons = eligibleSeasons(catalog);
-  const before = await env.DB.prepare(
-    "SELECT snapshot_id FROM snapshots ORDER BY created_at DESC LIMIT 1",
-  ).first<{ snapshot_id: unknown }>();
-  if (!before || typeof before.snapshot_id !== "string" || !SNAPSHOT_RE.test(before.snapshot_id)) {
-    return { snapshot_id: null, entries: [] };
-  }
-  if (seasons.length === 0) return { snapshot_id: before.snapshot_id, entries: [] };
-  const placeholders = seasons.map(() => "?").join(", ");
-  const { results } = await env.DB.prepare(
-    `SELECT season, played, won, drawn, lost, goals, goals_against, snapshot_id
+  const statements = [env.DB.prepare("SELECT snapshot_id, sources_json FROM snapshots ORDER BY created_at DESC LIMIT 1")];
+  if (seasons.length > 0) {
+    const placeholders = seasons.map(() => "?").join(", ");
+    statements.push(env.DB.prepare(
+      `SELECT season, played, won, drawn, lost, goals, goals_against, snapshot_id
        FROM season_stats
       WHERE competition = ? AND season IN (${placeholders})
       ORDER BY season DESC LIMIT ${seasons.length + 1}`,
-  ).bind("CL", ...seasons).all<CLHistoryRecord>();
-  if ((results ?? []).length > seasons.length) throw new Error("invalid CL history row");
-  const after = await env.DB.prepare(
-    "SELECT snapshot_id FROM snapshots ORDER BY created_at DESC LIMIT 1",
-  ).first<{ snapshot_id: unknown }>();
-  if (!after || after.snapshot_id !== before.snapshot_id) throw new Error("CL history snapshot changed");
-  const rows = validateRows(results ?? [], seasons, before.snapshot_id);
+    ).bind("CL", ...seasons));
+  }
+  const [latest, rowsResult] = await env.DB.batch(statements);
+  const meta = (latest?.results ?? [])[0] as { snapshot_id?: unknown; sources_json?: unknown } | undefined;
+  const snapshotId = meta?.snapshot_id;
+  if (typeof snapshotId !== "string" || !SNAPSHOT_RE.test(snapshotId)) {
+    return { result: { snapshot_id: null, entries: [] }, sourcesJson: undefined };
+  }
+  if (seasons.length === 0) return { result: { snapshot_id: snapshotId, entries: [] }, sourcesJson: meta?.sources_json };
+  const results = (rowsResult?.results ?? []) as CLHistoryRecord[];
+  if (results.length > seasons.length) throw new Error("invalid CL history row");
+  const rows = validateRows(results, seasons, snapshotId);
   const observed = new Map(rows.map((row) => [row.season, row]));
   return {
-    snapshot_id: before.snapshot_id,
-    entries: seasons.map((season) => {
-      const row = observed.get(season);
-      return row ? { status: "observed", row } : { status: "gap", season };
-    }),
+    sourcesJson: meta?.sources_json,
+    result: {
+      snapshot_id: snapshotId,
+      entries: seasons.map((season) => {
+        const row = observed.get(season);
+        return row ? { status: "observed", row } : { status: "gap", season };
+      }),
+    },
   };
+}
+
+/** Observed Champions League season totals against exact catalog coverage. */
+export async function clHistoryRows(env: Env, catalog: CompiledCatalog): Promise<CLHistoryResult> {
+  return (await clHistoryRead(env, catalog)).result;
 }
