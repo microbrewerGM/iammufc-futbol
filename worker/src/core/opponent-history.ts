@@ -57,7 +57,16 @@ export async function readOpponentHistory(env: Env, value: unknown, metadata: un
   catch { return fail("selection"); }
   const query = buildOpponentHistoryQuery(request, catalog);
   const { results } = await env.DB.prepare(query.sql).bind(...query.bindings).all<SeasonSplitRow & { lineage_json: string }>();
-  return queryOpponentHistory(request, catalog, results);
+  // The publication reader may withhold an entire season for bad lineage or
+  // incomplete totals. Do not restore those raw rows in this second read.
+  // Keep the raw bound and reject identity/selection corruption before omission.
+  if (!Array.isArray(results) || results.length > MAX_ROWS) return queryOpponentHistory(request, catalog, results);
+  const missing = new Set(catalog.seasons.filter(entry => entry.coverage === "missing").map(entry => entry.season));
+  const visible = results.filter(row => !(row && missing.has(row.season) &&
+    request.seasons.includes(row.season) && row.snapshot_id === catalog.snapshot_id &&
+    row.competition === request.competition && row.opponent_id === request.opponent_id &&
+    (row.venue === "home" || row.venue === "away") && (request.venue === null || row.venue === request.venue)));
+  return queryOpponentHistory(request, catalog, visible);
 }
 
 function makeRecord(rows: readonly SeasonSplitRow[]): HistoryRecord {
