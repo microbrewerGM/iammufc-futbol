@@ -404,7 +404,7 @@ export async function seasonSplitFacts(
       WHERE snapshot_id = ? AND competition = 'PL' AND season IN (${marks})
       GROUP BY season`,
   ).bind(snapshotId, ...seasons).all<{ season: string; played: number; row_count: number }>();
-  const allowedSources = new Set(["openfootball_cl", "football_data_couk", "fpl"]);
+  const allowedSources = new Set(["football_data_couk", "fpl"]);
   const validLineage = (value: unknown): value is string[] => Array.isArray(value) && value.length > 0 && value.length <= 32 &&
     value.every((source) => typeof source === "string" && allowedSources.has(source)) && new Set(value).size === value.length;
   const rows: SeasonSplitRow[] = [];
