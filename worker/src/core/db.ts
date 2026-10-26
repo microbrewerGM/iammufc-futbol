@@ -323,13 +323,12 @@ export async function enforceBudget(env: Env, options: { failClosed?: boolean } 
   }
 
   try {
-    await env.DB.prepare(
+    // One statement: atomic upsert that returns the post-increment count.
+    const row = await env.DB.prepare(
       `INSERT INTO budget_counter (day, count) VALUES (?, 1)
-         ON CONFLICT(day) DO UPDATE SET count = count + 1`,
+         ON CONFLICT(day) DO UPDATE SET count = count + 1
+         RETURNING count`,
     )
-      .bind(day)
-      .run();
-    const row = await env.DB.prepare("SELECT count FROM budget_counter WHERE day = ?")
       .bind(day)
       .first<{ count: number }>();
     return (row?.count ?? 0) <= BUDGET_HARD_LIMIT;
