@@ -703,6 +703,8 @@ export interface PlayerIdentity {
   web_name: string; // most recent, for display
 }
 
+const PERSON_ID_SHAPE = /^[a-z][a-z0-9_]*:[a-z0-9_]+:[a-z0-9_-]+$/;
+
 interface IdentityCandidate extends PlayerIdentity {
   exact_match: number;
 }
@@ -731,6 +733,27 @@ export async function resolvePlayerIdentity(
 ): Promise<PlayerIdentity | null> {
   const n = needle.toLowerCase().replaceAll(".", "").trim();
   if (n.length < 3) return null; // avoid pathological short-substring collisions
+
+  // Source-namespaced person id (e.g. fpl:code:141746): exact indexed lookup
+  // on player_identities.person_id, no substring scan.
+  if (PERSON_ID_SHAPE.test(n)) {
+    const { results } = await env.DB.prepare(
+      `SELECT i.person_id, p.web_name
+         FROM player_identities i
+         JOIN players p ON p.player_id = i.player_id
+        WHERE i.person_id = ?
+          AND EXISTS (
+            SELECT 1 FROM player_season_stats s
+             WHERE s.player_id = p.player_id AND s.competition = ?
+          )
+        ORDER BY p.season DESC
+        LIMIT 1`,
+    )
+      .bind(n, competition)
+      .all<PlayerIdentity>();
+    const row = (results ?? [])[0];
+    return row ? { person_id: row.person_id, web_name: row.web_name } : null;
+  }
 
   const { results } = await env.DB.prepare(
     `SELECT i.person_id, p.web_name,
