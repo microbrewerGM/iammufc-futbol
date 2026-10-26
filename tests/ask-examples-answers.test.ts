@@ -136,7 +136,8 @@ describe.each(["en", "es"] as const)("%s example questions return fixture answer
       expect(facts).toHaveLength(1);
       expect(facts[0]!.bound).toEqual([season, "PL", 10]);
       expect(facts[0]!.results).toEqual(expectedRows);
-      expect(enforceBudget).toHaveBeenCalledExactlyOnceWith(store.env);
+      expect(enforceBudget).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(enforceBudget).mock.calls[0]![0]).toBe(store.env);
       expect(html).toContain('<p class="state">no rows</p>');
       expect(html).toContain(language === "es"
         ? "El catálogo dice que esto es respondible, pero la consulta no devolvió nada. Prueba con un apellido, o pide una clasificación."
