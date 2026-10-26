@@ -37,8 +37,11 @@ function fakeEnv(): Env {
         },
         first: async <T>() => {
           const key = String(bound[0]);
-          if (sql.includes("SELECT count")) {
-            return { count: day.get(key) ?? 0 } as unknown as T;
+          if (sql.includes("RETURNING count")) {
+            // Single-statement upsert: increment, then return the new count.
+            const next = (day.get(key) ?? 0) + 1;
+            day.set(key, next);
+            return { count: next } as unknown as T;
           }
           return null;
         },

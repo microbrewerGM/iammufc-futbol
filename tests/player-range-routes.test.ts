@@ -193,7 +193,7 @@ describe("bounded player range routes", () => {
     expect(store.history).toHaveLength(0);
   });
 
-  it.each(["INSERT INTO budget_counter", "SELECT count FROM budget_counter"])("fails closed on budget D1 failure (%s) before identity, facts, or history in both locales", async (sql) => {
+  it.each(["INSERT INTO budget_counter", "RETURNING count"])("fails closed on budget D1 failure (%s) before identity, facts, or history in both locales", async (sql) => {
     for (const locale of ["en", "es"]) {
       const store = fakeD1({ failOn: sql });
       const response = await app.request(url(locale), { headers }, envFor(store.db));
