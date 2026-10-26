@@ -990,15 +990,16 @@ function registerLocaleRoutes(code: LocaleCode) {
     let body: string;
     let credits: (string | null | undefined)[] = [];
     try {
-      const [publication, result, snapshotMetadata] = await Promise.all([
+      const [publication, snapshotMetadata] = await Promise.all([
         currentPublication(c.env),
-        clHistoryRows(c.env, decodedCatalog),
         c.env.DB.prepare("SELECT snapshot_id, sources_json FROM snapshots ORDER BY created_at DESC LIMIT 1")
           .first<{ snapshot_id: unknown; sources_json: unknown }>(),
       ]);
+      if (!snapshotMetadata || typeof snapshotMetadata.snapshot_id !== "string") throw new Error("CL history publication unavailable");
+      const result = await clHistoryRows(c.env, decodedCatalog, snapshotMetadata.snapshot_id);
       snapshot = result.snapshot_id;
       if (!publication || publication.snapshotId !== result.snapshot_id || !snapshot ||
-          !snapshotMetadata || snapshotMetadata.snapshot_id !== snapshot || typeof snapshotMetadata.sources_json !== "string") {
+          snapshotMetadata.snapshot_id !== snapshot || typeof snapshotMetadata.sources_json !== "string") {
         throw new Error("CL history publication unavailable");
       }
       let sourceHashes: unknown;
@@ -1013,7 +1014,6 @@ function registerLocaleRoutes(code: LocaleCode) {
       const source = publication.sources.find((item) => item.id === "openfootball_cl");
       if (source?.status === "unavailable" && result.entries.some((entry) => entry.status === "observed")) throw new Error("CL source unavailable");
       if (seasons.length === 0) {
-        if (await currentSnapshot(c.env) !== snapshot) throw new Error("CL history snapshot changed");
         body = championsLeagueHistoryBody({ entries: [{ state: "out_of_coverage", season: "2026-27" }], credits: {} }, locale.strings.clHistory);
       } else {
         const mapped = result.entries.map((entry) => {
@@ -1034,7 +1034,6 @@ function registerLocaleRoutes(code: LocaleCode) {
           `${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`,
           (code === "es" ? cell.attribution_text_es ?? cell.attribution_text : cell.attribution_text) ?? cell.source_name,
         ])), snapshotDate: publication.loadedAt.slice(0, 10) }, locale.strings.clHistory);
-        if (await currentSnapshot(c.env) !== snapshot) throw new Error("CL history snapshot changed");
       }
     } catch {
       body = championsLeagueHistoryBody({ entries: [], credits: {}, unavailable: true }, locale.strings.clHistory);

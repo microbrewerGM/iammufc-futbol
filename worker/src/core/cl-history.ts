@@ -67,13 +67,14 @@ function validateRows(rows: unknown[], seasons: readonly string[], snapshotId: s
   });
 }
 
-/** Read observed Champions League season totals against exact catalog coverage. */
-export async function clHistoryRows(env: Env, catalog: CompiledCatalog): Promise<CLHistoryResult> {
+/** Read observed Champions League season totals against exact catalog coverage.
+ * Pass the request's already-read latest snapshot id; without it, read it once. */
+export async function clHistoryRows(env: Env, catalog: CompiledCatalog, snapshotId?: string | null): Promise<CLHistoryResult> {
   const seasons = eligibleSeasons(catalog);
-  const before = await env.DB.prepare(
+  const before = { snapshot_id: snapshotId !== undefined ? snapshotId : (await env.DB.prepare(
     "SELECT snapshot_id FROM snapshots ORDER BY created_at DESC LIMIT 1",
-  ).first<{ snapshot_id: unknown }>();
-  if (!before || typeof before.snapshot_id !== "string" || !SNAPSHOT_RE.test(before.snapshot_id)) {
+  ).first<{ snapshot_id: unknown }>())?.snapshot_id };
+  if (typeof before.snapshot_id !== "string" || !SNAPSHOT_RE.test(before.snapshot_id)) {
     return { snapshot_id: null, entries: [] };
   }
   if (seasons.length === 0) return { snapshot_id: before.snapshot_id, entries: [] };
@@ -85,10 +86,6 @@ export async function clHistoryRows(env: Env, catalog: CompiledCatalog): Promise
       ORDER BY season DESC LIMIT ${seasons.length + 1}`,
   ).bind("CL", ...seasons).all<CLHistoryRecord>();
   if ((results ?? []).length > seasons.length) throw new Error("invalid CL history row");
-  const after = await env.DB.prepare(
-    "SELECT snapshot_id FROM snapshots ORDER BY created_at DESC LIMIT 1",
-  ).first<{ snapshot_id: unknown }>();
-  if (!after || after.snapshot_id !== before.snapshot_id) throw new Error("CL history snapshot changed");
   const rows = validateRows(results ?? [], seasons, before.snapshot_id);
   const observed = new Map(rows.map((row) => [row.season, row]));
   return {
