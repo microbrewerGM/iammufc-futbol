@@ -216,6 +216,22 @@ test('fixed dev origin, manual redirects, private response and all checks', asyn
   assert.ok(!JSON.stringify(results).includes(retrieved));
 });
 
+test('smoke example asks stay within the six ask per-run budget before submission', async () => {
+  const submitted = [];
+  await smoke(env, async (url, init) => {
+    const parsed = new URL(url);
+    if (init.method === 'POST' && parsed.pathname.endsWith('/ask')) {
+      submitted.push({ path: parsed.pathname, body: init.body });
+    }
+    return new Response('', { status: 200, headers: { 'cache-control': 'private, no-store' } });
+  });
+
+  // Count the existing example vector at its submission boundary, where a
+  // future expansion cannot silently exceed the per-capture-run budget.
+  assert.ok(submitted.length <= 6, `submitted ${submitted.length} example asks`);
+  assert.deepEqual(submitted, [{ path: '/en/ask', body: 'q=Top+assists+2023-24' }]);
+});
+
 test('query validator binds finite result shape and hides identity from output', () => {
   assert.deepEqual(validateQueryPayload(validQuery()), {
     artifactKey: 'b'.repeat(64), state: 'available',
