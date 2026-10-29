@@ -19,6 +19,8 @@ export interface ComparisonRow {
   /** Other metric's total, read in the same statement (side-by-side column). */
   goals?: number | null;
   assists?: number | null;
+  goalsRate?: number | null;
+  assistsRate?: number | null;
 }
 
 export interface RankedRow {
@@ -166,10 +168,13 @@ export async function executeComparison(
     const raw = byId.get(ranked.player_id)?.[otherMetric];
     const valid =
       otherCovered && typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 0;
+    const otherRate = valid ? per90(raw, ranked.minutes) : null;
     return {
       ...ranked,
       other_total: valid ? raw : null,
-      other_rate: valid ? per90(raw, ranked.minutes) : null,
+      other_rate: otherRate,
+      goalsRate: request.metric === "goals" ? ranked.rate : otherRate,
+      assistsRate: request.metric === "assists" ? ranked.rate : otherRate,
     };
   });
   return {
