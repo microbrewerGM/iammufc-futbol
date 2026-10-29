@@ -51,6 +51,17 @@ describe("season split body", () => {
     value.result=run([],request,"partial");expect(render(value,code)).toContain(code==="en"?"No zero-match total is implied":"No se afirma un total de cero partidos");
     expect(render(value,code)).not.toContain("<table");
   });
+  it.each(["en","es"] as const)("names the season with unavailable validated coverage and keeps the GET selector in %s",code=>{
+    const value=model();
+    value.result=querySeasonSplits(request,{snapshot_id:"synthetic",seasons:[{season:seasons[0],coverage:"complete"},{season:seasons[1],coverage:"missing"}]},[]);
+    const body=render(value,code);
+    expect(body).toContain(code==="en"?`${seasons[1]}: Missing split coverage`:`${seasons[1]}: Sin cobertura de desgloses`);
+    expect(body).toContain(code==="en"?`Split coverage is unavailable for ${seasons[1]}`:`La cobertura de desgloses no está disponible para ${seasons[1]}`);
+    expect(body).toContain('method="get" action="/');
+    expect(body).toContain(`value="${seasons[1]}" checked`);
+    expect(body).toContain(code==="en"?"Revise season selection":"Cambie la selección de temporada");
+    expect(body).not.toContain(code==="en"?"No completed matches match":"Ningún partido finalizado coincide");
+  });
   it("keeps supported zero draws as zero counts and rates",()=>{
     const value=model();value.result=run([{...row,won:0,drawn:1,goals_for:0}]);
     const r=tableRow(render(value),"Home");expect(r).toContain("<td>1</td><td>0</td><td>1</td><td>0</td><td>0</td><td>0</td><td>0</td><td>1</td>");

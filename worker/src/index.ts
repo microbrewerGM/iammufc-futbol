@@ -74,6 +74,7 @@ import { withSecurityHeaders } from "./security/headers";
 import { accessGate, accessIdentity, type AccessEnv, type AccessIdentity } from "./security/auth";
 import { createExplorationBridgeRouter } from "./routes/exploration-bridge";
 import { createQuestionRequestsRouter } from "./routes/question-requests";
+import { createQuestionTriageBridgeRouter } from "./routes/question-triage-bridge";
 import { gateQuestion, type GateRejected } from "./security/askguard";
 import { esc, html, page } from "./views/layout";
 import { comparisonPage } from "./views/comparison";
@@ -185,6 +186,7 @@ app.use("*", accessGate());
 app.onError(() => new Response("Request unavailable.", { status: 503 }));
 app.route("/", createQuestionRequestsRouter());
 app.route("/internal/exploration-bridge", createExplorationBridgeRouter());
+app.route("/internal/question-triage-bridge", createQuestionTriageBridgeRouter());
 
 // ---------------------------------------------------------------------------
 // JSON API -- locale-neutral, returns data not prose
@@ -1035,7 +1037,7 @@ function registerLocaleRoutes(code: LocaleCode) {
       const source = publication.sources.find((item) => item.id === "openfootball_cl");
       if (source?.status === "unavailable" && result.entries.some((entry) => entry.status === "observed")) throw new Error("CL source unavailable");
       if (seasons.length === 0) {
-        body = championsLeagueHistoryBody({ entries: [{ state: "out_of_coverage", season: "2026-27" }], credits: {} }, locale.strings.clHistory);
+        body = championsLeagueHistoryBody({ entries: [{ state: "out_of_coverage", season: "2026-27" }], credits: {} }, locale.strings.clHistory, code);
       } else {
         const mapped = result.entries.map((entry) => {
           if (entry.status === "gap") return { state: "gap" as const, season: entry.season };
@@ -1054,10 +1056,10 @@ function registerLocaleRoutes(code: LocaleCode) {
         body = championsLeagueHistoryBody({ entries: mapped, credits: Object.fromEntries(cells.map((cell) => [
           `${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`,
           (code === "es" ? cell.attribution_text_es ?? cell.attribution_text : cell.attribution_text) ?? cell.source_name,
-        ])), snapshotDate: publication.loadedAt.slice(0, 10) }, locale.strings.clHistory);
+        ])), snapshotDate: publication.loadedAt.slice(0, 10) }, locale.strings.clHistory, code);
       }
     } catch {
-      body = championsLeagueHistoryBody({ entries: [], credits: {}, unavailable: true }, locale.strings.clHistory);
+      body = championsLeagueHistoryBody({ entries: [], credits: {}, unavailable: true }, locale.strings.clHistory, code);
       snapshot = null;
     }
     const res = html(page(body, { title: locale.strings.clHistory.heading, locale, unprefixedPath: "/seasons/champions-league", snapshotId: snapshot, attribution: credits }));
