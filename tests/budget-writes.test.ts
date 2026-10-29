@@ -53,6 +53,12 @@ function fakeEnv(opts: { d1Start?: number; kvStart?: number; kvFails?: boolean; 
           d1 += 1;
           return { count: d1 };
         },
+        all: async () => {
+          if (opts.d1Fails) throw new Error("D1 down");
+          if ("d1Row" in opts) return { results: opts.d1Row ? [opts.d1Row] : [], meta: { duration: 1, rows_read: 1 } };
+          d1 += 1;
+          return { results: [{ count: d1 }], meta: { duration: 1, rows_read: 1 } };
+        },
         run: async () => {
           throw new Error("enforceBudget must not use run()");
         },

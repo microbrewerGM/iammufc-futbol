@@ -45,8 +45,8 @@ const MESSAGES: Record<Locale, Record<ArrivalClarificationReason, string>> = {
 
 // Deliberately finite, whole-question patterns. Unknown wording is a clarification,
 // never evidence for guessing identities, population, statistics or arrival dates.
-const ENGLISH = /^(?:show|list)(?: me)? (?:the )?current (?:united |manchester united )?players (?:grouped by the manager (?:in charge|who was in charge) when they joined|that were acquired or joined for which managers were in charge of the team at the time of joining)$/;
-const SPANISH = /^(?:muestra|mostrar|lista) (?:los )?jugadores actuales (?:del united |del manchester united )?agrupados por el entrenador que estaba al mando cuando llegaron$/;
+const ENGLISH = /^(?:which current (?:united |manchester united )?players joined under which manager|(?:show|list)(?: me)? (?:the )?current (?:united |manchester united )?players (?:grouped by the manager (?:in charge|who was in charge) when they joined|that were acquired or joined for which managers were in charge of the team at the time of joining))$/;
+const SPANISH = /^(?:que jugadores actuales llegaron con cada entrenador|(?:muestra|mostrar|lista) (?:los )?jugadores actuales (?:del united |del manchester united )?agrupados por el entrenador que estaba al mando cuando llegaron)$/;
 const CANDIDATE = /\b(?:manager[a-z]*|manag[a-z]*|mang[a-z]*|coach[a-z]*|acquir[a-z]*|sign(?:ed|ing|ings|s)?|recruit[a-z]*|promot[a-z]*|academy|debut[a-z]*|entren[a-z]*|tecnic[a-z]*|arriv[a-z]*|join[a-z]*|joined|adquir[a-z]*|fich[a-z]*|lleg[a-z]*|contrat[a-z]*)\b/;
 
 function realDate(value: unknown): value is string {
@@ -73,7 +73,7 @@ export function proposeArrivalManager(
     return clarify("invalid_question");
   }
   let text = question.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
-    .trim().replace(/^[¿¡]/, "").replace(/[.?!]$/, "").trim().replace(/\s+/g, " ");
+    .trim().replace(/^[¿¡]+/, "").replace(/[.?!]$/, "").trim().replace(/\s+/g, " ");
   if (!text) return clarify("invalid_question");
   if (!CANDIDATE.test(text)) return { status: "not_applicable" };
 

@@ -24,7 +24,7 @@ describe("Champions League totals row", () => {
         { state: "out_of_coverage", season: "2026-27" },
       ],
       credits,
-    }, strings);
+    }, strings, code);
     const label = `${strings.observedSeasons.replace("{n}", "3")}, ${code === "es" ? "parcial" : "partial"}`;
     expect(body).toContain(`<tfoot><tr><th scope="row">${label} <span>${strings.seasonsExcluded.replace("{n}", "2")}</span></th>${cells}`);
     expect(body.indexOf("<tfoot>")).toBeGreaterThan(body.indexOf("</tbody>"));
@@ -32,13 +32,13 @@ describe("Champions League totals row", () => {
 
   it.each(["en", "es"] as const)("omits the partial label and excluded span when nothing is excluded in %s", (code) => {
     const strings = LOCALES[code].strings.clHistory;
-    const body = championsLeagueHistoryBody({ entries: [{ state: "observed", row: a }, { state: "observed", row: b }], credits }, strings);
+    const body = championsLeagueHistoryBody({ entries: [{ state: "observed", row: a }, { state: "observed", row: b }], credits }, strings, code);
     expect(body).toContain(`<tfoot><tr><th scope="row">${strings.observedSeasons.replace("{n}", "2")}</th><td>9</td><td>5</td><td>3</td><td>1</td><td>15</td><td>7</td></tr></tfoot>`);
   });
 
   it.each(["en", "es"] as const)("omits totals for all-gap in %s", (code) => {
     const strings = LOCALES[code].strings.clHistory;
-    const body = championsLeagueHistoryBody({ entries: [{ state: "gap", season: "2024-25" }, { state: "gap", season: "2023-24" }], credits: {} }, strings);
+    const body = championsLeagueHistoryBody({ entries: [{ state: "gap", season: "2024-25" }, { state: "gap", season: "2023-24" }], credits: {} }, strings, code);
     expect(body).toContain(strings.noResults);
     expect(body).not.toContain("<tfoot");
   });

@@ -38,6 +38,7 @@ import {
   seasonHistoryRows,
   seasonRecordRow,
   seasonSplitFacts,
+  readOpponentLabels,
   seasonSquadRows,
   writeQueryCache,
   type CacheOutcome,
@@ -70,9 +71,14 @@ import { calculatePer90Leaders, calculatePlayerTrends, parsePlayerTrendsRequest 
 import { playerTrendsBody } from "./views/player-trends";
 import { APPROVED_OPPONENT_IDS, readOpponentHistory } from "./core/opponent-history";
 import { opponentHistoryBody, opponentHistoryUnpublishedBody } from "./views/opponent-history";
+import { adaptArrivalManagerAnswer, arrivalLineageCredits } from "./core/arrival-manager-answer";
+import { arrivalManagersBody } from "./views/arrival-managers";
+import type { ArrivalManagerRequest } from "./core/discovery-arrivals";
 import { withSecurityHeaders } from "./security/headers";
 import { accessGate, accessIdentity, type AccessEnv, type AccessIdentity } from "./security/auth";
 import { createExplorationBridgeRouter } from "./routes/exploration-bridge";
+import { createQuestionRequestsRouter } from "./routes/question-requests";
+import { createQuestionTriageBridgeRouter } from "./routes/question-triage-bridge";
 import { gateQuestion, type GateRejected } from "./security/askguard";
 import { esc, html, page } from "./views/layout";
 import { comparisonPage } from "./views/comparison";
@@ -182,7 +188,9 @@ app.use("*", async (c, next) => {
 });
 app.use("*", accessGate());
 app.onError(() => new Response("Request unavailable.", { status: 503 }));
+app.route("/", createQuestionRequestsRouter());
 app.route("/internal/exploration-bridge", createExplorationBridgeRouter());
+app.route("/internal/question-triage-bridge", createQuestionTriageBridgeRouter());
 
 // ---------------------------------------------------------------------------
 // JSON API -- locale-neutral, returns data not prose
@@ -385,6 +393,75 @@ function registerLocaleRoutes(code: LocaleCode) {
   const locale = LOCALES[code];
   const p = `/${code}`;
 
+  app.get(`${p}/discover/arrivals`, async (c) => {
+    const invalid = code === "es" ? "Solicitud de llegada no válida." : "Invalid arrival question.";
+    const params = new URL(c.req.url).searchParams;
+    const fields = ["academy_basis", "as_of", "family", "joining_basis", "population", "version", "visualization"];
+    if ([...params.keys()].some((key) => !fields.includes(key)) || fields.some((key) => params.getAll(key).length !== 1)) {
+      return html(invalid, 400);
+    }
+    const raw = Object.fromEntries(fields.map((key) => [key, params.get(key)]));
+    const request = raw as unknown as ArrivalManagerRequest;
+    const expected: ArrivalManagerRequest = {
+      version: 1, family: "arrival_manager", as_of: "",
+      population: "first_team_available", joining_basis: "effective_first_team_spell_entry",
+      academy_basis: "documented_first_team_promotion", visualization: "table",
+    };
+    const date = request.as_of;
+    if (fields.some((key) => key !== "as_of" && raw[key] !== String(expected[key as keyof ArrivalManagerRequest])) ||
+        typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date) || date.startsWith("0000") ||
+        !Number.isFinite(Date.parse(`${date}T00:00:00Z`)) || new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date ||
+        new TextEncoder().encode(new URL(c.req.url).search).byteLength > 2048) {
+      return html(invalid, 400);
+    }
+    expected.as_of = date;
+    let model;
+    try {
+      const response = c.env.ASSETS ? await c.env.ASSETS.fetch(new URL(`/answers/arrival-manager/${date}.json`, c.req.url)) : null;
+      if (!response?.ok) {
+        model = { request: expected, players: {}, managers: {}, entries: {}, credits: {}, result: {
+          request: expected, snapshot_id: "unavailable", artifact_key: "0".repeat(64), transform_code_version: "answer-export-v1",
+          renderer_version: "arrival-manager-view-v1", roster_snapshot_id: null, feasibility: "no_data" as const,
+          coverage: "missing" as const, population_count: 0, assigned: [], unknown: [], lineage: [],
+        } };
+      } else {
+        const input = await response.json() as unknown;
+        const snapshot = typeof input === "object" && input !== null && "snapshot_id" in input && typeof input.snapshot_id === "string" ? input.snapshot_id : undefined;
+        const lineageRefs = new Set<string>();
+        if (typeof input === "object" && input !== null && !Array.isArray(input)) {
+          const answer = input as { lineage?: unknown; rows?: unknown };
+          if (Array.isArray(answer.lineage)) for (const ref of answer.lineage) if (typeof ref === "string") lineageRefs.add(ref);
+          if (Array.isArray(answer.rows)) for (const row of answer.rows) {
+            if (typeof row === "object" && row !== null && !Array.isArray(row) && Array.isArray((row as { lineage?: unknown }).lineage)) {
+              for (const ref of (row as { lineage: unknown[] }).lineage) if (typeof ref === "string") lineageRefs.add(ref);
+            }
+          }
+        }
+        const sourceByRef = new Map<string, typeof catalog.coverage>();
+        for (const cell of catalog.coverage) {
+          for (const ref of [cell.source_id, `${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`]) {
+            sourceByRef.set(ref, [...(sourceByRef.get(ref) ?? []), cell]);
+          }
+        }
+        const denied = [...lineageRefs].some(ref => {
+          const sources = sourceByRef.get(ref);
+          return !sources?.length || sources.some(cell => !cell.redistributable);
+        });
+        const credits = arrivalLineageCredits(catalog.coverage, locale.code);
+        model = adaptArrivalManagerAnswer(input, credits, { request: expected, ...(snapshot ? { snapshot_id: snapshot } : {}), ...(denied ? { denied: true } : {}) });
+        if (model.error) model = { request: expected, players: {}, managers: {}, entries: {}, credits: {}, result: {
+          request: expected, snapshot_id: "unavailable", artifact_key: "0".repeat(64), transform_code_version: "answer-export-v1",
+          renderer_version: "arrival-manager-view-v1", roster_snapshot_id: null, feasibility: "no_data" as const,
+          coverage: "missing" as const, population_count: 0, assigned: [], unknown: [], lineage: [],
+        } };
+      }
+    } catch {
+      return html(code === "es" ? "La respuesta no está disponible temporalmente." : "The answer is temporarily unavailable.", 503);
+    }
+    const body = arrivalManagersBody(model, locale);
+    return html(page(body, { title: code === "es" ? "Jugadores por entrenador al llegar" : "Players by manager at joining", locale, unprefixedPath: "/discover/arrivals" }));
+  });
+
   async function playerTrendsIdentityLabels(env: Env, people: readonly string[]): Promise<{ person_id: string; label: string }[]> {
     const result = await env.DB.prepare(`SELECT i.person_id, p.web_name AS label FROM player_identities i JOIN players p ON p.player_id = i.player_id WHERE i.person_id IN (${people.map(() => "?").join(",")}) ORDER BY i.person_id, i.season DESC`).bind(...people).all<{ person_id: string; label: string }>();
     const labels = new Map<string, string>();
@@ -461,11 +538,17 @@ function registerLocaleRoutes(code: LocaleCode) {
           const publication = await currentPublication(c.env);
           snapshot = publication?.snapshotId ?? null;
           if (!snapshot) throw new Error("snapshot unavailable");
-          const facts = await seasonSplitFacts(c.env, snapshot, request.seasons, {
+      const facts = await seasonSplitFacts(c.env, snapshot, request.seasons, {
             venue: request.venue, opponent_id: request.opponent_id,
           });
           result = querySeasonSplits(request, facts.catalog, facts.rows);
-          opponents = [...new Set(facts.rows.map((row) => row.opponent_id))].sort().map((opponent_id) => ({ opponent_id, label: opponent_id }));
+          const opponentIds = [...new Set([
+            ...facts.rows.map((row) => row.opponent_id),
+            ...(request.opponent_id ? [request.opponent_id] : []),
+          ])].filter((id) => APPROVED_OPPONENT_IDS.has(id)).sort();
+          const labels = await readOpponentLabels(c.env, snapshot, opponentIds);
+          if (await currentSnapshot(c.env) !== snapshot) throw new Error("snapshot_changed_during_query");
+          opponents = opponentIds.map((opponent_id) => ({ opponent_id, label: labels.get(opponent_id) ?? opponent_id }));
         }
       }
     } catch {
@@ -785,6 +868,7 @@ function registerLocaleRoutes(code: LocaleCode) {
       if (!snapshot) throw new Error("snapshot unavailable");
       const facts = await seasonSplitFacts(c.env, snapshot, request.seasons, { venue: null, opponent_id: opponent });
       const result = await readOpponentHistory(c.env, request, facts.catalog);
+      const labels = await readOpponentLabels(c.env, snapshot, [opponent]);
       if (await currentSnapshot(c.env) !== snapshot) throw new Error("snapshot changed");
       // season_splits lineage_json contains bare catalog source IDs.
       const sourceCredits = new Map<string, Set<string>>();
@@ -795,7 +879,7 @@ function registerLocaleRoutes(code: LocaleCode) {
         sourceCredits.get(cell.source_id)!.add(credit);
       }
       const credits = Object.fromEntries([...sourceCredits].map(([id, texts]) => [id, [...texts].join(" · ")]));
-      const body = opponentHistoryBody({ result, credits }, locale.code);
+      const body = opponentHistoryBody({ result, opponentLabel: labels.get(opponent) ?? opponent, credits }, locale.code);
       const res = html(page(body, { title: t.opponentHistoryTitle, locale, unprefixedPath: `/opponents/history?${new URLSearchParams(params)}`, snapshotId: snapshot }));
       res.headers.set("Cache-Control", CACHE_CONTROL);
       return res;
@@ -1006,7 +1090,8 @@ function registerLocaleRoutes(code: LocaleCode) {
 
   app.get(`${p}/seasons/champions-league`, async (c) => {
     const url = new URL(c.req.url);
-    if (url.search || url.pathname.endsWith("/")) return c.redirect(`/${code}/seasons/champions-league`, 301);
+    const csvRequested = url.searchParams.get("format") === "csv" && url.searchParams.size === 1;
+    if ((url.search && !csvRequested) || url.pathname.endsWith("/")) return c.redirect(`/${code}/seasons/champions-league`, 301);
     const cells = catalog.coverage.filter((cell) => cell.metric === "goals" && cell.entity_type === "season" &&
       cell.granularity === "box_score" && cell.competition === "CL" && cell.source_id === "openfootball");
     const seasons = [...new Set(cells.map((cell) => cell.season))];
@@ -1014,6 +1099,8 @@ function registerLocaleRoutes(code: LocaleCode) {
     let snapshot: string | null = null;
     let body: string;
     let credits: (string | null | undefined)[] = [];
+    let csvEntries: { state: "observed" | "partial" | "gap"; row?: { season: string; played: number; won: number; drawn: number; lost: number; goals: number; goals_against: number; lineage?: readonly string[] }; season?: string }[] | null = null;
+    let csvCredits: Record<string, string> = {};
     try {
       const [publication, read] = await Promise.all([currentPublication(c.env), clHistoryRead(c.env, decodedCatalog)]);
       const result = read.result;
@@ -1033,7 +1120,7 @@ function registerLocaleRoutes(code: LocaleCode) {
       const source = publication.sources.find((item) => item.id === "openfootball_cl");
       if (source?.status === "unavailable" && result.entries.some((entry) => entry.status === "observed")) throw new Error("CL source unavailable");
       if (seasons.length === 0) {
-        body = championsLeagueHistoryBody({ entries: [{ state: "out_of_coverage", season: "2026-27" }], credits: {} }, locale.strings.clHistory);
+        body = championsLeagueHistoryBody({ entries: [{ state: "out_of_coverage", season: "2026-27" }], credits: {} }, locale.strings.clHistory, code);
       } else {
         const mapped = result.entries.map((entry) => {
           if (entry.status === "gap") return { state: "gap" as const, season: entry.season };
@@ -1049,14 +1136,47 @@ function registerLocaleRoutes(code: LocaleCode) {
           if (credit.trim()) credits.push(credit);
           return { state: "partial" as const, row: { ...entry.row, lineage: [ref] } };
         });
-        body = championsLeagueHistoryBody({ entries: mapped, credits: Object.fromEntries(cells.map((cell) => [
+        csvEntries = mapped;
+        csvCredits = Object.fromEntries(cells.map((cell) => [
           `${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`,
           (code === "es" ? cell.attribution_text_es ?? cell.attribution_text : cell.attribution_text) ?? cell.source_name,
-        ])), snapshotDate: publication.loadedAt.slice(0, 10) }, locale.strings.clHistory);
+        ]));
+        body = championsLeagueHistoryBody({ entries: mapped, credits: csvCredits, snapshotDate: publication.loadedAt.slice(0, 10) }, locale.strings.clHistory, code);
       }
     } catch {
-      body = championsLeagueHistoryBody({ entries: [], credits: {}, unavailable: true }, locale.strings.clHistory);
+      body = championsLeagueHistoryBody({ entries: [], credits: {}, unavailable: true }, locale.strings.clHistory, code);
       snapshot = null;
+    }
+    if (csvRequested) {
+      if (!csvEntries) return new Response("History export unavailable.", { status: 503, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+      const strings = locale.strings.clHistory;
+      const csvCell = (value: string | number): string => {
+        let text = String(value);
+        if (/^\s*[=+\-@]/.test(text) || /^[\t\r]/.test(text)) text = `'${text}`;
+        return `"${text.replace(/"/g, '""')}"`;
+      };
+      const rows = [
+        [strings.season, strings.played, strings.won, strings.drawn, strings.lost, strings.goalsFor, strings.goalsAgainst, code === "es" ? "Atribución" : "Attribution"],
+        ...csvEntries.map((entry) => {
+          if (entry.state === "gap") return [entry.season ?? "", "", "", "", "", "", "", ""];
+          const row = entry.row!;
+          const refs = Array.isArray(row.lineage) ? row.lineage.filter((ref) => typeof ref === "string" && ref.trim()) : [];
+          const attribution = refs.length > 0 && refs.every((ref) => Object.hasOwn(csvCredits, ref))
+            ? [...new Set(refs.map((ref) => csvCredits[ref]))].join("; ")
+            : "";
+          return [row.season, ...(attribution ? [row.played, row.won, row.drawn, row.lost, row.goals, row.goals_against] : ["", "", "", "", "", ""]), attribution];
+        }),
+      ];
+      return new Response(`${rows.map((row) => row.map((cell) => csvCell(cell)).join(",")).join("\r\n")}\r\n`, {
+        headers: {
+          "Content-Type": "text/csv; charset=utf-8",
+          "Content-Disposition": `attachment; filename="champions-league-history-${code}.csv"`,
+        },
+      });
+    }
+    if (csvEntries) {
+      const download = code === "es" ? "Descargar CSV" : "Download CSV";
+      body += `<p><a href="/${code}/seasons/champions-league?format=csv">${download}</a></p>`;
     }
     const res = html(page(body, { title: locale.strings.clHistory.heading, locale, unprefixedPath: "/seasons/champions-league", snapshotId: snapshot, attribution: credits }));
     res.headers.set("Cache-Control", CACHE_CONTROL);

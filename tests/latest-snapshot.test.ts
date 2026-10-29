@@ -42,7 +42,7 @@ function fakeEnv() {
   const env = { DB, ACCESS_ISSUER: "https://example.cloudflareaccess.com", ACCESS_AUD: "a".repeat(64), ACCESS_OWNER_EMAILS: "owner@example.invalid" } as unknown as Env;
   return { env, prepared };
 }
-const headers = { "cf-access-jwt-assertion": "synthetic" };
+const headers = { "cf-access-jwt-assertion": "synthetic", Origin: "https://site.invalid", "Sec-Fetch-Site": "same-origin" };
 
 describe("latest snapshot reads", () => {
   it("reads the latest snapshot exactly once per CL history request", async () => {
@@ -58,7 +58,10 @@ describe("latest snapshot reads", () => {
     expect(body).toContain(">9</td>");
     expect(body).toMatch(/<tfoot>.*?<\/tfoot>/);
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body.replace(/<tfoot>.*?<\/tfoot>/, "")));
-    expect([...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("")).toBe("58fdbfaed30599d2e6ab2c5513fb96c38367249088a23da6ae670d796cd2ebe5");
+    expect([...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("")).toBe("00c510e5baf2086d76eca20d8b0588b3ea6bb4003bbde4b6e6c58f7a9556b34b");
+    const plainLabels = body.replace(/<tfoot>.*?<\/tfoot>/, "").replace(/<a href="\/(?:en|es)\/season\/\d{4}-\d{2}">([^<]+)<\/a>/g, "$1");
+    const oldDigest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(plainLabels));
+    expect([...new Uint8Array(oldDigest)].map((b) => b.toString(16).padStart(2, "0")).join("")).toBe("a9820680caf1e71308fff615658a250c0d9bbb56e035f2a05b64bf64e8db1e96");
   });
 
   it("reads the latest snapshot exactly once for /es and renders the Spanish page", async () => {

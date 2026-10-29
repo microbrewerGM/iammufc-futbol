@@ -171,7 +171,14 @@ export function querySeasonSplits(value: unknown, metadataValue: unknown, rowsVa
     if (current.played > 0) bucket.seasons.add(current.season);
     current.lineage.forEach(ref => bucket.lineage.add(ref));
   }
-  const groups = [...buckets].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, bucket]) => {
+  const groups = [...buckets].sort(([a, left], [b, right]) => {
+    if (request.group_by === "opponent") {
+      return right.totals.played - left.totals.played
+        || (right.totals.won * 3 + right.totals.drawn) - (left.totals.won * 3 + left.totals.drawn)
+        || (a < b ? -1 : a > b ? 1 : 0);
+    }
+    return a < b ? -1 : a > b ? 1 : 0;
+  }).map(([key, bucket]) => {
     const t = bucket.totals;
     const points = add(add(t.won, t.won), add(t.won, t.drawn));
     const rate = (n: number) => t.played ? n / t.played : null;
