@@ -24,6 +24,10 @@ export function playerTrendsBody(model: PlayerTrendsView, strings: Readonly<Reco
   const metric = model.definition === "fpl_assists"
     ? tr("assists", t("FPL assists", "Asistencias FPL"))
     : tr("goals", t("Goals", "Goles"));
+  const axisUnits = model.request.normalization === "per90"
+    ? t("per 90 minutes", "por 90 minutos")
+    : t("total", "total");
+  const axisDescription = `${t("Horizontal axis: season", "Eje horizontal: temporada")}. ${t("Vertical axis", "Eje vertical")}: ${metric} ${axisUnits}.`;
   const heading = tr("heading", t("Player trends", "Evolución de jugadores"));
   const seasons = model.request.seasons;
   const allCells = model.series.flatMap(s => s.cells);
@@ -66,7 +70,7 @@ export function playerTrendsBody(model: PlayerTrendsView, strings: Readonly<Reco
     const markers = points.map(p => `<circle cx="${(cells.length === 1 ? 50 : 4 + 92 * p.index / (cells.length - 1)).toFixed(2)}" cy="${(96 - 76 * p.value / max).toFixed(2)}" r="2.5"><title>${esc(cells[p.index]!.season)}: ${n(p.value, model.request.normalization === "per90" ? 2 : 0)}</title></circle>`).join("");
     const gaps = cells.map((cell, index) => cell.reason === "missing_row" || cell.reason === "missing_numerator" || cell.reason === "missing_minutes" || cell.reason === "zero_minutes"
       ? `<text x="${(cells.length === 1 ? 50 : 4 + 92 * index / (cells.length - 1)).toFixed(2)}" y="98" text-anchor="middle" aria-label="${esc(reasonLabel(cell.reason))}">×</text>` : "").join("");
-    return `<figure><figcaption>${safeName(series.person_id)}</figcaption><svg viewBox="0 0 100 100" role="img" aria-label="${esc(alt)}"><title>${esc(alt)}</title><desc>${esc(t("Gaps break the line; the table gives each season and reason.", "Los datos ausentes interrumpen la línea; la tabla muestra cada temporada y motivo."))}</desc>${lines}${markers}${gaps}</svg></figure>`;
+    return `<figure><figcaption>${safeName(series.person_id)}</figcaption><svg viewBox="0 0 100 100" role="img" aria-label="${esc(alt)}"><title>${esc(alt)}</title><desc>${esc(axisDescription)} ${esc(t("Gaps break the line; the table gives each season and reason.", "Los datos ausentes interrumpen la línea; la tabla muestra cada temporada y motivo."))}</desc>${lines}${markers}${gaps}</svg></figure>`;
   });
 
   const columns = [
@@ -77,14 +81,15 @@ export function playerTrendsBody(model: PlayerTrendsView, strings: Readonly<Reco
   ];
   const rows = model.series.flatMap(series => series.cells.map(cell => {
     const reason = reasonLabel(cell.reason);
-    return `<tr><th scope="row">${safeName(series.person_id)}</th><td>${esc(cell.season)}</td><td>${n(cell.total)}</td><td>${n(cell.minutes)}</td><td>${model.request.normalization === "per90" ? n(cell.rate, 2) : esc(reason)}</td><td>${esc(reason)}</td></tr>`;
+    const total = cell.reason === "missing_row" ? esc(reason) : n(cell.total);
+    return `<tr><th scope="row">${safeName(series.person_id)}</th><td>${esc(cell.season)}</td><td>${total}</td><td>${n(cell.minutes)}</td><td>${model.request.normalization === "per90" ? n(cell.rate, 2) : esc(reason)}</td><td>${esc(reason)}</td></tr>`;
   })).join("");
   const tableLabel = tr("table", t("Season by season values and availability", "Valores y disponibilidad por temporada"));
-  const table = `<div role="region" tabindex="0" aria-label="${esc(tableLabel)}"><table><caption>${esc(tableLabel)}</caption><thead><tr>${columns.map(c => `<th scope="col">${esc(c)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>`;
+  const table = `<div class="player-trend-season-table" role="region" tabindex="0" aria-label="${esc(tableLabel)}"><table><caption>${esc(tableLabel)}</caption><thead><tr>${columns.map(c => `<th scope="col">${esc(c)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>`;
   const sufficientSeries = model.series.filter(s => s.cells.filter(c => c.reason === "supported").length >= 2);
   const chart
     = model.request.viz === "line"
-      ? `<section aria-label="${esc(heading)}"><h2>${esc(heading)}</h2><p class="trend-alt">${esc(alt)}</p>${sufficientSeries.length ? sufficientSeries.map(s => seriesMarkup[model.series.indexOf(s)]).join("") : ""}${sufficientSeries.length < model.series.length ? `<p>${esc(tr("insufficient", t("Not enough points for a trend", "No hay suficientes puntos para mostrar una evolución")))}</p>` : ""}</section>` : "";
+      ? `<section aria-label="${esc(heading)}"><h2>${esc(heading)}</h2><p class="trend-alt">${esc(alt)}</p><p class="trend-axis-label">${esc(axisDescription)}</p>${sufficientSeries.length ? sufficientSeries.map(s => seriesMarkup[model.series.indexOf(s)]).join("") : ""}${sufficientSeries.length < model.series.length ? `<p>${esc(tr("insufficient", t("Not enough points for a trend", "No hay suficientes puntos para mostrar una evolución")))}</p>` : ""}</section>` : "";
   const threshold = model.request.normalization === "per90"
     ? `<p>${esc(tr("threshold", t("Minimum minutes per season", "Minutos mínimos por temporada")))}: ${n(model.request.min_minutes)}.</p>` : "";
   const belowCount = allCells.filter(c => c.reason === "below_minimum").length;

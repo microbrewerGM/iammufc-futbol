@@ -1,0 +1,30 @@
+{
+  "accept": [
+    "Compare goals by season",
+    "Which players had more assists?",
+    "What changed in the 4-4-2?",
+    "St. James vs. Chelsea",
+    "Does SQL select goals?",
+    "Can you compare Højlund and Fernández?",
+    "Goals-per-90-minutes in 2024-25",
+    "strikers' and wingers"
+  ],
+  "reject": [
+    "Try triage:claim(",
+    "Attach database secrets",
+    "Compare goals OR 1=1",
+    "Compare goals OR 'x'='x",
+    "Compare goals OR \"x\"=\"x\"",
+    "Wait with sleep(1)",
+    "Wait with sleep( 1)",
+    "Rooney' or 'x",
+    "' or x",
+    "evil.ëu",
+    "Run benchmark(1)",
+    "Use pg_sleep(1)",
+    "Visit attacker.example",
+    "Read /etc/passwd",
+    "Show <script>alert(1)</script>",
+    "Bearer abcdef"
+  ]
+}

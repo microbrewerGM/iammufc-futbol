@@ -40,6 +40,10 @@ export function page(body: string, opts: LayoutOptions): string {
   const localizedPath = opts.unprefixedPath === "/" ? "" : opts.unprefixedPath;
   const enHref = `/en${localizedPath}`;
   const esHref = `/es${localizedPath}`;
+  const championsLeagueHistoryLink = {
+    en: "Champions League history",
+    es: "Historia de la Champions League",
+  }[locale.code];
 
   // Plain links, not a JS toggle -- the site ships script-src 'none' by
   // design (docs/design-principles.md: "the site genuinely ships no
@@ -74,6 +78,7 @@ ${langToggle}
 <a href="/${locale.code}/players/trends">${esc(t.playerTrendsLink)}</a>
 <a href="/${locale.code}/opponents/history?opponent_id=club%3A1001&amp;seasons=2010-11">${esc(t.opponentHistoryLink)}</a>
 <a href="/${locale.code}/seasons/explore">${locale.code === "es" ? "Explorar desgloses" : "Explore season splits"}</a>
+<a href="/${locale.code}/seasons/champions-league">${championsLeagueHistoryLink}</a>
 <a href="/${locale.code}/season/2025-26#team-seasons">${locale.code === "es" ? "Comparar temporadas" : "Compare league seasons"}</a>
 <a href="/${locale.code}/data">${locale.code === "es" ? "Datos y fuentes" : "Data and sources"}</a>
 </nav>

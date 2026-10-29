@@ -47,7 +47,9 @@ function fakeD1() {
     let bound: unknown[] = [];
     const statement = {
       bind: (...values: unknown[]) => { bound = values; return statement; },
-      first: async <T,>() => (sqlite.prepare(sql).get(...bound) ?? null) as T | null,
+      first: async <T,>() => (sql.includes("ORDER BY created_at DESC")
+        ? { snapshot_id: snapshot }
+        : sqlite.prepare(sql).get(...bound) ?? null) as T | null,
       all: async <T,>() => ({ results: sqlite.prepare(sql).all(...bound) as T[] }),
       run: async () => sqlite.prepare(sql).run(...bound),
     };

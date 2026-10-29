@@ -51,6 +51,17 @@ describe("season split body", () => {
     value.result=run([],request,"partial");expect(render(value,code)).toContain(code==="en"?"No zero-match total is implied":"No se afirma un total de cero partidos");
     expect(render(value,code)).not.toContain("<table");
   });
+  it.each(["en","es"] as const)("names the season with unavailable validated coverage and keeps the GET selector in %s",code=>{
+    const value=model();
+    value.result=querySeasonSplits(request,{snapshot_id:"synthetic",seasons:[{season:seasons[0],coverage:"complete"},{season:seasons[1],coverage:"missing"}]},[]);
+    const body=render(value,code);
+    expect(body).toContain(code==="en"?`${seasons[1]}: Missing split coverage`:`${seasons[1]}: Sin cobertura de desgloses`);
+    expect(body).toContain(code==="en"?`Split coverage is unavailable for ${seasons[1]}`:`La cobertura de desgloses no está disponible para ${seasons[1]}`);
+    expect(body).toContain('method="get" action="/');
+    expect(body).toContain(`value="${seasons[1]}" checked`);
+    expect(body).toContain(code==="en"?"Revise season selection":"Cambie la selección de temporada");
+    expect(body).not.toContain(code==="en"?"No completed matches match":"Ningún partido finalizado coincide");
+  });
   it("keeps supported zero draws as zero counts and rates",()=>{
     const value=model();value.result=run([{...row,won:0,drawn:1,goals_for:0}]);
     const r=tableRow(render(value),"Home");expect(r).toContain("<td>1</td><td>0</td><td>1</td><td>0</td><td>0</td><td>0</td><td>0</td><td>1</td>");
@@ -81,4 +92,31 @@ describe("season split body", () => {
     expect(body).not.toMatch(/<script|<style|style=|onclick=/);
   });
   it("renders initial controls without invented results",()=>{const value=model();delete value.result;expect(render(value)).not.toContain("<table");expect(render(value)).not.toContain("No completed matches");});
+  it.each(["en","es"] as const)("groups season choices chronologically with localized labels in %s",code=>{
+    const value=model();value.seasons=["1992-93","2000-01","2010-11","2020-21"];value.selection.seasons=["2000-01","2020-21"];
+    const body=render(value,code), fieldset=body.slice(body.indexOf("<fieldset>"),body.indexOf('<label for="splits-group_by"'));
+    const labels=code==="en"?["1990s","2000s","2010s","2020s"]:["Década de 1990","Década de 2000","Década de 2010","Década de 2020"];
+    const headingPositions=labels.map(label=>fieldset.indexOf(`<legend>${label}</legend>`));
+    expect(headingPositions.every(position=>position>=0)).toBe(true);
+    expect(headingPositions).toEqual([...headingPositions].sort((a,b)=>a-b));
+    expect(fieldset).toContain('<input id="splits-season-1" type="checkbox" name="seasons" value="2000-01" checked>');
+    expect(fieldset).toContain('<input id="splits-season-3" type="checkbox" name="seasons" value="2020-21" checked>');
+    expect(fieldset).toContain('<input id="splits-season-0" type="checkbox" name="seasons" value="1992-93">');
+  });
+  it("escapes hostile season values when creating group legends",()=>{
+    const value=model();value.seasons=["<img src=x onerror=bad()>"];value.selection.seasons=["<img src=x onerror=bad()>"];
+    const body=render(value), fieldset=body.slice(body.indexOf("<fieldset>"),body.indexOf('<label for="splits-group_by"'));
+    expect(fieldset).toContain("<legend>Other seasons</legend>");
+    expect(fieldset).not.toMatch(/<legend>[^<]*<img/);
+    expect(fieldset).toContain('value="&lt;img src=x onerror=bad()&gt;" checked');
+  });
+  it("preserves every season choice name, exact value and checked state",()=>{
+    const value=model();value.seasons=["1992-93","2000-01","2010-11","2020-21"];
+    value.selection.seasons=["2000-01","2020-21"];
+    const body=render(value), fieldset=body.slice(body.indexOf("<fieldset>"),body.indexOf('<label for="splits-group_by"'));
+    const choices=[...fieldset.matchAll(/<input id="splits-season-\d+" type="checkbox" name="([^"]+)" value="([^"]+)"( checked)?>/g)];
+    expect(choices.map(([,name,val,checked])=>[name,val,Boolean(checked)])).toEqual([
+      ["seasons","1992-93",false],["seasons","2000-01",true],["seasons","2010-11",false],["seasons","2020-21",true],
+    ]);
+  });
 });

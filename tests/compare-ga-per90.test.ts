@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Env } from "../worker/src/core/db";
 import { LOCALES } from "../worker/src/core/locale";
+import { executeComparison } from "../worker/src/core/comparison";
+import { Catalog, type CompiledCatalog } from "../worker/src/core/feasibility";
+import compiled from "../worker/src/generated/catalog.json";
 import { comparisonPage } from "../worker/src/views/comparison";
 
 vi.mock("jose", async (original) => ({
@@ -53,6 +56,13 @@ const get = async (env: Env, path: string) => {
 describe("compare goals + assists per 90", () => {
   it("renders both per-90 columns in EN and ES with correct values", async () => {
     const { env } = setup();
+    const coreResult = await executeComparison(
+      env,
+      new Catalog(compiled as unknown as CompiledCatalog),
+      { season: "2024-25", metric: "goals", minMinutes: 100 },
+    );
+    expect(coreResult.ok && coreResult.rows[0]?.goalsRate).toBe(1);
+    expect(coreResult.ok && coreResult.rows[0]?.assistsRate).toBe(0);
     const q = "season=2024-25&metric=goals&min_minutes=100";
     const en = await get(env, `/en/compare?${q}`);
     expect(en.status).toBe(200);
@@ -74,6 +84,8 @@ describe("compare goals + assists per 90", () => {
     expect(goals.indexOf("Synthetic Alpha")).toBeLessThan(goals.indexOf("Synthetic Beta"));
     expect(assists.indexOf("Synthetic Beta")).toBeLessThan(assists.indexOf("Synthetic Alpha"));
     expect(assists).toContain('value="assists" selected');
+    expect(assists).toContain("Goals per 90");
+    expect(assists).toContain("FPL assists per 90");
     for (const body of [goals, assists]) expect(body).not.toContain("Synthetic Gamma");
     const all = (await get(env, "/en/compare?season=2024-25&metric=goals&min_minutes=0")).body;
     expect(all).toContain("Synthetic Gamma");
@@ -92,7 +104,7 @@ describe("compare goals + assists per 90", () => {
   it("shows a refusal, not zeros, when the other metric has no coverage", async () => {
     const result = {
       ok: true as const, snapshot: "synthetic", key: "k", attribution: "attr", otherCovered: false, otherAttribution: null,
-      rows: [{ player_id: "p1", label: "Synthetic Alpha", total: 2, minutes: 180, rate: 1, other_total: null, other_rate: null }],
+      rows: [{ player_id: "p1", label: "Synthetic Alpha", total: 2, minutes: 180, rate: 1, other_total: null, other_rate: null, goalsRate: 1, assistsRate: null }],
     };
     for (const code of ["en", "es"] as const) {
       const body = await comparisonPage(
