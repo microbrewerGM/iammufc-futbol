@@ -122,10 +122,10 @@ for (const locale of locales) describe(`${locale} season split navigation and ga
       expect(response.status).toBe(200);
       expect(response.headers.get("cache-control")).toContain("no-store");
       const missing = locale === "en" ? "Record unavailable; missing matches are not zero" : "Balance no disponible; los partidos ausentes no equivalen a cero";
-      expect(body).toContain(`<th scope="row">2023-24</th><td colspan="7">—</td><td>${missing}</td>`);
+      expect(body).toContain(`<th scope="row">2023-24</th><td colspan="9">—</td><td>${missing}</td>`);
       const combined = body.match(/<tr><th scope="row">(?:Combined record for selected seasons|Balance conjunto de las temporadas seleccionadas)<\/th>[\s\S]*?<\/tr>/)![0];
       if (allMissing) {
-        expect(combined).toContain(`<td colspan="7">—</td><td>${missing}</td>`);
+        expect(combined).toContain(`<td colspan="9">—</td><td>${missing}</td>`);
         expect(combined).not.toContain("<td>0</td>");
       } else {
         expect(combined).toContain("<td>1</td><td>1</td><td>0</td><td>0</td><td>2</td><td>0</td><td>3</td>");
