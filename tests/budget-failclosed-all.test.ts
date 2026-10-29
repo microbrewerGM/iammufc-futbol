@@ -30,14 +30,15 @@ function fixture(options: { d1Fails?: boolean; count?: unknown; kvCount?: number
     if (options.d1Fails) throw new Error("synthetic storage failure");
     return { count: "count" in options ? options.count : 1 };
   });
-  const prepare = vi.fn(() => ({ bind: vi.fn(() => ({ first })) }));
+  const all = vi.fn(async () => ({ results: [await first()], meta: { duration: 1, rows_read: 1 } }));
+  const prepare = vi.fn(() => ({ bind: vi.fn(() => ({ first, all })) }));
   const env = {
     ACCESS_ISSUER: "https://example.cloudflareaccess.com",
     ACCESS_AUD: "a".repeat(64), ACCESS_OWNER_EMAILS: "owner@example.invalid",
     DB: { prepare },
     CFG: { get: async () => String(options.kvCount ?? 0), put: async () => {} },
   } as unknown as Env;
-  return { env, first, prepare };
+  return { env, first, all, prepare };
 }
 const api = (env: Env) => app.request("https://site.invalid/api/query", {
   method: "POST", headers: { ...auth, "content-type": "application/json" }, body: JSON.stringify(intent),
@@ -58,7 +59,7 @@ describe("budget fails closed on every compute route", () => {
     const f = fixture({ d1Fails: true, kvCount: 5 });
     const response = await q(f.env);
     expect(response.status).toBe(503);
-    expect(f.first).toHaveBeenCalledOnce();
+    expect(f.all).toHaveBeenCalledOnce();
     expect(runQuery).not.toHaveBeenCalled();
   });
   it("/q over the hard limit still shows the budget page with 429-class refusal, not the outage", async () => {
@@ -70,7 +71,7 @@ describe("budget fails closed on every compute route", () => {
     const f = fixture({ d1Fails: true, kvCount: 5 });
     const response = await ask(f.env);
     expect(response.status).toBe(503);
-    expect(f.first).toHaveBeenCalledOnce();
+    expect(f.all).toHaveBeenCalledOnce();
     expect(runQuery).not.toHaveBeenCalled();
   });
   it("/q cache hit is served without touching budget storage", async () => {
