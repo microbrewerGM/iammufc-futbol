@@ -50,6 +50,24 @@ def test_season_migration_is_ordered_before_worker_and_private_seed() -> None:
     assert deploy_0008 + 1 == deploy_0009 < worker
     assert consumer_0006 + 1 == consumer_0008
     assert consumer_0008 + 1 == consumer_0009 < seed
+    # 0010 (question requests) applies directly after 0009 in both jobs, before
+    # the Worker deploy and before the private seed load.
+    deploy_0010 = next(i for i, command in enumerate(deploy_commands) if "0010_question_requests.sql" in command)
+    consumer_0010 = next(i for i, command in enumerate(consumer_commands) if "0010_question_requests.sql" in command)
+    assert deploy_0009 + 1 == deploy_0010 < worker
+    assert consumer_0009 + 1 == consumer_0010 < seed
+    request_steps = [
+        step
+        for job in deploy["jobs"].values()
+        for step in job.get("steps", [])
+        if "0010_question_requests.sql" in step.get("with", {}).get("command", "")
+    ]
+    assert len(request_steps) == 2
+    assert request_steps[0] == request_steps[1]
+    assert all(step["uses"] == "cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0" for step in request_steps)
+    assert all("--remote" in step["with"]["command"] for step in request_steps)
+    assert all("iammufc-dev" in step["with"]["command"] for step in request_steps)
+    assert all(set(step["with"]) == {"apiToken", "accountId", "command"} for step in request_steps)
     link_steps = [
         step
         for job in deploy["jobs"].values()
@@ -70,6 +88,12 @@ def test_season_migration_is_ordered_before_worker_and_private_seed() -> None:
     assert local_seed.index("0005_account_question_history.sql") < local_seed.index("0006_season_splits.sql") < local_seed.index("0002_seed.sql")
     assert local_seed.index("0006_season_splits.sql") < local_seed.index("0008_exploration_request_links.sql") < local_seed.index("0002_seed.sql")
     assert "0007_exploration_requests.sql" not in local_seed
+    assert (
+        local_seed.index("0008_exploration_request_links.sql")
+        < local_seed.index("0009_manager_era_records.sql")
+        < local_seed.index("0010_question_requests.sql")
+        < local_seed.index("0002_seed.sql")
+    )
 
     assert deploy["permissions"] == {"contents": "read"}
     assert all(job["permissions"] == {"contents": "read"} for job in deploy["jobs"].values())
