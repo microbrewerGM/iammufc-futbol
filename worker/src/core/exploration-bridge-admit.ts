@@ -26,7 +26,10 @@ export type AdmissionEligibility = { eligible: true }
 const text = (v: unknown): v is string => typeof v === "string" && v.length > 0
   && v.length <= 256 && v.trim() === v;
 const list = (v: unknown): v is readonly string[] => Array.isArray(v)
-  && v.length > 0 && v.length <= 64 && v.every(text);
+  && v.length > 0 && v.length <= 64 && (() => {
+    for (let index = 0; index < v.length; index++) if (!text(v[index])) return false;
+    return true;
+  })();
 const deny = (reason: AdmissionDenial): AdmissionEligibility => ({ eligible: false, reason });
 
 /** Read an own data property once. Accessors are rejected without invoking them. */
@@ -41,8 +44,12 @@ function readOwnData(object: unknown, key: string): unknown {
 
 function snapshotList(value: unknown): unknown {
   if (!Array.isArray(value)) return value;
+  const length = readOwnData(value, "length");
+  if (!Number.isInteger(length) || (length as number) < 1 || (length as number) > 64) {
+    throw new TypeError("invalid list length");
+  }
   const copy: unknown[] = [];
-  for (let index = 0; index < value.length; index++) copy.push(readOwnData(value, String(index)));
+  for (let index = 0; index < (length as number); index++) copy.push(readOwnData(value, String(index)));
   return Object.freeze(copy);
 }
 

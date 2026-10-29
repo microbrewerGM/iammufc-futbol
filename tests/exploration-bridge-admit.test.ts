@@ -128,4 +128,42 @@ describe("human request admission policy eligibility", () => {
     expect(checkAdmissionEligibility(proof(), mutable)).toEqual({ eligible: false, reason: "invalid_policy" });
     expect(reads).toBe(0);
   });
+  it("denies a huge sparse policy list after reading only its length", () => {
+    let descriptorReads = 0;
+    const huge = new Proxy(new Array(2 ** 32 - 1), {
+      getOwnPropertyDescriptor(target, key) {
+        descriptorReads++;
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    });
+    const started = performance.now();
+    expect(checkAdmissionEligibility(proof(), { ...policy, allowedSources: huge })).toEqual({
+      eligible: false, reason: "invalid_policy",
+    });
+    expect(performance.now() - started).toBeLessThan(10);
+    expect(descriptorReads).toBe(1);
+  });
+  it("denies a Proxy whose reported length varies", () => {
+    let reads = 0;
+    const varyingLength = new Proxy(["fixture-source"], {
+      getOwnPropertyDescriptor(target, key) {
+        const descriptor = Reflect.getOwnPropertyDescriptor(target, key);
+        if (key === "length" && descriptor && "value" in descriptor) {
+          reads++;
+          return { ...descriptor, value: reads === 1 ? 2 ** 32 - 1 : 1 };
+        }
+        return descriptor;
+      },
+    });
+    expect(checkAdmissionEligibility(proof(), {
+      ...policy, allowedSources: varyingLength,
+    })).toEqual({ eligible: false, reason: "invalid_policy" });
+    expect(reads).toBe(1);
+  });
+  it("denies a three-element policy list with a hole", () => {
+    const sparse = ["fixture-source", , "other-source"] as unknown as string[];
+    expect(checkAdmissionEligibility(proof(), { ...policy, allowedSources: sparse })).toEqual({
+      eligible: false, reason: "invalid_policy",
+    });
+  });
 });
