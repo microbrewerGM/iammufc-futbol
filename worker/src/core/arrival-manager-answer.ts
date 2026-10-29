@@ -61,7 +61,7 @@ function validExport(v: unknown): v is Export {
     if (!d || !("value" in d) || !validRow(d.value)) return false;
   }
   return read(v, "version") === 1 && validDate(read(v, "as_of")) && typeof read(v, "snapshot_id") === "string" && idPattern.test(read(v, "snapshot_id") as string) &&
-    !(read(v, "coverage") === "missing" && rows.length > 0) &&
+    !(["missing", "denied"].includes(read(v, "coverage") as string) && rows.length > 0) &&
     coverages.has(read(v, "coverage") as string) && Number.isSafeInteger(count) && count === rows.length && stringList(read(v, "lineage"), 0, 32);
 }
 const emptyRequest = (asOf: string): ArrivalManagerRequest => ({ version: 1, family: "arrival_manager", as_of: asOf, population: "first_team_available", joining_basis: "effective_first_team_spell_entry", academy_basis: "documented_first_team_promotion", visualization: "table" });
@@ -88,7 +88,7 @@ export function adaptArrivalManagerAnswer(input: unknown, lineageCredits: Readon
     if (rows.some(r => r.as_of !== asOf || r.snapshot_id !== snapshot) || (expectedSnapshot !== undefined && snapshot !== expectedSnapshot) || (expectedRequest !== undefined && (expectedRequest.as_of !== asOf || !validRequest(expectedRequest)))) return fail(asOf);
     const request = (expectedRequest as ArrivalManagerRequest | undefined) ?? emptyRequest(asOf);
     if (denied) return { request, players: {}, managers: {}, entries: {}, credits: {}, result: { request, snapshot_id: snapshot, artifact_key: "0".repeat(64), transform_code_version: "answer-export-v1", renderer_version: "arrival-manager-view-v1", roster_snapshot_id: snapshot, feasibility: "no_rights", coverage, population_count: 0, assigned: [], unknown: [], lineage: [] } };
-    const visible = coverage === "missing" ? [] : rows, players: Record<string,string> = {}, managers: Record<string,string> = {}, entries: Record<string,ArrivalEntry> = {}, unknownEntries: Record<string,ArrivalEntry> = {};
+    const visible = rows, players: Record<string,string> = {}, managers: Record<string,string> = {}, entries: Record<string,ArrivalEntry> = {}, unknownEntries: Record<string,ArrivalEntry> = {};
     const assigned: NonNullable<ArrivalManagerView["result"]>["assigned"] = [], unknown: NonNullable<ArrivalManagerView["result"]>["unknown"] = [];
     for (const [i, row] of visible.entries()) {
       const id = `answer-row:${i}`;
@@ -114,6 +114,6 @@ export function adaptArrivalManagerAnswer(input: unknown, lineageCredits: Readon
       if (typeof text !== "string" || text.length > 240 || (text.trim() && !creditPattern.test(text))) return fail(asOf);
       if (text.trim()) credits[ref] = text;
     }
-    return { request, players, managers, entries, unknown_entries: unknownEntries, credits, result: { request, snapshot_id: snapshot, artifact_key: "0".repeat(64), transform_code_version: "answer-export-v1", renderer_version: "arrival-manager-view-v1", roster_snapshot_id: snapshot, feasibility: "available", coverage, population_count: coverage === "missing" ? 0 : rows.length, assigned, unknown, lineage } };
+    return { request, players, managers, entries, unknown_entries: unknownEntries, credits, result: { request, snapshot_id: snapshot, artifact_key: "0".repeat(64), transform_code_version: "answer-export-v1", renderer_version: "arrival-manager-view-v1", roster_snapshot_id: snapshot, feasibility: "available", coverage, population_count: rows.length, assigned, unknown, lineage } };
   } catch { return fail(); }
 }

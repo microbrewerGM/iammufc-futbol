@@ -83,12 +83,22 @@ describe("arrival manager answer adapter", () => {
     ["population count mismatch", { ...base(), population_count: 3 }],
     ["non-finite count", { ...base(), population_count: Infinity }],
     ["row label containing raw HTML", { ...base(), rows: [{ ...base().rows[0], player: "<img src=x onerror=alert(1)>" }] }],
+    ["row label containing an HTML tag", { ...base(), rows: [{ ...base().rows[0], player: "<img src=x>" }] }],
+    ["row label containing a control character", { ...base(), rows: [{ ...base().rows[0], player: "Alex\u0001Player" }] }],
     ["row label containing ampersand", { ...base(), rows: [{ ...base().rows[0], player: "Alex & Sam" }] }],
     ["row label containing quote", { ...base(), rows: [{ ...base().rows[0], manager: 'Coach "One"' }] }],
     ["row label longer than 80 characters", { ...base(), rows: [{ ...base().rows[0], player: "A".repeat(81) }] }],
   ])("rejects inconsistent or unsafe %s", (_name, input) => {
     const model = adaptArrivalManagerAnswer(input, {});
     expect(model.error).toBeTruthy(); expect(model.result).toBeUndefined(); expect(model.players).toEqual({});
+  });
+
+  it.each(["missing", "denied"] as const)("fails closed when %s coverage carries rows", coverage => {
+    const input = { ...base(), coverage, rows: [base().rows[0]], population_count: 1 };
+    const model = adaptArrivalManagerAnswer(input, {});
+    expect(model.error).toBeTruthy();
+    expect(model.result).toBeUndefined();
+    expect(model.players).toEqual({});
   });
 
   it("keeps an unknown player's label when manager is unknown", () => {
