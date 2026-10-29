@@ -13,6 +13,10 @@ export function accessIdentity(c: Context<AccessEnv>): AccessIdentity {
 type AccessVerifier = (token: string, config: AccessConfig) => Promise<AccessIdentity>;
 const resolvers = new Map<string, JWTVerifyGetKey>();
 
+export function isProtectedGetPath(path: string): boolean {
+  return /^\/(?:en\/|es\/)?(?:q|players\/(?:compare|trends)|opponents\/history|seasons\/explore)\/?$/.test(path);
+}
+
 export async function verifyAccess(token: string, config: AccessConfig, keys?: JWTVerifyGetKey): Promise<AccessIdentity> {
   if (!token || token.length > 16384) throw new Error("access_denied");
   if (!keys) {
@@ -66,7 +70,7 @@ export function accessGate(verifier: AccessVerifier = verifyAccess) {
     const url = new URL(c.req.url);
     const unsafe = !["GET", "HEAD", "OPTIONS"].includes(c.req.method);
     // Use the same decoded path as Hono's router (for example /en/%71).
-    const protectedGet = /^\/(?:en\/|es\/)?(?:q|players\/compare|seasons\/explore)\/?$/.test(c.req.path);
+    const protectedGet = isProtectedGetPath(c.req.path);
     const cookieBearing = c.req.header("Cookie")?.split(",").some((headerValue) =>
       headerValue.split(";").some((cookie) => {
         const separator = cookie.indexOf("=");
