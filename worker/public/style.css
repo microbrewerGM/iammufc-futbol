@@ -129,6 +129,20 @@ main { max-width: 780px; margin: 0 auto; }
 /* The six-column player season table keeps its own horizontal scroll area on
    phones. Other trend tables and pages keep their existing layout. */
 @media (max-width: 620px) {
+  .opponent-history-table > table {
+    min-width: 760px;
+  }
+  .opponent-history-table th:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: var(--card);
+  }
+  .opponent-history-table td:first-child {
+    position: sticky;
+    left: 0;
+    background: var(--card);
+  }
   main > .player-trend-season-table:has(> table thead th:nth-child(6)) {
     display: block;
     width: 100%;
