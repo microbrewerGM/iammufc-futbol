@@ -20,14 +20,34 @@ export function createQuestionRequestsRouter() {
     if (!identity || !validAccountSub(identity.sub)) return c.text("Forbidden.", 403);
     const locale = c.req.param("locale") as "en" | "es";
     const length = c.req.header("content-length");
-    if (length && (!/^\d+$/.test(length) || Number(length) > INTAKE_MAX_BYTES)) return c.text("Request too large.", 413);
+    if (length && (!/^\d+$/.test(length) || Number(length) > INTAKE_MAX_BYTES)) return c.html(questionRequestPage(locale, undefined, "invalid"), 413);
     if (!(c.req.header("content-type") ?? "").toLowerCase().startsWith("application/x-www-form-urlencoded")) return c.text("Invalid request.", 400);
     let raw: string;
-    try { raw = await c.req.text(); } catch { return c.html(questionRequestPage(locale, undefined, "invalid"), 400); }
-    if (new TextEncoder().encode(raw).byteLength > INTAKE_MAX_BYTES) return c.text("Request too large.", 413);
+    try {
+      const reader = c.req.raw.body?.getReader();
+      if (!reader) return c.html(questionRequestPage(locale, undefined, "invalid"), 400);
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > INTAKE_MAX_BYTES) {
+          await reader.cancel();
+          return c.html(questionRequestPage(locale, undefined, "invalid"), 413);
+        }
+        chunks.push(value);
+      }
+      const body = new Uint8Array(size);
+      let offset = 0;
+      for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
+      raw = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(body);
+    } catch { return c.html(questionRequestPage(locale, undefined, "invalid"), 400); }
     let form: URLSearchParams;
     try { form = new URLSearchParams(raw); } catch { return c.html(questionRequestPage(locale, undefined, "invalid"), 400); }
-    const text = validQuestionText(form.get("text"));
+    const submittedText = form.get("text");
+    if (submittedText !== null && new TextEncoder().encode(submittedText).byteLength > 2000) return c.html(questionRequestPage(locale, undefined, "invalid"), 413);
+    const text = validQuestionText(submittedText);
     if (!text) return c.html(questionRequestPage(locale, undefined, "invalid"), 400);
     const result = await storeQuestion(c.env, identity.sub, text, locale);
     if (result.kind !== "stored" && result.kind !== "duplicate") {

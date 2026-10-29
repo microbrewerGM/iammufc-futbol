@@ -1,7 +1,7 @@
 import type { Env } from "./db";
 
-export const INTAKE_MAX_BYTES = 4096;
-const REJECTED = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff\ufff9-\ufffb\u{e0000}-\u{e007f}]/u;
+export const INTAKE_MAX_BYTES = 8192;
+const REJECTED = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff\ufff9-\ufffb\u{e0000}-\u{e007f}\u{fe00}-\u{fe0f}\u{e0100}-\u{e01ef}\u115f\u1160\u3164\uffa0\p{Cf}]/u;
 const encoder = new TextEncoder();
 const hex = (bytes: ArrayBuffer) => [...new Uint8Array(bytes)].map((v) => v.toString(16).padStart(2, "0")).join("");
 export function validQuestionText(raw: unknown): string | null {
