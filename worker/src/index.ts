@@ -73,6 +73,7 @@ import { opponentHistoryBody, opponentHistoryUnpublishedBody } from "./views/opp
 import { withSecurityHeaders } from "./security/headers";
 import { accessGate, accessIdentity, type AccessEnv, type AccessIdentity } from "./security/auth";
 import { createExplorationBridgeRouter } from "./routes/exploration-bridge";
+import { createQuestionTriageBridgeRouter } from "./routes/question-triage-bridge";
 import { gateQuestion, type GateRejected } from "./security/askguard";
 import { esc, html, page } from "./views/layout";
 import { comparisonPage } from "./views/comparison";
@@ -183,6 +184,7 @@ app.use("*", async (c, next) => {
 app.use("*", accessGate());
 app.onError(() => new Response("Request unavailable.", { status: 503 }));
 app.route("/internal/exploration-bridge", createExplorationBridgeRouter());
+app.route("/internal/question-triage-bridge", createQuestionTriageBridgeRouter());
 
 // ---------------------------------------------------------------------------
 // JSON API -- locale-neutral, returns data not prose
