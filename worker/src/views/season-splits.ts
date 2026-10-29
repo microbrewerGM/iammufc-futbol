@@ -32,9 +32,21 @@ export function seasonSplitsBody(model: SeasonSplitView, locale: Locale): string
     return `<label for="splits-${id}">${label}</label><select id="splits-${id}" name="${id}">${all.map(([v, text]) => `<option value="${esc(v)}"${v === selected ? " selected" : ""}>${esc(text)}</option>`).join("")}</select>`;
   };
   const seasons = [...new Set([...model.seasons, ...s.seasons])].sort();
+  const seasonGroups = new Map<string, string[]>();
+  for (const season of seasons) {
+    const year = Number(season.slice(0, 4));
+    const decade = Number.isFinite(year) ? Math.floor(year / 10) * 10 : 0;
+    const label = decade ? t(`${decade}s`, `Década de ${decade}`) : t("Other seasons", "Otras temporadas");
+    seasonGroups.set(label, [...(seasonGroups.get(label) ?? []), season]);
+  }
+  let seasonIndex = 0;
+  const seasonChoices = [...seasonGroups].map(([label, groupedSeasons]) => `<fieldset><legend>${esc(label)}</legend>${groupedSeasons.map(v => {
+    const i = seasonIndex++;
+    return `<label for="splits-season-${i}"><input id="splits-season-${i}" type="checkbox" name="seasons" value="${esc(v)}"${s.seasons.includes(v) ? " checked" : ""}>${esc(v)}</label>`;
+  }).join("")}</fieldset>`).join("");
   const form = `<form method="get" action="/${locale.code}/seasons/explore">
     <input type="hidden" name="schema_version" value="1"><input type="hidden" name="competition" value="PL">
-    <fieldset><legend>${t("Seasons (choose 1–16)", "Temporadas (elige 1–16)")}</legend>${seasons.map((v, i) => `<label for="splits-season-${i}"><input id="splits-season-${i}" type="checkbox" name="seasons" value="${esc(v)}"${s.seasons.includes(v) ? " checked" : ""}>${esc(v)}</label>`).join("")}</fieldset>
+    <fieldset><legend>${t("Seasons (choose 1–16)", "Temporadas (elige 1–16)")}</legend>${seasonChoices}</fieldset>
     ${select("group_by", t("Group by", "Agrupar por"), [["venue", t("Home and away", "Local y visitante")], ["opponent", t("Opponent", "Rival")]], s.group_by)}
     ${select("venue", t("Venue", "Localía"), [["", t("All venues", "Todas las localías")], ["home", venueName("home")], ["away", venueName("away")]], s.venue)}
     ${select("opponent_id", t("Opponent", "Rival"), [["", t("All opponents", "Todos los rivales")], ...model.opponents.map(o => [o.opponent_id, o.label] as [string, string])], s.opponent_id)}
