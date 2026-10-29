@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { adaptArrivalManagerAnswer } from "../worker/src/core/arrival-manager-answer";
+import { adaptArrivalManagerAnswer, arrivalLineageCredits } from "../worker/src/core/arrival-manager-answer";
 
 const base = () => ({
   version: 1,
@@ -15,6 +15,14 @@ const base = () => ({
 });
 
 describe("arrival manager answer adapter", () => {
+  it("builds localized lineage credits and falls back for blank text", () => {
+    const cell = { source_id: "ref", source_name: "Example Source", attribution_text: "", attribution_text_es: "", attribution_asset: "asset" };
+    expect(arrivalLineageCredits([cell], "en")).toEqual({ ref: "Example Source", "ref:asset": "Example Source" });
+    expect(arrivalLineageCredits([cell], "es")).toEqual({ ref: "Example Source", "ref:asset": "Example Source" });
+    expect(arrivalLineageCredits([{ ...cell, attribution_text: "  English source  ", attribution_text_es: "  Fuente española  " }], "en")).toEqual({ ref: "English source", "ref:asset": "English source" });
+    expect(arrivalLineageCredits([{ ...cell, attribution_text: "English source", attribution_text_es: "   " }], "es")).toEqual({ ref: "English source", "ref:asset": "English source" });
+  });
+
   it("adapts valid partial answers and keeps unknown rows visible", () => {
     const model = adaptArrivalManagerAnswer(base(), { "source:one": "Validated source credit", unused: "Unrelated" });
     expect(model.error).toBeUndefined();
@@ -126,7 +134,7 @@ describe("arrival manager answer adapter", () => {
     expect(adaptArrivalManagerAnswer(base(), { "source:one": "<b>bad</b>" }).error).toBeTruthy();
     expect(adaptArrivalManagerAnswer(base(), { "source:one": "x".repeat(241) }).error).toBeTruthy();
     const rowOnly = { ...base(), lineage: [], rows: base().rows };
-    expect(adaptArrivalManagerAnswer(rowOnly, { "source:one": "Row only" }).credits).toEqual({});
+    expect(adaptArrivalManagerAnswer(rowOnly, { "source:one": "Row only" }).credits).toEqual({ "source:one": "Row only" });
   });
 
   it("validates expected requests and fails closed on request getters", () => {
