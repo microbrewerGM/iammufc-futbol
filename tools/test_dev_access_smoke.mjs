@@ -220,16 +220,25 @@ test('smoke example asks stay within the six ask per-run budget before submissio
   const submitted = [];
   await smoke(env, async (url, init) => {
     const parsed = new URL(url);
-    if (init.method === 'POST' && parsed.pathname.endsWith('/ask')) {
-      submitted.push({ path: parsed.pathname, body: init.body });
+    const method = init.method ?? 'GET';
+    const askPath = /(?:^|\/)(?:ask|query)(?:\/|$)/i.test(parsed.pathname);
+    if ((method === 'POST' && askPath) || (method === 'GET' && parsed.searchParams.has('q'))) {
+      submitted.push({ method, path: parsed.pathname, body: init.body ?? null,
+        query: parsed.searchParams.toString() });
     }
     return new Response('', { status: 200, headers: { 'cache-control': 'private, no-store' } });
   });
 
-  // Count the existing example vector at its submission boundary, where a
-  // future expansion cannot silently exceed the per-capture-run budget.
+  // Count every ask-like request at its submission boundary so new locales,
+  // query endpoints, or GET examples cannot silently exceed the run budget.
   assert.ok(submitted.length <= 6, `submitted ${submitted.length} example asks`);
-  assert.deepEqual(submitted, [{ path: '/en/ask', body: 'q=Top+assists+2023-24' }]);
+  assert.deepEqual(submitted, [
+    { method: 'POST', path: '/en/ask', body: 'q=Top+assists+2023-24', query: '' },
+    { method: 'POST', path: '/api/query',
+      body: JSON.stringify(validChat.proposed_intent), query: '' },
+    { method: 'POST', path: '/api/query',
+      body: JSON.stringify(validChat.proposed_intent), query: '' },
+  ]);
 });
 
 test('query validator binds finite result shape and hides identity from output', () => {
