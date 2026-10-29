@@ -18,7 +18,7 @@ const chartRates = (html: string): string[] => {
 
 const tableRates = (html: string): string[] => {
   const table = html.match(/<table\b[\s\S]*?<\/table>/)?.[0] ?? "";
-  return [...table.matchAll(/<tr><th scope="row">\d{4}-\d{2}<\/th>(?:<td>[^<]*<\/td>){6}<td>([^<]*)<\/td><td>[^<]*<\/td><\/tr>/g)].map(match => match[1]!);
+  return [...table.matchAll(/<tr><th scope="row">\d{4}-\d{2}<\/th>(?:<td>[^<]*<\/td>){8}<td>([^<]*)<\/td><td>[^<]*<\/td><\/tr>/g)].map(match => match[1]!);
 };
 
 describe("opponent history view", () => {
@@ -39,7 +39,7 @@ describe("opponent history view", () => {
     expect(html).toContain(locale === "en" ? "Combined record for selected seasons" : "Balance conjunto de las temporadas seleccionadas");
     expect(html).toContain(locale === "en" ? "Points / match" : "Puntos / partido");
     expect(chartRates(html)).toEqual(locale === "en" ? ["3.00", "1.00"] : ["3,00", "1,00"]);
-    expect(tableRates(html)).toEqual(["3", "1"]);
+    expect(tableRates(html)).toEqual(locale === "en" ? ["3.00", "1.00"] : ["3,00", "1,00"]);
   });
   it("escapes labels, keeps a true zero mark, and distinguishes empty from unavailable", () => {
     const unsafe = opponentHistoryBody({ result, opponentLabel: '<img src=x onerror="x">', credits: {} }, "en");
