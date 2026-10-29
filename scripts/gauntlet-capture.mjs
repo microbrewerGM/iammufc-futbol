@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
-import { setTimeout as delay } from 'node:timers/promises';
 
 const DEV_HOST = 'iammufc-dev.aaron-cf2.workers.dev';
 const BAR_HOSTS = new Set(['fbref.com', 'www.transfermarkt.com']);
@@ -17,7 +16,7 @@ export function validateInputs(env) {
   const revision = env.REVISION ?? '';
   const override = env.OVERRIDE ?? '';
   if (!ID_RE.test(question) || question === 'Q-ASK-EXAMPLES') throw new Error('invalid question id');
-  if (!/^\/[A-Za-z0-9/_-]*$/.test(route) || route.includes('..') || route.startsWith('/en') || route.startsWith('/es')) throw new Error('invalid route');
+  if (!/^\/[A-Za-z0-9/_-]*$/.test(route) || route.includes('..') || /^\/(en|es)(\/|$)/.test(route)) throw new Error('invalid route');
   if (!SHA_RE.test(revision)) throw new Error('invalid revision');
   if (override && !/^(?:season=[0-9]{4}-[0-9]{4}|player=[A-Za-z0-9-]{1,80})$/.test(override)) throw new Error('invalid override');
   if (!env.CF_ACCESS_CLIENT_ID || !env.CF_ACCESS_CLIENT_SECRET) throw new Error('missing Access credentials');

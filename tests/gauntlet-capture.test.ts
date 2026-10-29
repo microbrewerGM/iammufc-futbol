@@ -77,7 +77,9 @@ function seededRandom(seed) {
 describe('gauntlet capture guards', () => {
   it('validates inputs, routes and overrides', () => {
     expect(validateInputs(valid).question).toBe('Q-HOME-AWAY');
-    for (const DEV_ROUTE of ['/../../etc', '/en/compare', '/es', '/english']) expect(() => validateInputs({ ...valid, DEV_ROUTE })).toThrow();
+    expect(validateInputs({ ...valid, DEV_ROUTE: '/encounters' }).route).toBe('/encounters');
+    expect(() => validateInputs({ ...valid, DEV_ROUTE: '/en/x' })).toThrow();
+    for (const DEV_ROUTE of ['/../../etc', '/en/compare', '/es', '/es/compare']) expect(() => validateInputs({ ...valid, DEV_ROUTE })).toThrow();
     expect(() => validateInputs({ ...valid, REVISION: 'abc' })).toThrow();
     expect(() => validateInputs({ ...valid, QUESTION_ID: 'bad' })).toThrow();
     expect(() => validateInputs({ ...valid, QUESTION_ID: 'Q-ASK-EXAMPLES' })).toThrow();
@@ -192,6 +194,25 @@ describe('gauntlet capture guards', () => {
     expect(result.stdout + result.stderr).not.toContain('ID_SENTINEL');
     expect(result.stdout + result.stderr).not.toContain('SECRET_SENTINEL');
     expect(result.stderr.trim()).toBe('capture failed');
+    await rm(dir, { recursive: true, force: true });
+  }, 30_000);
+
+  it('handles a floating rejected promise without exposing its error', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gauntlet-test-'));
+    const harness = join(dir, 'fatal-handler-harness.mjs');
+    const modulePath = new URL('../scripts/gauntlet-capture.mjs', import.meta.url).href;
+    await writeFile(harness, `
+      import { installFatalHandlers } from ${JSON.stringify(modulePath)};
+      installFatalHandlers();
+      Promise.reject(new Error('credential=SENTINEL_FLOATING_CREDENTIAL'));
+    `);
+    const result = await new Promise((resolve) => {
+      const child = spawn(process.execPath, [harness], { cwd: process.cwd(), stdio: ['ignore', 'pipe', 'pipe'] });
+      let stderr = '';
+      child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk; });
+      child.on('close', (code) => resolve({ code, stderr }));
+    });
+    expect(result).toEqual({ code: 1, stderr: 'capture failed\n' });
     await rm(dir, { recursive: true, force: true });
   }, 30_000);
 
