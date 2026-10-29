@@ -50,15 +50,37 @@ describe("arrival manager dated answer route", () => {
       : "Player data derived from the Fantasy Premier League public API.");
   });
 
-  it("shows the attribution unavailable note for unknown lineage refs", async () => {
+  it("denies answers with unknown lineage refs", async () => {
     const unknown = { ...answer, lineage: ["unknown-source"], rows: answer.rows.map(row => ({ ...row, lineage: ["unknown-source"] })) };
     const runtime = env(async () => Response.json(unknown));
     for (const locale of ["en", "es"] as const) {
       const response = await app.request(`https://site.invalid/${locale}/discover/arrivals?${request}`, { headers: access }, runtime);
       const body = await response.text();
       expect(response.status, body).toBe(200);
-      expect(body).toContain(locale === "es" ? "Atribución de fuente no disponible" : "Source attribution unavailable");
+      expect(body).toContain(locale === "es" ? "No se permite usar los datos" : "Data use is not permitted");
+      expect(body).not.toContain("Alex Player");
     }
+  });
+
+  it("renders no-rights without player labels for non-redistributable lineage in EN and ES", async () => {
+    const restricted = { ...answer, lineage: ["fbref"], rows: answer.rows.map(row => ({ ...row, lineage: ["fbref"] })) };
+    const runtime = env(async () => Response.json(restricted));
+    for (const locale of ["en", "es"] as const) {
+      const response = await app.request(`https://site.invalid/${locale}/discover/arrivals?${request}`, { headers: access }, runtime);
+      const body = await response.text();
+      expect(response.status, body).toBe(200);
+      expect(body).toContain(locale === "es" ? "No se permite usar los datos" : "Data use is not permitted");
+      expect(body).not.toContain("Alex Player");
+    }
+  });
+
+  it("renders labels and credit for redistributable lineage", async () => {
+    const runtime = env(async () => Response.json(answer));
+    const response = await app.request(`https://site.invalid/en/discover/arrivals?${request}`, { headers: access }, runtime);
+    const body = await response.text();
+    expect(response.status, body).toBe(200);
+    expect(body).toContain("Alex Player");
+    expect(body).toContain("Player data derived from the Fantasy Premier League public API.");
   });
 
   it.each([

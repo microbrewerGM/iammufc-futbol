@@ -426,6 +426,26 @@ function registerLocaleRoutes(code: LocaleCode) {
       } else {
         const input = await response.json() as unknown;
         const snapshot = typeof input === "object" && input !== null && "snapshot_id" in input && typeof input.snapshot_id === "string" ? input.snapshot_id : undefined;
+        const lineageRefs = new Set<string>();
+        if (typeof input === "object" && input !== null && !Array.isArray(input)) {
+          const answer = input as { lineage?: unknown; rows?: unknown };
+          if (Array.isArray(answer.lineage)) for (const ref of answer.lineage) if (typeof ref === "string") lineageRefs.add(ref);
+          if (Array.isArray(answer.rows)) for (const row of answer.rows) {
+            if (typeof row === "object" && row !== null && !Array.isArray(row) && Array.isArray((row as { lineage?: unknown }).lineage)) {
+              for (const ref of (row as { lineage: unknown[] }).lineage) if (typeof ref === "string") lineageRefs.add(ref);
+            }
+          }
+        }
+        const sourceByRef = new Map<string, typeof catalog.coverage>();
+        for (const cell of catalog.coverage) {
+          for (const ref of [cell.source_id, `${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`]) {
+            sourceByRef.set(ref, [...(sourceByRef.get(ref) ?? []), cell]);
+          }
+        }
+        const denied = [...lineageRefs].some(ref => {
+          const sources = sourceByRef.get(ref);
+          return !sources?.length || sources.some(cell => !cell.redistributable);
+        });
         const sourceCredits = new Map<string, Set<string>>();
         for (const cell of catalog.coverage) {
           const credit = (locale.code === "es" ? cell.attribution_text_es ?? cell.attribution_text : cell.attribution_text) ?? cell.source_name;
@@ -438,7 +458,7 @@ function registerLocaleRoutes(code: LocaleCode) {
           }
         }
         const credits = Object.fromEntries([...sourceCredits].map(([id, texts]) => [id, [...texts].join("; ")]));
-        model = adaptArrivalManagerAnswer(input, credits, { request: expected, ...(snapshot ? { snapshot_id: snapshot } : {}) });
+        model = adaptArrivalManagerAnswer(input, credits, { request: expected, ...(snapshot ? { snapshot_id: snapshot } : {}), ...(denied ? { denied: true } : {}) });
         if (model.error) model = { request: expected, players: {}, managers: {}, entries: {}, credits: {}, result: {
           request: expected, snapshot_id: "unavailable", artifact_key: "0".repeat(64), transform_code_version: "answer-export-v1",
           renderer_version: "arrival-manager-view-v1", roster_snapshot_id: null, feasibility: "no_data" as const,
