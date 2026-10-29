@@ -9,6 +9,21 @@ const creditPattern = /^[\p{L}\p{N} .,:;()'’&/+-]+$/u;
 const labelPattern = /^[\p{L}\p{M} '\u2019.-]{1,80}$/u;
 type Row = { player: string | null; manager: string | null; entry_type: string | null; entry_date: string | null; status: "assigned" | "unknown"; reason: string | null; coverage: "complete" | "partial" | "missing"; as_of: string; snapshot_id: string; lineage: string[] };
 type Export = { version: 1; as_of: string; snapshot_id: string; coverage: "complete" | "partial" | "missing"; population_count: number; lineage: string[]; rows: Row[] };
+export type ArrivalCoverageCell = { source_id: string; source_name: string; attribution_asset?: string | null; attribution_text?: string | null; attribution_text_es?: string | null };
+export function arrivalLineageCredits(coverage: readonly ArrivalCoverageCell[], localeCode: string): Record<string, string> {
+  const sourceCredits = new Map<string, Set<string>>();
+  for (const cell of coverage) {
+    const localized = localeCode === "es" ? cell.attribution_text_es?.trim() || cell.attribution_text : cell.attribution_text;
+    const credit = localized?.trim() || cell.source_name;
+    const trimmedCredit = credit.trim();
+    if (!trimmedCredit) continue;
+    for (const ref of [cell.source_id, `${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`]) {
+      if (!sourceCredits.has(ref)) sourceCredits.set(ref, new Set());
+      sourceCredits.get(ref)!.add(trimmedCredit);
+    }
+  }
+  return Object.fromEntries([...sourceCredits].map(([id, texts]) => [id, [...texts].join("; ")]));
+}
 const keys = (value: unknown): string[] | null => {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const proto = Object.getPrototypeOf(value);

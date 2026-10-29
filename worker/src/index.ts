@@ -70,7 +70,7 @@ import { calculatePer90Leaders, calculatePlayerTrends, parsePlayerTrendsRequest 
 import { playerTrendsBody } from "./views/player-trends";
 import { APPROVED_OPPONENT_IDS, readOpponentHistory } from "./core/opponent-history";
 import { opponentHistoryBody, opponentHistoryUnpublishedBody } from "./views/opponent-history";
-import { adaptArrivalManagerAnswer } from "./core/arrival-manager-answer";
+import { adaptArrivalManagerAnswer, arrivalLineageCredits } from "./core/arrival-manager-answer";
 import { arrivalManagersBody } from "./views/arrival-managers";
 import type { ArrivalManagerRequest } from "./core/discovery-arrivals";
 import { withSecurityHeaders } from "./security/headers";
@@ -446,18 +446,7 @@ function registerLocaleRoutes(code: LocaleCode) {
           const sources = sourceByRef.get(ref);
           return !sources?.length || sources.some(cell => !cell.redistributable);
         });
-        const sourceCredits = new Map<string, Set<string>>();
-        for (const cell of catalog.coverage) {
-          const credit = (locale.code === "es" ? cell.attribution_text_es ?? cell.attribution_text : cell.attribution_text) ?? cell.source_name;
-          const trimmedCredit = credit.trim();
-          if (!trimmedCredit) continue;
-          const refs = [cell.source_id, `${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`];
-          for (const ref of refs) {
-            if (!sourceCredits.has(ref)) sourceCredits.set(ref, new Set());
-            sourceCredits.get(ref)!.add(trimmedCredit);
-          }
-        }
-        const credits = Object.fromEntries([...sourceCredits].map(([id, texts]) => [id, [...texts].join("; ")]));
+        const credits = arrivalLineageCredits(catalog.coverage, locale.code);
         model = adaptArrivalManagerAnswer(input, credits, { request: expected, ...(snapshot ? { snapshot_id: snapshot } : {}), ...(denied ? { denied: true } : {}) });
         if (model.error) model = { request: expected, players: {}, managers: {}, entries: {}, credits: {}, result: {
           request: expected, snapshot_id: "unavailable", artifact_key: "0".repeat(64), transform_code_version: "answer-export-v1",
