@@ -31,6 +31,45 @@ beforeEach(() => vi.clearAllMocks());
 afterEach(() => vi.restoreAllMocks());
 
 describe("feasibility execution gate", () => {
+  it.each([
+    {
+      state: "no_data" as const,
+      messages: {
+        en: "No source we have integrated provides this. That gap could close if we integrate one.",
+        es: "Ninguna fuente integrada provee esto. Ese vacío podría cerrarse si integramos una.",
+      },
+    },
+    {
+      state: "no_rights" as const,
+      messages: {
+        en: "We have a source for this, but no licence to republish it. That gap needs a paid licence, not more engineering.",
+        es: "Tenemos una fuente para esto, pero no licencia para republicarla. Ese vacío necesita una licencia paga, no más ingeniería.",
+      },
+    },
+  ])("explains the $state refusal in English and Spanish ask results", async ({ state, messages }) => {
+    vi.spyOn(Catalog.prototype, "checkFeasibility").mockReturnValue({
+      state, reason: "Synthetic refusal", cost_class: "expensive",
+    });
+    for (const [locale, explanation] of Object.entries(messages)) {
+      const response = await app.request(`https://site.invalid/${locale}/ask`, {
+        method: "POST",
+        headers: { "cf-access-jwt-assertion": "synthetic", Origin: "https://site.invalid", "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ q: "How many goals in 2024-25?" }).toString(),
+      }, env);
+      const markup = await response.text();
+      expect(response.status).toBe(200);
+      expect(markup).toContain(`<p class="state">${state}</p>`);
+      expect(markup).toContain("Synthetic refusal");
+      expect(markup).toContain(explanation);
+      expect(markup).not.toContain("<svg");
+      expect(markup).not.toContain("query returned nothing");
+    }
+    expect(enforceBudget).not.toHaveBeenCalled();
+    expect(runQuery).not.toHaveBeenCalled();
+    expect(readQueryCache).not.toHaveBeenCalled();
+    expect(writeQueryCache).not.toHaveBeenCalled();
+  });
+
   it.each<FeasibilityState>(["no_data", "no_rights"])("does not read cache, execute or charge %s", async (state) => {
     vi.spyOn(Catalog.prototype, "checkFeasibility").mockReturnValue({ state, reason: "Synthetic refusal", cost_class: "expensive" });
     const api = await app.request("https://site.invalid/api/query", { method: "POST", headers, body: JSON.stringify(intent) }, env);
