@@ -125,6 +125,17 @@ main { max-width: 780px; margin: 0 auto; }
   left: 0;
   background: var(--card);
 }
+@media (max-width: 620px) {
+  .comparison-table[aria-label="Champions League history"] th:first-child,
+  .comparison-table[aria-label="Champions League history"] td:first-child,
+  .comparison-table[aria-label="Historial de la Liga de Campeones"] th:first-child,
+  .comparison-table[aria-label="Historial de la Liga de Campeones"] td:first-child {
+    position: sticky;
+    left: 0;
+    background: var(--bg);
+    z-index: 1;
+  }
+}
 
 /* The six-column player season table keeps its own horizontal scroll area on
    phones. Other trend tables and pages keep their existing layout. */

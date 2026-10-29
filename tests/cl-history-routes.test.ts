@@ -37,7 +37,7 @@ import app from "../worker/src/index";
 
 const env = { ACCESS_ISSUER: "https://example.cloudflareaccess.com", ACCESS_AUD: "a".repeat(64), ACCESS_OWNER_EMAILS: "owner@example.invalid" } as Env;
 Object.assign(env, { DB: snapshotDb });
-const headers = { "cf-access-jwt-assertion": "synthetic" };
+const headers = { "cf-access-jwt-assertion": "synthetic", Origin: "https://site.invalid", "Sec-Fetch-Site": "same-origin" };
 const row = { season: "2024-25", played: 2, won: 1, drawn: 0, lost: 1, goals: 3, goals_against: 0, snapshot_id: "a".repeat(64) };
 
 describe("Champions League history routes", () => {
