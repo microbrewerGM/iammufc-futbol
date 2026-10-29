@@ -11,12 +11,47 @@
 
 import { describe, expect, it } from "vitest";
 
-import { Catalog, type CompiledCatalog } from "../worker/src/core/feasibility";
+import { Catalog, type CompiledCatalog, type FeasibilityResult } from "../worker/src/core/feasibility";
+import type { ResultRow } from "../worker/src/core/db";
+import { withDefaults } from "../worker/src/core/intent";
 import { LOCALES } from "../worker/src/core/locale";
-import { coverageMatrix, seasonPageBody } from "../worker/src/views/pages";
+import { coverageMatrix, resultPanel, seasonPageBody } from "../worker/src/views/pages";
 import compiled from "../worker/src/generated/catalog.json" with { type: "json" };
 
 const catalog = new Catalog(compiled as unknown as CompiledCatalog);
+
+describe("answer table and chart row parity", () => {
+  const rankedRows: ResultRow[] = [
+    { label: "Alpha", route_key: "fpl:code:1", secondary: "FW", value: 7 },
+    { label: "Beta", route_key: "fpl:code:2", secondary: "MF", value: 3 },
+    { label: "Gamma", route_key: "fpl:code:3", secondary: "FW", value: 1 },
+  ];
+  const feasible: FeasibilityResult = { state: "computable_now_queued", reason: "fixture", cost_class: "cheap" };
+
+  function exposedRows(html: string) {
+    const table = html.match(/<table>[\s\S]*?<tbody>([\s\S]*?)<\/tbody>[\s\S]*?<\/table>/)?.[1] ?? "";
+    const chart = html.match(/<div class="chart-region"[^>]*>([\s\S]*?)<\/svg>/)?.[1] ?? "";
+    const tableRows = [...table.matchAll(/<tr><td><a[^>]*>(Alpha|Beta|Gamma)<\/a><\/td><td>[^<]*<\/td><td class="num">([^<]*)<\/td><\/tr>/g)]
+      .map((match) => [match[1], match[2]]);
+    const chartText = [...chart.matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map((match) => match[1]);
+    const chartRows = chartText.reduce<string[][]>((rows, text, index) => {
+      if (text && ["Alpha", "Beta", "Gamma"].includes(text)) rows.push([text, chartText[index + 1] ?? ""]);
+      return rows;
+    }, []);
+    return { tableRows, chartRows };
+  }
+
+  it("preserves every ranked player and value across the table and bar views", () => {
+    const common = withDefaults({ metric: "goals", entity_type: "player", entity_id: "all", season: "2025-26", competition: "PL", limit: 3 });
+    const table = resultPanel({ ...common, viz: "table" }, feasible, rankedRows, catalog, "table-fixture", LOCALES.en);
+    const bar = resultPanel({ ...common, viz: "bar" }, feasible, rankedRows, catalog, "bar-fixture", LOCALES.en);
+    const expected = [["Alpha", "7"], ["Beta", "3"], ["Gamma", "1"]];
+
+    expect(exposedRows(table).tableRows).toEqual(expected);
+    expect(exposedRows(bar).chartRows).toEqual(expected);
+    expect(exposedRows(table).tableRows).toEqual(exposedRows(bar).chartRows);
+  });
+});
 
 const squad = [
   { label: "B.Fernandes", route_key: "fpl:code:101", secondary: "MF", goals: 8, assists: 6, minutes: 3017, points: 174, xg: 9.93 },
