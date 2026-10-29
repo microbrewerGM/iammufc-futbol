@@ -17,7 +17,7 @@ vi.mock("../worker/src/core/opponent-history", async (original) => ({ ...await o
 }));
 
 import app from "../worker/src/index";
-import { enforceBudget, seasonSplitFacts } from "../worker/src/core/db";
+import { currentSnapshot, enforceBudget, seasonSplitFacts } from "../worker/src/core/db";
 import { readOpponentHistory } from "../worker/src/core/opponent-history";
 import { Catalog } from "../worker/src/core/feasibility";
 
@@ -99,6 +99,16 @@ describe("opponent history routes", () => {
     const response = await app.request(`https://site.invalid/${locale}/opponents/history${query}`, { headers }, env);
     expect(response.status).toBe(503);
     expect(readOpponentHistory).not.toHaveBeenCalled();
+  });
+  it("fails closed when the publication changes during opponent label read", async () => {
+    const labels = vi.spyOn(await import("../worker/src/core/db"), "readOpponentLabels").mockImplementationOnce(async () => {
+      vi.mocked(currentSnapshot).mockResolvedValueOnce("b".repeat(64));
+      return new Map([["club:1001", "Old label"]]);
+    });
+    const response = await app.request(`https://site.invalid/en/opponents/history${query}`, { headers }, env);
+    expect(response.status).toBe(503);
+    expect(labels).toHaveBeenCalledTimes(1);
+    labels.mockRestore();
   });
   it.each(["en", "es"])("rejects malformed requests before unpublished capability in %s", async locale => {
     clear.mockReturnValue("partial");

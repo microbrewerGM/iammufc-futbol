@@ -538,7 +538,7 @@ function registerLocaleRoutes(code: LocaleCode) {
           const publication = await currentPublication(c.env);
           snapshot = publication?.snapshotId ?? null;
           if (!snapshot) throw new Error("snapshot unavailable");
-          const facts = await seasonSplitFacts(c.env, snapshot, request.seasons, {
+      const facts = await seasonSplitFacts(c.env, snapshot, request.seasons, {
             venue: request.venue, opponent_id: request.opponent_id,
           });
           result = querySeasonSplits(request, facts.catalog, facts.rows);
@@ -547,6 +547,7 @@ function registerLocaleRoutes(code: LocaleCode) {
             ...(request.opponent_id ? [request.opponent_id] : []),
           ])].filter((id) => APPROVED_OPPONENT_IDS.has(id)).sort();
           const labels = await readOpponentLabels(c.env, snapshot, opponentIds);
+          if (await currentSnapshot(c.env) !== snapshot) throw new Error("snapshot_changed_during_query");
           opponents = opponentIds.map((opponent_id) => ({ opponent_id, label: labels.get(opponent_id) ?? opponent_id }));
         }
       }
@@ -867,8 +868,8 @@ function registerLocaleRoutes(code: LocaleCode) {
       if (!snapshot) throw new Error("snapshot unavailable");
       const facts = await seasonSplitFacts(c.env, snapshot, request.seasons, { venue: null, opponent_id: opponent });
       const result = await readOpponentHistory(c.env, request, facts.catalog);
-      if (await currentSnapshot(c.env) !== snapshot) throw new Error("snapshot changed");
       const labels = await readOpponentLabels(c.env, snapshot, [opponent]);
+      if (await currentSnapshot(c.env) !== snapshot) throw new Error("snapshot changed");
       // season_splits lineage_json contains bare catalog source IDs.
       const sourceCredits = new Map<string, Set<string>>();
       for (const cell of catalog.coverage) {
