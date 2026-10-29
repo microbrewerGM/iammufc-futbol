@@ -33,9 +33,18 @@ describe("opponent_labels migration (0011)", () => {
       expectRejected(db, { ...validRow, opponent_id: "club:0" });
       expectRejected(db, { ...validRow, opponent_id: "team:1" });
       expectRejected(db, { ...validRow, opponent_id: "club:12abc" });
+      expectRejected(db, { ...validRow, opponent_id: "club:1x" });
+      expectRejected(db, { ...validRow, opponent_id: "club:01" });
+      expectRejected(db, { ...validRow, opponent_id: "club:1\n" });
+      expectRejected(db, { ...validRow, opponent_id: "club:1 " });
       expectRejected(db, { ...validRow, opponent_id: "club:2", label: "" });
       expectRejected(db, { ...validRow, opponent_id: "club:3", label: "x".repeat(81) });
       expectRejected(db, { ...validRow, opponent_id: "club:4", snapshot_id: "a".repeat(63) });
+      expectRejected(db, { ...validRow, opponent_id: "club:5", snapshot_id: "g".repeat(64) });
+      expectRejected(db, { ...validRow, opponent_id: "club:6", snapshot_id: "A".repeat(64) });
+      const lowerHexRow = { ...validRow, opponent_id: "club:7", snapshot_id: "0123456789abcdef".repeat(4) };
+      db.prepare(insertSql).run(lowerHexRow);
+      expect(db.prepare("SELECT opponent_id, label, snapshot_id FROM opponent_labels WHERE opponent_id = $opponent_id").get({ $opponent_id: lowerHexRow.opponent_id })).toEqual(lowerHexRow);
     } finally {
       db.close();
     }
@@ -51,5 +60,13 @@ describe("opponent_labels migration (0011)", () => {
     expect(consumerSection.indexOf("0011_opponent_labels.sql")).toBeLessThan(consumerSection.indexOf("private-seed/0002_seed.sql"));
     expect((workflow.match(/0011_opponent_labels\.sql/g) ?? [])).toHaveLength(2);
     expect((workflow.match(/0010_question_requests\.sql/g) ?? [])).toHaveLength(2);
+  });
+
+  it("includes 0011 in the local d1:seed sequence after 0010 and before the seed data", () => {
+    const packageJson = JSON.parse(readFileSync("package.json", "utf8")) as { scripts: { "d1:seed": string } };
+    const seed = packageJson.scripts["d1:seed"];
+    expect(seed.indexOf("infra/migrations/0010_question_requests.sql")).toBeLessThan(seed.indexOf("infra/migrations/0011_opponent_labels.sql"));
+    expect(seed.indexOf("infra/migrations/0011_opponent_labels.sql")).toBeLessThan(seed.indexOf("infra/migrations/0002_seed.sql"));
+    expect((seed.match(/infra\/migrations\/0011_opponent_labels\.sql/g) ?? [])).toHaveLength(1);
   });
 });

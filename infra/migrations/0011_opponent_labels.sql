@@ -5,5 +5,8 @@ CREATE TABLE IF NOT EXISTS opponent_labels (
     length(opponent_id) <= 23
   ),
   label TEXT NOT NULL CHECK (length(label) BETWEEN 1 AND 80),
-  snapshot_id TEXT NOT NULL CHECK (length(snapshot_id) = 64)
+  snapshot_id TEXT NOT NULL CHECK (
+    length(snapshot_id) = 64 AND
+    snapshot_id NOT GLOB '*[^0-9a-f]*'
+  )
 ) STRICT;
