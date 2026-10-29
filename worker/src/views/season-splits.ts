@@ -32,9 +32,21 @@ export function seasonSplitsBody(model: SeasonSplitView, locale: Locale): string
     return `<label for="splits-${id}">${label}</label><select id="splits-${id}" name="${id}">${all.map(([v, text]) => `<option value="${esc(v)}"${v === selected ? " selected" : ""}>${esc(text)}</option>`).join("")}</select>`;
   };
   const seasons = [...new Set([...model.seasons, ...s.seasons])].sort();
+  const seasonGroups = new Map<string, string[]>();
+  for (const season of seasons) {
+    const year = Number(season.slice(0, 4));
+    const decade = Number.isFinite(year) ? Math.floor(year / 10) * 10 : 0;
+    const label = decade ? t(`${decade}s`, `Década de ${decade}`) : t("Other seasons", "Otras temporadas");
+    seasonGroups.set(label, [...(seasonGroups.get(label) ?? []), season]);
+  }
+  let seasonIndex = 0;
+  const seasonChoices = [...seasonGroups].map(([label, groupedSeasons]) => `<fieldset><legend>${esc(label)}</legend>${groupedSeasons.map(v => {
+    const i = seasonIndex++;
+    return `<label for="splits-season-${i}"><input id="splits-season-${i}" type="checkbox" name="seasons" value="${esc(v)}"${s.seasons.includes(v) ? " checked" : ""}>${esc(v)}</label>`;
+  }).join("")}</fieldset>`).join("");
   const form = `<form method="get" action="/${locale.code}/seasons/explore">
     <input type="hidden" name="schema_version" value="1"><input type="hidden" name="competition" value="PL">
-    <fieldset><legend>${t("Seasons (choose 1–16)", "Temporadas (elige 1–16)")}</legend>${seasons.map((v, i) => `<label for="splits-season-${i}"><input id="splits-season-${i}" type="checkbox" name="seasons" value="${esc(v)}"${s.seasons.includes(v) ? " checked" : ""}>${esc(v)}</label>`).join("")}</fieldset>
+    <fieldset><legend>${t("Seasons (choose 1–16)", "Temporadas (elige 1–16)")}</legend>${seasonChoices}</fieldset>
     ${select("group_by", t("Group by", "Agrupar por"), [["venue", t("Home and away", "Local y visitante")], ["opponent", t("Opponent", "Rival")]], s.group_by)}
     ${select("venue", t("Venue", "Localía"), [["", t("All venues", "Todas las localías")], ["home", venueName("home")], ["away", venueName("away")]], s.venue)}
     ${select("opponent_id", t("Opponent", "Rival"), [["", t("All opponents", "Todos los rivales")], ...model.opponents.map(o => [o.opponent_id, o.label] as [string, string])], s.opponent_id)}
@@ -59,7 +71,11 @@ export function seasonSplitsBody(model: SeasonSplitView, locale: Locale): string
     return `<tr><th scope="row">${label}</th>${[played, won, drawn, lost, gf, ga, gd, points].map(v => `<td>${num(v)}</td>`).join("")}<td>${num(per(points), 2)}</td><td>${num(per(gf), 2)}</td><td>${num(per(ga), 2)}</td><td>${num(winRate === null ? null : 100 * winRate, 2)}</td><td>${esc(seasonsUsed.join(", "))}</td></tr>`;
   };
   const total = result.request.group_by === "venue" && result.request.venue === null && result.groups.length ? totalRow() : "";
-  const table = result.groups.length ? `<div class="comparison-table" role="region" tabindex="0" aria-label="${title}"><table aria-describedby="splits-summary splits-method${result.partial ? " splits-warning" : ""}"><caption>${t("Season performance", "Rendimiento por temporada")}${result.partial ? ` · ${t("partial subtotals", "subtotales parciales")}` : ""}</caption><thead><tr>${headers.map(h => `<th scope="col">${h}</th>`).join("")}</tr></thead><tbody>${rows}${total}</tbody></table></div>` : `<p>${result.status === "no_matches" ? t("No completed matches match this selection.", "Ningún partido finalizado coincide con esta selección.") : t("Split coverage is unavailable for this selection. No zero-match total is implied.", "La cobertura de desgloses no está disponible para esta selección. No se afirma un total de cero partidos.")}</p>`;
+  const unavailableSeasons = result.coverage.filter(c => c.coverage === "missing").map(c => c.season);
+  const unavailable = unavailableSeasons.length
+    ? t(`Split coverage is unavailable for ${unavailableSeasons.join(", ")}. Revise season selection using the controls above. No zero-match total is implied.`, `La cobertura de desgloses no está disponible para ${unavailableSeasons.join(", ")}. Cambie la selección de temporada con los controles anteriores. No se afirma un total de cero partidos.`)
+    : t("Split coverage is unavailable for this selection. No zero-match total is implied.", "La cobertura de desgloses no está disponible para esta selección. No se afirma un total de cero partidos.");
+  const table = result.groups.length ? `<div class="comparison-table" role="region" tabindex="0" aria-label="${title}"><table aria-describedby="splits-summary splits-method${result.partial ? " splits-warning" : ""}"><caption>${t("Season performance", "Rendimiento por temporada")}${result.partial ? ` · ${t("partial subtotals", "subtotales parciales")}` : ""}</caption><thead><tr>${headers.map(h => `<th scope="col">${h}</th>`).join("")}</tr></thead><tbody>${rows}${total}</tbody></table></div>` : `<p>${result.status === "no_matches" ? t("No completed matches match this selection.", "Ningún partido finalizado coincide con esta selección.") : unavailable}</p>`;
   const lineage = [...new Set(result.groups.flatMap(g => g.lineage))];
   const creditFor = (ref: string): string | undefined => {
     const value: unknown = Object.hasOwn(model.credits, ref) ? model.credits[ref] : undefined;
