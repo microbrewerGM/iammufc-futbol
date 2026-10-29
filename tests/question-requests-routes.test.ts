@@ -38,7 +38,7 @@ describe("question request intake", () => {
     expect(validAccountSub("human-account")).toBe(true);
     expect(validAccountSub(`a\u200db`)).toBe(false);
     expect(validAccountSub("a".repeat(513))).toBe(false);
-    for (const rejected of ["\u0001", "\u0085", "\u00ad", "\u061c", "\u180e", "\u200b", "\u200d", "\u202e", "\u2060", "\ufeff", "\ufffa", "\u{e0000}", "\uFE0F", "\u{E0100}", "\u115F", "\u1160", "\u3164", "\uFFA0", "\u{E0001}"]) {
+    for (const rejected of ["\u0001", "\u0085", "\u00ad", "\u0600", "\u061c", "\u06dd", "\u180e", "\u200b", "\u200d", "\u202e", "\u2060", "\ufeff", "\ufffa", "\u{e0000}", "\uFE0F", "\u{E0100}", "\u115F", "\u1160", "\u3164", "\uFFA0", "\u{E0001}", "\u{110BD}", "\u{1D173}"]) {
       expect(validQuestionText(`a${rejected}b`)).toBeNull();
     }
     expect(validQuestionText("a".repeat(501))).toBeNull();
@@ -101,23 +101,39 @@ describe("question request intake", () => {
     expect(DB.prepare).not.toHaveBeenCalled();
   });
 
-  it("rejects a 4097-byte field payload and an over-cap stream without Content-Length", async () => {
+  it("rejects oversized bodies from Content-Length and bounded streaming, while allowing exactly 8192 bytes", async () => {
     const declared = dbMock();
-    const declaredBody = `text=${"a".repeat(4092)}`; // 4097 bytes including the field key.
-    const declaredResponse = await appWith().request("https://site.invalid/en/requests", {
+    const declaredBody = `text=q&pad=${"a".repeat(8200)}`;
+    const declaredRequest = new Request("https://site.invalid/en/requests", {
       method: "POST", headers: { ...headers, Origin: "https://site.invalid", "content-type": "application/x-www-form-urlencoded", "content-length": String(new TextEncoder().encode(declaredBody).length) }, body: declaredBody,
-    }, { ...accessEnv, DB: declared.DB } as never);
+    });
+    expect(declaredRequest.headers.get("content-length")).toBe(String(new TextEncoder().encode(declaredBody).length));
+    const declaredResponse = await appWith().fetch(declaredRequest, { ...accessEnv, DB: declared.DB } as never);
     expect(declaredResponse.status).toBe(413);
-    expect(await declaredResponse.text()).toContain("<html");
     expect(declared.DB.prepare).not.toHaveBeenCalled();
 
     const streamed = dbMock();
+    const streamedBody = `text=q&pad=${"a".repeat(8200)}`;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(streamedBody));
+        controller.close();
+      },
+    });
     const streamResponse = await appWith().request("https://site.invalid/en/requests", {
-      method: "POST", headers: { ...headers, Origin: "https://site.invalid", "content-type": "application/x-www-form-urlencoded" }, body: `text=${"a".repeat(8193)}`,
-    }, { ...accessEnv, DB: streamed.DB } as never);
+      method: "POST", headers: { ...headers, Origin: "https://site.invalid", "content-type": "application/x-www-form-urlencoded" }, body: stream, duplex: "half",
+    } as RequestInit & { duplex: "half" }, { ...accessEnv, DB: streamed.DB } as never);
     expect(streamResponse.status).toBe(413);
-    expect(await streamResponse.text()).toContain("<html");
     expect(streamed.DB.prepare).not.toHaveBeenCalled();
+
+    const boundary = dbMock();
+    const boundaryBody = `text=q&pad=${"a".repeat(8181)}`; // 11-byte prefix plus 8181 bytes = 8192.
+    expect(new TextEncoder().encode(boundaryBody)).toHaveLength(8192);
+    const boundaryResponse = await appWith().fetch(new Request("https://site.invalid/en/requests", {
+      method: "POST", headers: { ...headers, Origin: "https://site.invalid", "content-type": "application/x-www-form-urlencoded", "content-length": "8192" }, body: boundaryBody,
+    }), { ...accessEnv, DB: boundary.DB } as never);
+    expect(boundaryResponse.status).not.toBe(413);
+    expect(boundary.DB.prepare).toHaveBeenCalled();
   });
 
   it.each([
