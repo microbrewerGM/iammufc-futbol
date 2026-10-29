@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 // @ts-expect-error Node's built-in module is available in the configured test runtime.
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
+// @ts-expect-error Node's built-in module is available in the configured test runtime.
+import { join } from "node:path";
 
 type WorkflowJob = { name: string; source: string };
 
@@ -26,15 +28,58 @@ function parseJobs(source: string): WorkflowJob[] {
   return jobs;
 }
 
-describe("deploy workflow secret job guards", () => {
-  it("restricts every job that references a secret to main", () => {
-    const workflow = readFileSync(".github/workflows/deploy.yml", "utf8");
-    const secretJobs = parseJobs(workflow).filter((job) => /\$\{\{\s*secrets\./.test(job.source));
+const approvedConditions = new Set([
+  "github.ref == 'refs/heads/main' && github.event_name != 'repository_dispatch'",
+  "github.event_name == 'repository_dispatch' && github.event.action == 'p13-private-seed-ready' && github.ref == 'refs/heads/main'",
+  "github.ref == 'refs/heads/main'",
+]);
 
-    expect(secretJobs.length).toBeGreaterThan(0);
-    for (const job of secretJobs) {
+function normalizeCondition(condition: string): string {
+  return condition.replace(/\s+/g, " ").trim();
+}
+
+function findSecretJobs(source: string): WorkflowJob[] {
+  return parseJobs(source).filter((job) => /\$\{\{\s*secrets\.(?:CF_|CLOUDFLARE)/i.test(job.source));
+}
+
+function assertApprovedSecretJobConditions(workflows: Array<{ path: string; source: string }>): string[] {
+  const found: string[] = [];
+  for (const workflow of workflows) {
+    for (const job of findSecretJobs(workflow.source)) {
+      found.push(`${workflow.path}:${job.name}`);
       const condition = job.source.match(/^    if:\s*(.+)$/m)?.[1] ?? "";
-      expect(condition, `${job.name} must require refs/heads/main`).toContain("github.ref == 'refs/heads/main'");
+      expect(
+        approvedConditions.has(normalizeCondition(condition)),
+        `${workflow.path}:${job.name} has unapproved secret-job condition: ${condition}`,
+      ).toBe(true);
     }
+  }
+  return found.sort();
+}
+
+function readWorkflowSources(): Array<{ path: string; source: string }> {
+  return readdirSync(".github/workflows")
+    .filter((file: string) => file.endsWith(".yml") || file.endsWith(".yaml"))
+    .sort()
+    .map((file: string) => {
+      const path = join(".github/workflows", file);
+      return { path, source: readFileSync(path, "utf8") };
+    });
+}
+
+describe("deploy workflow secret job guards", () => {
+  it("checks every Cloudflare-secret job in every workflow against approved conditions", () => {
+    const secretJobs = assertApprovedSecretJobConditions(readWorkflowSources());
+    expect(secretJobs).toEqual([
+      ".github/workflows/access-smoke.yml:smoke",
+      ".github/workflows/deploy.yml:consume-private-seed",
+      ".github/workflows/deploy.yml:deploy-dev",
+      ".github/workflows/gauntlet-capture.yml:capture",
+    ]);
+  });
+
+  it("rejects an always() bypass even when the main ref condition is present", () => {
+    const mutated = `name: Deploy\njobs:\n  deploy-dev:\n    if: always() || github.ref == 'refs/heads/main'\n    steps:\n      - run: echo safe\n      - env:\n          CF_TOKEN: \${{ secrets.CF_TOKEN_DEV }}\n`;
+    expect(() => assertApprovedSecretJobConditions([{ path: "mutated.yml", source: mutated }])).toThrow();
   });
 });
