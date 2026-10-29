@@ -49,7 +49,20 @@ function snapshotList(value: unknown): unknown {
     throw new TypeError("invalid list length");
   }
   const copy: unknown[] = [];
-  for (let index = 0; index < (length as number); index++) copy.push(readOwnData(value, String(index)));
+  for (let index = 0; index < (length as number); index++) {
+    const key = String(index);
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || !("value" in descriptor) || descriptor.get || descriptor.set) {
+      throw new TypeError("expected own data property");
+    }
+    if (Array.isArray(value)) {
+      const actual = Reflect.getOwnPropertyDescriptor(value, key);
+      if (!actual || !("value" in actual) || !Object.is(descriptor.value, actual.value)
+        || descriptor.enumerable !== actual.enumerable || descriptor.configurable !== actual.configurable
+        || descriptor.writable !== actual.writable) throw new TypeError("unstable list item");
+    }
+    copy.push(descriptor.value);
+  }
   return Object.freeze(copy);
 }
 

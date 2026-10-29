@@ -166,4 +166,44 @@ describe("human request admission policy eligibility", () => {
       eligible: false, reason: "invalid_policy",
     });
   });
+  it("denies dense policy lists longer than 64 items", () => {
+    const manySources = Array.from({ length: 65 }, (_, index) => `source-${index}`);
+    expect(checkAdmissionEligibility(proof(), { ...policy, allowedSources: manySources })).toEqual({
+      eligible: false, reason: "invalid_policy",
+    });
+  });
+  it.each(["throwing", "changing"] as const)("maps a %s policy index descriptor failure to invalid_policy", failure => {
+    let reads = 0;
+    const source = new Proxy(["fixture-source"], {
+      getOwnPropertyDescriptor(target, key) {
+        if (key === "0") {
+          if (failure === "throwing") throw new Error("descriptor trap failed");
+          reads++;
+          return { ...Reflect.getOwnPropertyDescriptor(target, key)!, value: reads === 1 ? "fixture-source" : "changed" };
+        }
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    });
+    expect(checkAdmissionEligibility(proof(), { ...policy, allowedSources: source })).toEqual({
+      eligible: false, reason: "invalid_policy",
+    });
+  });
+  it.each(["throwing", "changing"] as const)("maps a %s evidence index descriptor failure to batch_capability_denied", failure => {
+    let reads = 0;
+    const capabilities = new Proxy(["fixture:batch"], {
+      getOwnPropertyDescriptor(target, key) {
+        if (key === "0") {
+          if (failure === "throwing") throw new Error("descriptor trap failed");
+          reads++;
+          return { ...Reflect.getOwnPropertyDescriptor(target, key)!, value: reads === 1 ? "fixture:batch" : "changed" };
+        }
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    });
+    const evidence = proof();
+    evidence.batch!.capabilities = capabilities;
+    expect(checkAdmissionEligibility(evidence, policy)).toEqual({
+      eligible: false, reason: "batch_capability_denied",
+    });
+  });
 });
