@@ -11,6 +11,7 @@ import { parseIntent, validateExecutionSupport } from "./validate-intent";
 import type { PlayerRangeCatalog, PlayerRangeRequest, PlayerRangeRow } from "./player-range";
 import type { CoverageCell } from "./feasibility";
 import type { SeasonSplitCatalog, SeasonSplitRow } from "./season-splits";
+import { recordReadTiming } from "./timing";
 
 export interface Env {
   DB: D1Database;
@@ -337,13 +338,15 @@ export async function enforceBudget(
 
   try {
     // One statement: atomic upsert that returns the post-increment count.
-    const row = await env.DB.prepare(
+    const result = await env.DB.prepare(
       `INSERT INTO budget_counter (day, count) VALUES (?, 1)
          ON CONFLICT(day) DO UPDATE SET count = count + 1
          RETURNING count`,
     )
       .bind(day)
-      .first<{ count: number }>();
+      .all<{ count: number }>();
+    recordReadTiming("enforceBudget", result.meta);
+    const row = result.results?.[0];
     if (!row || !Number.isFinite(row.count)) return deny("unavailable");
     return row.count <= BUDGET_HARD_LIMIT ? true : deny("over_limit");
   } catch {
@@ -797,7 +800,7 @@ export async function resolvePlayerIdentity(
   // Source-namespaced person id (e.g. fpl:code:141746): exact indexed lookup
   // on player_identities.person_id, no substring scan.
   if (PERSON_ID_SHAPE.test(n)) {
-    const { results } = await env.DB.prepare(
+    const result = await env.DB.prepare(
       `SELECT i.person_id, p.web_name
          FROM player_identities i
          JOIN players p ON p.player_id = i.player_id
@@ -811,7 +814,8 @@ export async function resolvePlayerIdentity(
     )
       .bind(n, competition)
       .all<PlayerIdentity>();
-    const row = (results ?? [])[0];
+    recordReadTiming("resolvePlayerIdentity", result.meta);
+    const row = (result.results ?? [])[0];
     return row ? { person_id: row.person_id, web_name: row.web_name } : null;
   }
 
@@ -821,7 +825,7 @@ export async function resolvePlayerIdentity(
   // longer ones throw "LIKE or GLOB pattern too complex". Count the bound
   // pattern, escapes and both % wildcards included, and treat overflow as not found.
   if (new TextEncoder().encode(aliasPattern).length + 2 > D1_LIKE_PATTERN_MAX_BYTES) return null;
-  const { results } = await env.DB.prepare(
+  const result = await env.DB.prepare(
     `SELECT i.person_id, p.web_name,
             CASE WHEN i.person_id = ?
                    OR LOWER(replace(p.web_name, '.', '')) = ?
@@ -842,8 +846,9 @@ export async function resolvePlayerIdentity(
   )
     .bind(n, n, n, n, competition, n, aliasPattern, aliasPattern, aliasPattern)
     .all<IdentityCandidate>();
+  recordReadTiming("resolvePlayerIdentity", result.meta);
 
-  const rows = results ?? [];
+  const rows = result.results ?? [];
   const distinct = (candidates: IdentityCandidate[]) => {
     const identities = new Map<string, PlayerIdentity>();
     for (const candidate of candidates) {
