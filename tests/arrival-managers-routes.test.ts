@@ -21,8 +21,8 @@ const answer = {
   snapshot_id: "snap-1",
   coverage: "partial",
   population_count: 1,
-  lineage: ["source:one"],
-  rows: [{ player: "Alex Player", manager: null, entry_type: null, entry_date: null, status: "unknown", reason: "tenure_missing", coverage: "partial", as_of: "2026-07-02", snapshot_id: "snap-1", lineage: ["source:one"] }],
+  lineage: ["fpl"],
+  rows: [{ player: "Alex Player", manager: null, entry_type: null, entry_date: null, status: "unknown", reason: "tenure_missing", coverage: "partial", as_of: "2026-07-02", snapshot_id: "snap-1", lineage: ["fpl"] }],
 };
 const env = (fetcher: (input: RequestInfo | URL) => Promise<Response>) => ({
   ACCESS_ISSUER: "https://example.cloudflareaccess.com",
@@ -30,7 +30,7 @@ const env = (fetcher: (input: RequestInfo | URL) => Promise<Response>) => ({
   ACCESS_OWNER_EMAILS: "owner@example.invalid",
   ASSETS: { fetch: fetcher },
 } as unknown as Env);
-const access = { "cf-access-jwt-assertion": "synthetic" };
+const access = { "cf-access-jwt-assertion": "synthetic", Origin: "https://site.invalid", "Sec-Fetch-Site": "same-origin" };
 
 describe("arrival manager dated answer route", () => {
   it.each([["en", "Players by manager at joining"], ["es", "Jugadores por entrenador al llegar"]] as const)("renders matching dated answer in %s", async (locale, title) => {
@@ -45,6 +45,20 @@ describe("arrival manager dated answer route", () => {
     expect(body).toContain("Alex Player");
     expect(body).toContain("2026-07-02");
     expect(body).toContain(locale === "es" ? "Desconocidos" : "Unknown manager");
+    expect(body).toContain(locale === "es"
+      ? "Datos de jugadores derivados de la API pública de Fantasy Premier League."
+      : "Player data derived from the Fantasy Premier League public API.");
+  });
+
+  it("shows the attribution unavailable note for unknown lineage refs", async () => {
+    const unknown = { ...answer, lineage: ["unknown-source"], rows: answer.rows.map(row => ({ ...row, lineage: ["unknown-source"] })) };
+    const runtime = env(async () => Response.json(unknown));
+    for (const locale of ["en", "es"] as const) {
+      const response = await app.request(`https://site.invalid/${locale}/discover/arrivals?${request}`, { headers: access }, runtime);
+      const body = await response.text();
+      expect(response.status, body).toBe(200);
+      expect(body).toContain(locale === "es" ? "Atribución de fuente no disponible" : "Source attribution unavailable");
+    }
   });
 
   it.each([

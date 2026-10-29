@@ -426,7 +426,19 @@ function registerLocaleRoutes(code: LocaleCode) {
       } else {
         const input = await response.json() as unknown;
         const snapshot = typeof input === "object" && input !== null && "snapshot_id" in input && typeof input.snapshot_id === "string" ? input.snapshot_id : undefined;
-        model = adaptArrivalManagerAnswer(input, {}, { request: expected, ...(snapshot ? { snapshot_id: snapshot } : {}) });
+        const sourceCredits = new Map<string, Set<string>>();
+        for (const cell of catalog.coverage) {
+          const credit = (locale.code === "es" ? cell.attribution_text_es ?? cell.attribution_text : cell.attribution_text) ?? cell.source_name;
+          const trimmedCredit = credit.trim();
+          if (!trimmedCredit) continue;
+          const refs = [cell.source_id, `${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`];
+          for (const ref of refs) {
+            if (!sourceCredits.has(ref)) sourceCredits.set(ref, new Set());
+            sourceCredits.get(ref)!.add(trimmedCredit);
+          }
+        }
+        const credits = Object.fromEntries([...sourceCredits].map(([id, texts]) => [id, [...texts].join("; ")]));
+        model = adaptArrivalManagerAnswer(input, credits, { request: expected, ...(snapshot ? { snapshot_id: snapshot } : {}) });
         if (model.error) model = { request: expected, players: {}, managers: {}, entries: {}, credits: {}, result: {
           request: expected, snapshot_id: "unavailable", artifact_key: "0".repeat(64), transform_code_version: "answer-export-v1",
           renderer_version: "arrival-manager-view-v1", roster_snapshot_id: null, feasibility: "no_data" as const,
