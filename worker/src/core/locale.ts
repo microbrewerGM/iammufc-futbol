@@ -60,6 +60,14 @@ export interface Locale {
     playerTrendsThroughLabel: string;
     playerTrendsSubmit: string;
     opponentHistoryTitle: string;
+    opponentHistoryChoose: string;
+    opponentHistoryOpponentLabel: string;
+    opponentHistorySeasons: string;
+    opponentHistoryVenue: string;
+    opponentHistoryVenueAll: string;
+    opponentHistoryVenueHome: string;
+    opponentHistoryVenueAway: string;
+    opponentHistorySubmit: string;
     opponentHistoryInvalid: string;
     opponentHistoryUnavailable: string;
     opponentHistoryLink: string;
@@ -189,6 +197,14 @@ const EN: Locale = {
     playerTrendsThroughLabel: "Through",
     playerTrendsSubmit: "View trend",
     opponentHistoryTitle: "Opponent history",
+    opponentHistoryChoose: "Choose an opponent and scope",
+    opponentHistoryOpponentLabel: "Opponent",
+    opponentHistorySeasons: "Seasons",
+    opponentHistoryVenue: "Venue",
+    opponentHistoryVenueAll: "All venues",
+    opponentHistoryVenueHome: "Home",
+    opponentHistoryVenueAway: "Away",
+    opponentHistorySubmit: "View history",
     opponentHistoryInvalid: "Invalid opponent history selection.",
     opponentHistoryUnavailable: "Opponent history is temporarily unavailable.",
     opponentHistoryLink: "Opponent history",
@@ -322,6 +338,14 @@ const ES: Locale = {
     playerTrendsThroughLabel: "Hasta",
     playerTrendsSubmit: "Ver evolución",
     opponentHistoryTitle: "Historial contra rivales",
+    opponentHistoryChoose: "Elige un rival y el alcance",
+    opponentHistoryOpponentLabel: "Rival",
+    opponentHistorySeasons: "Temporadas",
+    opponentHistoryVenue: "Localía",
+    opponentHistoryVenueAll: "Todas las localías",
+    opponentHistoryVenueHome: "Local",
+    opponentHistoryVenueAway: "Visitante",
+    opponentHistorySubmit: "Ver historial",
     opponentHistoryInvalid: "Selección de historial de rival no válida.",
     opponentHistoryUnavailable: "El historial del rival no está disponible temporalmente.",
     opponentHistoryLink: "Historial contra rivales",
