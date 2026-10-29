@@ -19,6 +19,7 @@ import {
   type QueryIntent,
   type VizType,
 } from "../worker/src/core/intent";
+import { LOCALES } from "../worker/src/core/locale";
 import vectors from "./vectors/artifact-keys.json" with { type: "json" };
 
 interface RawInput {
@@ -117,5 +118,19 @@ describe("snapshot participation in the key", () => {
     // data would never reach the site.
     const intent = build(byName("minimal defaults applied").input as RawInput);
     expect(await artifactKey(intent, "snap-a")).not.toBe(await artifactKey(intent, "snap-b"));
+  });
+});
+
+describe("low-confidence clarification copy", () => {
+  it("includes the English clarification text", () => {
+    expect(LOCALES.en.strings.clarificationRequired).toBe(
+      "This proposal is ambiguous and has not been run. Add the missing metric or season, then ask again.",
+    );
+  });
+
+  it("includes the Spanish clarification text", () => {
+    expect(LOCALES.es.strings.clarificationRequired).toBe(
+      "Esta propuesta es ambigua y no se ha ejecutado. Añade la métrica o la temporada que falta y vuelve a preguntar.",
+    );
   });
 });
