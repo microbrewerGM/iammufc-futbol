@@ -77,7 +77,8 @@ export function playerTrendsBody(model: PlayerTrendsView, strings: Readonly<Reco
   ];
   const rows = model.series.flatMap(series => series.cells.map(cell => {
     const reason = reasonLabel(cell.reason);
-    return `<tr><th scope="row">${safeName(series.person_id)}</th><td>${esc(cell.season)}</td><td>${n(cell.total)}</td><td>${n(cell.minutes)}</td><td>${model.request.normalization === "per90" ? n(cell.rate, 2) : esc(reason)}</td><td>${esc(reason)}</td></tr>`;
+    const total = cell.reason === "missing_row" ? esc(reason) : n(cell.total);
+    return `<tr><th scope="row">${safeName(series.person_id)}</th><td>${esc(cell.season)}</td><td>${total}</td><td>${n(cell.minutes)}</td><td>${model.request.normalization === "per90" ? n(cell.rate, 2) : esc(reason)}</td><td>${esc(reason)}</td></tr>`;
   })).join("");
   const tableLabel = tr("table", t("Season by season values and availability", "Valores y disponibilidad por temporada"));
   const table = `<div class="player-trend-season-table" role="region" tabindex="0" aria-label="${esc(tableLabel)}"><table><caption>${esc(tableLabel)}</caption><thead><tr>${columns.map(c => `<th scope="col">${esc(c)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>`;
