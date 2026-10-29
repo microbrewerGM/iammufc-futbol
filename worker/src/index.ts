@@ -1090,7 +1090,8 @@ function registerLocaleRoutes(code: LocaleCode) {
 
   app.get(`${p}/seasons/champions-league`, async (c) => {
     const url = new URL(c.req.url);
-    if (url.search || url.pathname.endsWith("/")) return c.redirect(`/${code}/seasons/champions-league`, 301);
+    const csvRequested = url.searchParams.get("format") === "csv" && url.searchParams.size === 1;
+    if ((url.search && !csvRequested) || url.pathname.endsWith("/")) return c.redirect(`/${code}/seasons/champions-league`, 301);
     const cells = catalog.coverage.filter((cell) => cell.metric === "goals" && cell.entity_type === "season" &&
       cell.granularity === "box_score" && cell.competition === "CL" && cell.source_id === "openfootball");
     const seasons = [...new Set(cells.map((cell) => cell.season))];
@@ -1098,6 +1099,8 @@ function registerLocaleRoutes(code: LocaleCode) {
     let snapshot: string | null = null;
     let body: string;
     let credits: (string | null | undefined)[] = [];
+    let csvEntries: { state: "observed" | "partial" | "gap"; row?: { season: string; played: number; won: number; drawn: number; lost: number; goals: number; goals_against: number; lineage?: readonly string[] }; season?: string }[] | null = null;
+    let csvCredits: Record<string, string> = {};
     try {
       const [publication, read] = await Promise.all([currentPublication(c.env), clHistoryRead(c.env, decodedCatalog)]);
       const result = read.result;
@@ -1133,14 +1136,47 @@ function registerLocaleRoutes(code: LocaleCode) {
           if (credit.trim()) credits.push(credit);
           return { state: "partial" as const, row: { ...entry.row, lineage: [ref] } };
         });
-        body = championsLeagueHistoryBody({ entries: mapped, credits: Object.fromEntries(cells.map((cell) => [
+        csvEntries = mapped;
+        csvCredits = Object.fromEntries(cells.map((cell) => [
           `${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`,
           (code === "es" ? cell.attribution_text_es ?? cell.attribution_text : cell.attribution_text) ?? cell.source_name,
-        ])), snapshotDate: publication.loadedAt.slice(0, 10) }, locale.strings.clHistory, code);
+        ]));
+        body = championsLeagueHistoryBody({ entries: mapped, credits: csvCredits, snapshotDate: publication.loadedAt.slice(0, 10) }, locale.strings.clHistory, code);
       }
     } catch {
       body = championsLeagueHistoryBody({ entries: [], credits: {}, unavailable: true }, locale.strings.clHistory, code);
       snapshot = null;
+    }
+    if (csvRequested) {
+      if (!csvEntries) return new Response("History export unavailable.", { status: 503, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+      const strings = locale.strings.clHistory;
+      const csvCell = (value: string | number): string => {
+        let text = String(value);
+        if (/^[=+\-@]/.test(text)) text = `'${text}`;
+        return `"${text.replace(/"/g, '""')}"`;
+      };
+      const rows = [
+        [strings.season, strings.played, strings.won, strings.drawn, strings.lost, strings.goalsFor, strings.goalsAgainst, code === "es" ? "Atribución" : "Attribution"],
+        ...csvEntries.map((entry) => {
+          if (entry.state === "gap") return [entry.season ?? "", "", "", "", "", "", "", ""];
+          const row = entry.row!;
+          const refs = Array.isArray(row.lineage) ? row.lineage.filter((ref) => typeof ref === "string" && ref.trim()) : [];
+          const attribution = refs.length > 0 && refs.every((ref) => Object.hasOwn(csvCredits, ref))
+            ? [...new Set(refs.map((ref) => csvCredits[ref]))].join("; ")
+            : "";
+          return [row.season, ...(attribution ? [row.played, row.won, row.drawn, row.lost, row.goals, row.goals_against] : ["", "", "", "", "", ""]), attribution];
+        }),
+      ];
+      return new Response(`${rows.map((row) => row.map((cell) => csvCell(cell)).join(",")).join("\r\n")}\r\n`, {
+        headers: {
+          "Content-Type": "text/csv; charset=utf-8",
+          "Content-Disposition": `attachment; filename="champions-league-history-${code}.csv"`,
+        },
+      });
+    }
+    if (csvEntries) {
+      const download = code === "es" ? "Descargar CSV" : "Download CSV";
+      body += `<p><a href="/${code}/seasons/champions-league?format=csv">${download}</a></p>`;
     }
     const res = html(page(body, { title: locale.strings.clHistory.heading, locale, unprefixedPath: "/seasons/champions-league", snapshotId: snapshot, attribution: credits }));
     res.headers.set("Cache-Control", CACHE_CONTROL);
