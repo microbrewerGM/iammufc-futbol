@@ -300,13 +300,14 @@ describe("question_requests migration (0010)", () => {
       verdict({ field_status: [{ field: "goals", status: "done" }] }), verdict({ families: ["shell"] }),
       verdict({ families: ["arrival_manager", "arrival_manager"] }),
       // Valid shape padded with JSON whitespace past the 10240-byte cap.
-      verdict().replace("{", `{${" ".repeat(10240)}`),
+      "{" + " ".repeat(10240) + verdict().slice(1),
     ];
     const db = fresh();
     try {
       insert(db);
       claim(db);
-      const padded = verdict().replace("{", `{${" ".repeat(10240 - bytes(verdict()).length)}`);
+      expect(verdict().startsWith("{")).toBe(true);
+      const padded = "{" + " ".repeat(10240 - bytes(verdict()).length) + verdict().slice(1);
       expect(bytes(padded).length).toBe(10240);
       for (const [i, json] of bad.entries()) {
         for (const status of ["triaged", "junk"]) expect(() => ack(db, status, json), `case ${i} as ${status}`).toThrow();
