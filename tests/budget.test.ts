@@ -45,6 +45,12 @@ function fakeEnv(): Env {
           }
           return null;
         },
+        all: async <T>() => {
+          const key = String(bound[0]);
+          const next = (day.get(key) ?? 0) + 1;
+          day.set(key, next);
+          return { results: [{ count: next }] as T[], meta: { duration: 1, rows_read: 1 } };
+        },
       };
       return stmt;
     },

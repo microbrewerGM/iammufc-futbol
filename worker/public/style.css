@@ -126,6 +126,25 @@ main { max-width: 780px; margin: 0 auto; }
   background: var(--card);
 }
 
+/* The six-column player season table keeps its own horizontal scroll area on
+   phones. Other trend tables and pages keep their existing layout. */
+@media (max-width: 620px) {
+  main > .player-trend-season-table:has(> table thead th:nth-child(6)) {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+  main > .player-trend-season-table:has(> table thead th:nth-child(6)):focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+  main > .player-trend-season-table:has(> table thead th:nth-child(6)) > table {
+    min-width: 620px;
+  }
+}
+
 /* Language toggle. Quiet by design (design-principles.md §2: provenance-level
    chrome must not outshout the content) but a clear signifier (§1): the
    active locale is bold + underlined, not colour alone, so it reads without
