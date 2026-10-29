@@ -112,5 +112,5 @@ export function opponentHistoryBody(model: OpponentHistoryView, locale: LocaleCo
   const sources = `<section aria-label="${esc(s.source)}"><h2>${esc(s.source)}</h2>${credits.map(c => `<p>${esc(c)}</p>`).join("")}${lineage.some(ref => !credit(ref)) ? `<p>${esc(s.attributionUnavailable)}</p>` : ""}<p>${esc(s.snapshot)}: ${esc(result.snapshot_id)}</p></section>`;
   const unavailableNote = unavailableSeasons.length
     ? `<p role="note">${esc(s.unavailableSeasons ?? defaultStrings[locale].unavailableSeasons!)}: ${esc(unavailableSeasons.join(", "))}</p>` : "";
-  return `<h1>${esc(s.title)}</h1><p id="h2h-summary">${summary}</p>${headline}${partial ? `<p role="note">${esc(s.partial)}</p>` : ""}${unavailableNote}${result.status === "missing_capability" ? `<p role="status">${esc(s.missing)}</p>` : ""}${chart}${table}${sources}`;
+  return `<h1>${esc(s.title)}: ${esc(opponent)}</h1><p id="h2h-summary">${summary}</p>${headline}${partial ? `<p role="note">${esc(s.partial)}</p>` : ""}${unavailableNote}${result.status === "missing_capability" ? `<p role="status">${esc(s.missing)}</p>` : ""}${chart}${table}${sources}`;
 }
