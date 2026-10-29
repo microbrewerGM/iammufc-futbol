@@ -42,7 +42,7 @@ function fakeEnv() {
   const env = { DB, ACCESS_ISSUER: "https://example.cloudflareaccess.com", ACCESS_AUD: "a".repeat(64), ACCESS_OWNER_EMAILS: "owner@example.invalid" } as unknown as Env;
   return { env, prepared };
 }
-const headers = { "cf-access-jwt-assertion": "synthetic" };
+const headers = { "cf-access-jwt-assertion": "synthetic", Origin: "https://site.invalid", "Sec-Fetch-Site": "same-origin" };
 
 describe("latest snapshot reads", () => {
   it("reads the latest snapshot exactly once per CL history request", async () => {

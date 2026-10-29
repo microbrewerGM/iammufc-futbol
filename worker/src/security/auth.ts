@@ -14,7 +14,7 @@ type AccessVerifier = (token: string, config: AccessConfig) => Promise<AccessIde
 const resolvers = new Map<string, JWTVerifyGetKey>();
 
 export function isProtectedGetPath(path: string): boolean {
-  return /^\/(?:en\/|es\/)?(?:q|players\/(?:compare|trends)|opponents\/history|seasons\/explore|discover\/arrivals)\/?$/.test(path);
+  return /^\/(?:en\/|es\/)?(?:q|players\/(?:compare|trends)|opponents\/history|seasons\/(?:explore|champions-league)|discover\/arrivals)\/?$/.test(path);
 }
 
 export async function verifyAccess(token: string, config: AccessConfig, keys?: JWTVerifyGetKey): Promise<AccessIdentity> {

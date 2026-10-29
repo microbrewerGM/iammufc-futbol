@@ -1152,7 +1152,7 @@ function registerLocaleRoutes(code: LocaleCode) {
       const strings = locale.strings.clHistory;
       const csvCell = (value: string | number): string => {
         let text = String(value);
-        if (/^[=+\-@]/.test(text)) text = `'${text}`;
+        if (/^\s*[=+\-@]/.test(text) || /^[\t\r]/.test(text)) text = `'${text}`;
         return `"${text.replace(/"/g, '""')}"`;
       };
       const rows = [

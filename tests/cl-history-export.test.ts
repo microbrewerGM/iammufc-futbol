@@ -23,7 +23,7 @@ vi.mock("../worker/src/core/db", async (original) => ({
 import app from "../worker/src/index";
 
 const env = { ACCESS_ISSUER: "https://example.cloudflareaccess.com", ACCESS_AUD: "a".repeat(64), ACCESS_OWNER_EMAILS: "owner@example.invalid", DB: { prepare: () => ({ first: async () => null }) } } as unknown as Env;
-const headers = { "cf-access-jwt-assertion": "synthetic" };
+const headers = { "cf-access-jwt-assertion": "synthetic", Origin: "https://site.invalid", "Sec-Fetch-Site": "same-origin" };
 
 describe("Champions League history CSV export", () => {
   it("downloads newest-first visible aggregates, leaves gaps empty, and includes lineage credit", async () => {
@@ -49,5 +49,19 @@ describe("Champions League history CSV export", () => {
     const csv = await response.text();
     expect(csv).toContain('"Temporada","Jugados","Ganados","Empatados","Perdidos","Goles a favor","Goles en contra","Atribución"');
     expect(csv).toContain('"\'@cmd","","","","","","",""');
+  });
+
+  it.each(["\t=cmd", "\r=cmd"]) ("prefixes an apostrophe to a season beginning with a tab or carriage return", async (season) => {
+    state.rows = [{ status: "gap", season }];
+    const response = await app.request("https://site.invalid/en/seasons/champions-league?format=csv", { headers }, env);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain(`"'${season}"`);
+  });
+
+  it("rejects a cross-origin GET to the CSV URL", async () => {
+    const response = await app.request("https://site.invalid/en/seasons/champions-league?format=csv", {
+      headers: { ...headers, Origin: "https://attacker.invalid", "Sec-Fetch-Site": "cross-site" },
+    }, env);
+    expect(response.status).toBe(403);
   });
 });
