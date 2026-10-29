@@ -176,6 +176,54 @@ describe("Cloudflare Access boundary", () => {
       expect((await request(path, { headers: { "Sec-Fetch-Site": "cross-site" } })).status, path).toBe(decodedMatch ? 403 : 200);
     }
   });
+
+  it("protects localized player trends GET routes while preserving the existing protected route set", async () => {
+    const { request } = setup();
+    const protectedPaths = [
+      "/q", "/en/q", "/es/q",
+      "/players/compare", "/en/players/compare", "/es/players/compare",
+      "/seasons/explore", "/en/seasons/explore", "/es/seasons/explore",
+      "/players/trends", "/en/players/trends", "/es/players/trends",
+    ];
+    for (const path of protectedPaths) {
+      for (const suffix of ["", "/", "?competition=PL"]) {
+        const target = `${path}${suffix}`;
+        expect((await request(target, { headers: {
+          Cookie: "CF_Authorization=browser-session", Origin: "https://foreign.invalid",
+        } })).status, target).toBe(403);
+        expect((await request(target, { headers: {
+          Cookie: "CF_Authorization=browser-session", Origin: "https://site.invalid",
+        } })).status, target).toBe(200);
+      }
+    }
+    for (const locale of ["en", "es"]) {
+      for (const suffix of ["", "/", "?competition=PL"]) {
+        const target = `/${locale}/players/trends${suffix}`;
+        expect((await request(target, { headers: {
+          "Sec-Fetch-Site": "cross-site", Cookie: "CF_Authorization=browser-session",
+        } })).status, target).toBe(403);
+      }
+    }
+
+    const serviceEnv = {
+      ACCESS_ISSUER: "https://example.cloudflareaccess.com",
+      ACCESS_AUD: "a".repeat(64),
+      ACCESS_OWNER_EMAILS: "owner@example.invalid",
+      ACCESS_SERVICE_CLIENT_IDS: "test-service",
+    } as unknown as Env;
+    const serviceApp = new Hono<AccessEnv>();
+    serviceApp.use("*", accessGate(async () => ({ sub: "", serviceClientId: "test-service" })));
+    serviceApp.all("*", (c) => c.text("protected"));
+    const serviceRequest = (path: string, headers: Record<string, string>) => serviceApp.request(`https://site.invalid${path}`, {
+      headers: { "cf-access-jwt-assertion": "verified-service", ...headers },
+    }, serviceEnv);
+    expect((await serviceRequest("/en/players/trends?competition=PL", {
+      "Sec-Fetch-Site": "cross-site",
+    })).status).toBe(403);
+    expect((await serviceRequest("/en/players/trends?competition=PL", {
+      Origin: "https://site.invalid", "Sec-Fetch-Site": "same-origin",
+    })).status).toBe(200);
+  });
 });
 
 describe("Access JWT verification uses signatures and required claims", () => {
