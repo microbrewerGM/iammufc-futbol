@@ -23,28 +23,85 @@ export type AdmissionDenial = "invalid_policy" | "human_required" | "audience_de
 export type AdmissionEligibility = { eligible: true }
   | { eligible: false; reason: AdmissionDenial };
 
-const owns = (value: object, key: PropertyKey): boolean => Object.hasOwn(value, key);
 const text = (v: unknown): v is string => typeof v === "string" && v.length > 0
   && v.length <= 256 && v.trim() === v;
 const list = (v: unknown): v is readonly string[] => Array.isArray(v)
   && v.length > 0 && v.length <= 64 && v.every(text);
 const deny = (reason: AdmissionDenial): AdmissionEligibility => ({ eligible: false, reason });
 
+/** Read an own data property once. Accessors are rejected without invoking them. */
+function readOwnData(object: unknown, key: string): unknown {
+  if (object === null || typeof object !== "object") throw new TypeError("expected object");
+  const descriptor = Object.getOwnPropertyDescriptor(object, key);
+  if (!descriptor || !("value" in descriptor) || descriptor.get || descriptor.set) {
+    throw new TypeError("expected own data property");
+  }
+  return descriptor.value;
+}
+
+function snapshotList(value: unknown): unknown {
+  if (!Array.isArray(value)) return value;
+  const copy: unknown[] = [];
+  for (let index = 0; index < value.length; index++) copy.push(readOwnData(value, String(index)));
+  return Object.freeze(copy);
+}
+
 export function checkAdmissionEligibility(
   evidence: AdmissionEvidence, policy: AdmissionPolicy,
 ): AdmissionEligibility {
-  if (!policy || !owns(policy, "expectedAudience") || !owns(policy, "requiredBatchCapability")
-    || !owns(policy, "allowedSources") || !owns(policy, "allowedIntents")
-    || !text(policy.expectedAudience) || !text(policy.requiredBatchCapability)
-    || !list(policy.allowedSources) || !list(policy.allowedIntents)) return deny("invalid_policy");
-  if (!evidence?.human || !owns(evidence, "human") || !owns(evidence.human, "type") || evidence.human.type !== "human"
-    || !owns(evidence.human, "subject") || !text(evidence.human.subject)) return deny("human_required");
-  if (!evidence.batch || !owns(evidence, "batch") || !owns(evidence.batch, "audience") || !text(evidence.batch.audience)
-    || evidence.batch.audience !== policy.expectedAudience) return deny("audience_denied");
-  if (!owns(evidence.batch, "capabilities") || !list(evidence.batch.capabilities)
-    || !evidence.batch.capabilities.includes(policy.requiredBatchCapability)) return deny("batch_capability_denied");
-  if (!owns(evidence, "source") || !owns(evidence, "intent")
-    || !text(evidence.source) || !policy.allowedSources.includes(evidence.source)) return deny("source_denied");
-  if (!text(evidence.intent) || !policy.allowedIntents.includes(evidence.intent)) return deny("intent_denied");
+  let p: { expectedAudience: unknown; requiredBatchCapability: unknown; allowedSources: unknown; allowedIntents: unknown };
+  try {
+    p = Object.freeze({
+      expectedAudience: readOwnData(policy, "expectedAudience"),
+      requiredBatchCapability: readOwnData(policy, "requiredBatchCapability"),
+      allowedSources: snapshotList(readOwnData(policy, "allowedSources")),
+      allowedIntents: snapshotList(readOwnData(policy, "allowedIntents")),
+    });
+  } catch {
+    return deny("invalid_policy");
+  }
+  if (!text(p.expectedAudience) || !text(p.requiredBatchCapability)
+    || !list(p.allowedSources) || !list(p.allowedIntents)) return deny("invalid_policy");
+
+  let e: { human: unknown; batch: unknown; source: unknown; intent: unknown };
+  let human: { type: unknown; subject: unknown } | null;
+  let batch: { audience: unknown; capabilities: unknown } | null;
+  let evidenceFailure: AdmissionDenial = "human_required";
+  try {
+    const humanValue = readOwnData(evidence, "human");
+    evidenceFailure = "audience_denied";
+    const batchValue = readOwnData(evidence, "batch");
+    evidenceFailure = "source_denied";
+    const source = readOwnData(evidence, "source");
+    evidenceFailure = "intent_denied";
+    const intent = readOwnData(evidence, "intent");
+    e = {
+      human: humanValue,
+      batch: batchValue,
+      source,
+      intent,
+    };
+    evidenceFailure = "human_required";
+    human = humanValue === null ? null : {
+      type: readOwnData(humanValue, "type"), subject: readOwnData(humanValue, "subject"),
+    };
+    evidenceFailure = "audience_denied";
+    if (batchValue === null) batch = null;
+    else {
+      const audience = readOwnData(batchValue, "audience");
+      evidenceFailure = "batch_capability_denied";
+      batch = { audience, capabilities: snapshotList(readOwnData(batchValue, "capabilities")) };
+    }
+  } catch {
+    return deny(evidenceFailure);
+  }
+
+  if (!human || human.type !== "human" || !text(human.subject)) return deny("human_required");
+  if (!batch || !text(batch.audience) || batch.audience !== p.expectedAudience) return deny("audience_denied");
+  if (!list(batch.capabilities) || !batch.capabilities.includes(p.requiredBatchCapability as string)) {
+    return deny("batch_capability_denied");
+  }
+  if (!text(e.source) || !(p.allowedSources as readonly string[]).includes(e.source)) return deny("source_denied");
+  if (!text(e.intent) || !(p.allowedIntents as readonly string[]).includes(e.intent)) return deny("intent_denied");
   return { eligible: true };
 }
