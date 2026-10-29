@@ -43,7 +43,7 @@ class SqliteStatement {
 class SqliteD1 {
   afterQuestionRead?: () => void | Promise<void>;
   constructor(private readonly db: InstanceType<typeof DatabaseSync>) {}
-  prepare(sql: string) { return new SqliteStatement(this.db, sql, sql.includes("FROM question_requests WHERE request_id=?") ? () => { const hook = this.afterQuestionRead; this.afterQuestionRead = undefined; hook?.(); } : undefined); }
+  prepare(sql: string) { return new SqliteStatement(this.db, sql, sql.includes("FROM question_requests WHERE request_id=?") ? () => { const hook = this.afterQuestionRead; this.afterQuestionRead = undefined; return hook?.(); } : undefined); }
   async batch(statements: SqliteStatement[]) {
     this.db.exec("BEGIN");
     try { const result = []; for (const statement of statements) result.push(await statement.all()); this.db.exec("COMMIT"); return result; }
@@ -210,6 +210,31 @@ describe("question triage service bridge", () => {
     db.close();
   });
 
+  it("ack races an expired-lease sweep after reading a live lease", async () => {
+    const { db, d1 } = sqliteForBridge();
+    db.exec("DROP TRIGGER question_requests_state_machine");
+    const requestId = "8".repeat(64);
+    addQuestion(db, requestId, "triaging", 900);
+    const beforeExpiry = new Date(Date.now() + 30_000);
+    const afterExpiry = new Date(Date.now() + 60_000);
+    const ackDeps = sqliteDeps(d1, beforeExpiry.toISOString());
+    const sweepDeps = sqliteDeps(d1, afterExpiry.toISOString());
+    const leaseExpired = new Date(afterExpiry.getTime() - 1_000).toISOString().replace(/\.\d{3}Z$/, "Z");
+    const stillLive = new Date(afterExpiry.getTime() + 30_000).toISOString().replace(/\.\d{3}Z$/, "Z");
+    d1.afterQuestionRead = async () => {
+      db.prepare("UPDATE question_requests SET lease_expires_at=? WHERE request_id=?").run(leaseExpired, requestId);
+      expect(await sweepQuestions(sweepDeps, 100, "expired")).toEqual({ moved: 1 });
+      db.prepare("UPDATE question_requests SET status='triaging',lease_expires_at=?,retry_after=NULL WHERE request_id=?").run(stillLive, requestId);
+    };
+
+    const ack = await ackQuestion(ackDeps, service, envelope("ack", { request_id: requestId, attempt: 1, lease_id: "lease-a", operation_id: "qt:live-lease-race", outcome: { status: "failed", reason: "source_unavailable" } }));
+
+    expect(payload(ack).outcome).toBe("conflict");
+    expect(await ackDeps.store.get(requestId)).toMatchObject({ status: "triaging", lease_expires_at: stillLive, revision: 3 });
+    expect(db.prepare("SELECT count(*) AS n FROM exploration_bridge_operations WHERE operation_id='qt:live-lease-race'").get()).toEqual({ n: 0 });
+    db.close();
+  });
+
   it("no_shared_rows_when_status_update_missed", async () => {
     const { db, d1 } = sqliteForBridge();
     db.exec("DROP TRIGGER question_requests_state_machine");
@@ -240,6 +265,23 @@ describe("question triage service bridge", () => {
     expect(await deps.store.get(partialId)).toMatchObject({ status: "partial" });
     expect(await deps.store.get(missingId)).toMatchObject({ status: "no_data" });
     expect(await deps.store.get(goneId)).toMatchObject({ status: "filled" });
+    db.close();
+  });
+
+  it("settles an expired published queue result from computed cells", async () => {
+    const { db, d1 } = sqliteForBridge();
+    const questionId = "7".repeat(64), requestId = "6".repeat(64);
+    addQuestion(db, questionId, "triaging", 900, "runner-a");
+    addPublishedQueue(db, questionId, requestId, "complete");
+    const oldCreatedAt = new Date(Date.now() - 60 * 86_400_000).toISOString().replace(/\.\d{3}Z$/, "Z");
+    const expiredAt = new Date(Date.now() - 30 * 86_400_000).toISOString().replace(/\.\d{3}Z$/, "Z");
+    db.prepare("UPDATE exploration_shared_results SET created_at=?,expires_at=? WHERE request_id=?").run(oldCreatedAt, expiredAt, requestId);
+    const computedVerdict = verdict({ request_id: questionId, tables: [{ fields: ["goals"], filters: { season: ["2010-11"], competition: ["PL"], opponent_id: [], person_id: [] } }] });
+    db.prepare("UPDATE question_requests SET status='queued',lease_expires_at=NULL,verdict_json=?,exploration_request_id=?,revision=3 WHERE request_id=?").run(JSON.stringify(computedVerdict), requestId, questionId);
+
+    const deps = sqliteDeps(d1);
+    expect(await sweepQuestions(deps, 100, "queued")).toEqual({ moved: 1 });
+    expect(await deps.store.get(questionId)).toMatchObject({ status: "filled", revision: 4, verdict_json: JSON.stringify(computedVerdict) });
     db.close();
   });
 
@@ -292,6 +334,43 @@ describe("question triage service bridge", () => {
       const result = await ackQuestion(deps, service, envelope("ack", { request_id: requestId, attempt: 1, lease_id: "lease-a", operation_id: `qt:invalid-${i}`, outcome: { status: "verdict", verdict: candidate } }));
       expect(payload(result).outcome).toBe("invalid_verdict");
       db.close();
+    }
+  });
+
+  it("screens validator adversarial worst-case restatements within the timing budget", async () => {
+    const adversarial = [
+      "Who did they select " + Array(30).fill("*").join(",") + " for?", "select " + Array(150).fill("*").join(","),
+      "select " + Array(70).fill("'a'").join(","), "select " + Array(140).fill("a").join(",") + " fro",
+      "select " + Array(40).fill("a.b(c)").join(", ") + " frm", "a".repeat(300), "a.".repeat(150), "1.".repeat(150),
+      "0x1.".repeat(75), "a-".repeat(150), "a_".repeat(150), "-".repeat(300), "1:".repeat(150), "a:".repeat(150),
+      "ab:".repeat(100), "0:".repeat(150), "a".repeat(299) + ".", "'".repeat(300), "' or ".repeat(60), "' ".repeat(150),
+      "or ".repeat(100), "and ".repeat(75), "'or'".repeat(75), "(".repeat(300), "a(".repeat(150), "a:b(".repeat(75),
+      "x:" + "a".repeat(290), "/".repeat(300), "a/".repeat(150), "../".repeat(100), "/a".repeat(150), "v1/".repeat(100),
+      "api/".repeat(75), " ".repeat(300), "a ".repeat(150), ("a".repeat(29) + " ").repeat(10), "x".repeat(29) + " " + "y".repeat(270),
+      "1".repeat(300), "0123456789abcdef".repeat(18) + "0123", "A1".repeat(150), "aB3-".repeat(75), "%".repeat(300),
+      "%4".repeat(150), "&".repeat(300), "&a".repeat(150), "&#".repeat(150), "![".repeat(150), "](".repeat(150),
+      "#1".repeat(150), "a/b#".repeat(75), "-".repeat(150) + "-- " + "-".repeat(147), "union ".repeat(50),
+      "union select ".repeat(23), "update a ".repeat(33), "exec ".repeat(60), "sleep ".repeat(50), "waitfor ".repeat(37),
+      "drop ".repeat(60), "insert ".repeat(42), "delete ".repeat(42), "pragma ".repeat(42), "bearer ".repeat(42),
+      "eyJ" + "a".repeat(290), "sk-" + "a".repeat(290), "ghp_".repeat(75), "AKIA".repeat(75), "api ".repeat(75),
+      "token ".repeat(50), "a_token ".repeat(37), "password ".repeat(33), "evil.example ".repeat(23), "1.2.3.4 ".repeat(37),
+      "::".repeat(150), "1::".repeat(100), "[::".repeat(100), "[" + "a".repeat(298) + "]", "é".repeat(300),
+      "ſ".repeat(300), "Ĳ".repeat(300), "ﷺ".repeat(300), "ﬃ".repeat(300),
+    ].map((candidate) => candidate.slice(0, 300));
+    expect(adversarial.length).toBeGreaterThan(70);
+    expect(adversarial.every((candidate) => [...candidate].length <= 300)).toBe(true);
+    // Exercise the full verdict validation path without repeated database setup.
+    for (let index = 0; index < adversarial.length; index++) {
+      let bestMs = Number.POSITIVE_INFINITY;
+      for (let run = 0; run < 3; run++) {
+        const requestId = (index * 3 + run + 1000).toString(16).padStart(64, "0");
+        const deps = setup({ ...claimedRow(), request_id: requestId }).deps;
+        const started = performance.now();
+        const result = await ackQuestion(deps, service, envelope("ack", { request_id: requestId, attempt: 1, lease_id: "lease-a", operation_id: `qt:redos-${index}-${run}`, outcome: { status: "verdict", verdict: verdict({ request_id: requestId, restated_question: adversarial[index] }) } }));
+        bestMs = Math.min(bestMs, performance.now() - started);
+        expect(["accepted", "invalid_verdict"]).toContain(payload(result).outcome);
+      }
+      expect(bestMs, `adversarial case ${index}`).toBeLessThan(50);
     }
   });
 
