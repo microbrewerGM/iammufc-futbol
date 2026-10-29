@@ -98,6 +98,48 @@ describe("player trend routes", () => {
     expect(es).toContain(canonical!.replace("/en/", "/es/"));
   });
 
+  it("renders the requested trend metric and normalization with all selected seasons", async () => {
+    const { env, sqlite } = fixture();
+    sqlite.prepare("INSERT INTO player_identities VALUES ('fpl:code:1', 'p1', '2024-25')").run();
+    sqlite.prepare("INSERT INTO player_season_stats VALUES ('p1','2024-25','PL',4,2,900,?)").run(snapshot);
+    const query = basic.replace("metric=goals&normalization=total&min_minutes=0", "metric=assists&normalization=per90&min_minutes=450");
+    const body = await (await app.request(url("en", query), { headers }, env)).text();
+    expect(body).toContain("FPL assists");
+    expect(body).toContain("Output per 90 minutes");
+    expect(body).toContain("2023-24");
+    expect(body).toContain("2024-25");
+    expect(body).toContain("0.20");
+  });
+
+  it("keeps a below-threshold season distinct from a missing season", async () => {
+    const { env, sqlite } = fixture();
+    sqlite.prepare("INSERT INTO player_identities VALUES ('fpl:code:1', 'p1', '2024-25')").run();
+    sqlite.prepare("INSERT INTO player_season_stats VALUES ('p1','2024-25','PL',4,2,200,?)").run(snapshot);
+    const query = basic.replace("normalization=total&min_minutes=0", "normalization=per90&min_minutes=450");
+    const body = await (await app.request(url("en", query), { headers }, env)).text();
+    expect(body).toContain("2023-24");
+    expect(body).toContain("2024-25");
+    expect(body).toContain("Data unavailable");
+    expect(body).toContain("Below minimum minutes");
+    expect(body).not.toContain("<td>0</td>");
+  });
+
+  it("rejects duplicate selectors and unsupported query fields", async () => {
+    const { env } = fixture();
+    const duplicate = await app.request(url("en", basic + "&metric=assists"), { headers }, env);
+    const extra = await app.request(url("en", basic + "&provider=other"), { headers }, env);
+    expect(duplicate.status).toBe(400);
+    expect(extra.status).toBe(400);
+  });
+
+  it("rejects duplicate player identities and nonconsecutive seasons", async () => {
+    const { env } = fixture();
+    const duplicate = await app.request(url("en", basic + "&person_ids=fpl%3Acode%3A1"), { headers }, env);
+    const gap = await app.request(url("en", basic.replace("seasons=2023-24&seasons=2024-25", "seasons=2023-24&seasons=2025-26")), { headers }, env);
+    expect(duplicate.status).toBe(400);
+    expect(gap.status).toBe(400);
+  });
+
   it("renders missing cells as dashes and resolves credits only through lineage", () => {
     const metadata = { snapshot_id: "s", person_ids: ["fpl:code:1"], seasons: ["2023-24", "2024-25"] };
     const request = parsePlayerTrendsRequest({ schema_version: 1, competition: "PL", person_ids: metadata.person_ids, seasons: metadata.seasons, metric: "goals", normalization: "total", min_minutes: 0, viz: "table" }, metadata);
