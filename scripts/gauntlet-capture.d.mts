@@ -7,4 +7,7 @@ export function pairSides(coinByte: number): { ours: 'A' | 'B'; bar: 'A' | 'B' }
 export function cropBox(width: number, height: number): { x: number; y: number; width: number; height: number };
 export function captureViewports(): Array<{ name: string; locale: string | null; width: number; height: number }>;
 export function planCapture(question: string, urls: string[]): { urls: string[] };
-export function encryptFiles(files: Array<{ name: string; path: string }>, recipientPath: string, outputDir: string): Promise<void>;
+export function shuffleImages<T>(images: T[], random?: (size: number) => Uint8Array): T[];
+export function encryptFiles(files: Array<{ name: string; path: string }>, recipientPath: string, outputDir: string, ageBinary?: string): Promise<void>;
+export function run(deps?: { chromium?: unknown; paths?: { barsPath?: string; recipientPath?: string; outputDir?: string; tempDir?: string }; ageBinary?: string; env?: Record<string, string | undefined>; randomBytes?: (size: number) => Buffer }): Promise<void>;
+export function installFatalHandlers(): void;

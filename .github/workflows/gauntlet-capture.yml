@@ -16,7 +16,7 @@ on:
         required: true
         type: string
       override:
-        description: Optional season:YYYY-YYYY or player:slug override
+        description: Optional season=YYYY-YYYY or player=slug override
         required: false
         type: string
 
@@ -57,7 +57,7 @@ jobs:
       - name: Add blinded pairing hash to summary
         run: cat "$RUNNER_TEMP/summary.txt" >> "$GITHUB_STEP_SUMMARY"
       - name: Upload encrypted captures
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: gauntlet-${{ github.run_id }}
           path: ${{ runner.temp }}/*.age
