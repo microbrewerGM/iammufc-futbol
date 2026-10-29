@@ -1,5 +1,6 @@
 import { parseSeasonSplitRequest, type SeasonSplitCatalog, type SeasonSplitRequest, type SeasonSplitRow } from "./season-splits";
 import type { Env } from "./db";
+import { recordReadTiming } from "./timing";
 
 /** Explicit IDs approved by the private season_splits_seed._CLUBS crosswalk. */
 export const APPROVED_OPPONENT_IDS: ReadonlySet<string> = new Set([
@@ -56,7 +57,9 @@ export async function readOpponentHistory(env: Env, value: unknown, metadata: un
   try { request = parseSeasonSplitRequest(value, Array.isArray(catalog.seasons) ? catalog.seasons.map(s => s.season) : []); }
   catch { return fail("selection"); }
   const query = buildOpponentHistoryQuery(request, catalog);
-  const { results } = await env.DB.prepare(query.sql).bind(...query.bindings).all<SeasonSplitRow & { lineage_json: string }>();
+  const result = await env.DB.prepare(query.sql).bind(...query.bindings).all<SeasonSplitRow & { lineage_json: string }>();
+  recordReadTiming("readOpponentHistory", result.meta);
+  const { results } = result;
   // The publication reader may withhold an entire season for bad lineage or
   // incomplete totals. Do not restore those raw rows in this second read.
   // Keep the raw bound and reject identity/selection corruption before omission.
