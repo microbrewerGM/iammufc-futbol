@@ -25,6 +25,7 @@ class Store implements TriageStore {
   async sweepRows(kind: "expired" | "triaged" | "queued") { return [...this.rows.values()].filter(r => kind === "expired" ? r.status === "triaging" : r.status === kind); }
   async settle(_row: TriageQuestion, next: TriageQuestion) { this.settlements++; if (this.throwFirstSettle && this.settlements === 1) throw Error("row-specific abort"); this.rows.set(next.request_id, next); return true; }
   async queueResult() { return "pending" as const; }
+  async rotateQueued() {}
 }
 function setup(row: TriageQuestion = { ...blank, request_id: id }): { store: Store; deps: TriageDeps } {
   const store = new Store(); store.rows.set(row.request_id, row);
@@ -35,14 +36,15 @@ function verdict(overrides: Record<string, unknown> = {}) { return { version: 1,
 
 class SqliteStatement {
   private values: unknown[] = [];
-  constructor(private readonly db: InstanceType<typeof DatabaseSync>, private readonly sql: string) {}
+  constructor(private readonly db: InstanceType<typeof DatabaseSync>, private readonly sql: string, private readonly onFirst?: () => void) {}
   bind(...values: unknown[]) { this.values = values; return this; }
   async all<T>() { return { results: this.db.prepare(this.sql).all(...this.values) as T[] }; }
-  async first<T>() { return (this.db.prepare(this.sql).get(...this.values) as T | undefined) ?? null; }
+  async first<T>() { const value = (this.db.prepare(this.sql).get(...this.values) as T | undefined) ?? null; this.onFirst?.(); return value; }
 }
 class SqliteD1 {
+  afterQuestionRead?: () => void;
   constructor(private readonly db: InstanceType<typeof DatabaseSync>) {}
-  prepare(sql: string) { return new SqliteStatement(this.db, sql); }
+  prepare(sql: string) { return new SqliteStatement(this.db, sql, sql.includes("FROM question_requests WHERE request_id=?") ? () => { const hook = this.afterQuestionRead; this.afterQuestionRead = undefined; hook?.(); } : undefined); }
   async batch(statements: SqliteStatement[]) {
     this.db.exec("BEGIN");
     try { const result = []; for (const statement of statements) result.push(await statement.all()); this.db.exec("COMMIT"); return result; }
@@ -55,6 +57,28 @@ function sqliteForBridge() {
   const created = new Date(), createdAt = created.toISOString().replace(/\.\d{3}Z$/, "Z"), expires = new Date(created.getTime() + 90 * 86_400_000).toISOString().replace(/\.\d{3}Z$/, "Z");
   db.prepare(`INSERT INTO question_requests(request_id,account_sub,text,locale,text_hash,status,created_at,updated_at,expires_at) VALUES(?,?,?,?,?,'received',?,?,?)`).run(id,"stored-account-sub","How many goals?","en","b".repeat(64),createdAt,createdAt,expires);
   return { db, d1: new SqliteD1(db) };
+}
+function addQuestion(db: InstanceType<typeof DatabaseSync>, requestId: string, status: "received" | "triaging" | "queued" = "received", leaseOffsetSeconds = 900, owner = service.service, attempt = 1) {
+  const createdDate = new Date(Date.now() + (leaseOffsetSeconds < 0 ? -120_000 : 0)), created = createdDate.toISOString().replace(/\.\d{3}Z$/, "Z"), retention = new Date(createdDate.getTime() + 90 * 86_400_000).toISOString().replace(/\.\d{3}Z$/, "Z");
+  const expires = new Date(createdDate.getTime() + (leaseOffsetSeconds < 0 ? 30_000 : leaseOffsetSeconds * 1000)).toISOString().replace(/\.\d{3}Z$/, "Z");
+  db.prepare(`INSERT INTO question_requests(request_id,account_sub,text,locale,text_hash,status,created_at,updated_at,expires_at) VALUES(?,?,?,?,?,'received',?,?,?)`).run(requestId, `account-${requestId.slice(0, 6)}`, "How many goals?", "en", requestId, created, created, retention);
+  if (status === "triaging") db.prepare(`UPDATE question_requests SET status='triaging',attempt=?,lease_id='lease-a',lease_owner=?,lease_expires_at=?,claimed_at=?,revision=2 WHERE request_id=?`).run(attempt, owner, expires, created, requestId);
+  return requestId;
+}
+function sqliteDeps(d1: SqliteD1, clock = "now"): TriageDeps {
+  return { store: new D1QuestionTriageStore(d1 as unknown as D1Database), cursorKey: new TextEncoder().encode("fixture cursor signing key"), now: () => clock === "now" ? new Date() : new Date(clock), newLeaseId: () => "lease-new" };
+}
+function addPublishedQueue(db: InstanceType<typeof DatabaseSync>, questionId: string, requestId: string, coverage: "complete" | "partial" | "missing") {
+  const createdDate = new Date(), created = createdDate.toISOString().replace(/\.\d{3}Z$/, "Z"), expires = new Date(createdDate.getTime() + 30 * 86_400_000).toISOString().replace(/\.\d{3}Z$/, "Z"), jobId = questionId;
+  const req = JSON.stringify({ version: 1, family: "arrival_manager", population: "first_team_available", joining_basis: "effective_first_team_spell_entry", academy_basis: "documented_first_team_promotion", visualization: "table", as_of: created.slice(0, 10) });
+  db.prepare("INSERT INTO exploration_shared_requests(request_id,contract_version,request_json,created_at) VALUES(?,1,?,?)").run(requestId, req, created);
+  db.exec("DROP TRIGGER IF EXISTS exploration_shared_jobs_initial_insert; DROP TRIGGER IF EXISTS exploration_shared_jobs_publication_shape_insert;");
+  const publication = JSON.stringify({ artifact_key: "a".repeat(64), request_id: requestId, validation_record_id: "validation-1", publication_id: "publication-1", loaded_snapshot_id: "snapshot-1", coverage_record_id: "coverage-1", loaded_at: created, lineage: ["lineage-1"] });
+  db.prepare(`INSERT INTO exploration_shared_jobs(job_id,request_id,status,attempt,lease_id,lease_owner,claimed_at,publication_json,admitted_at,created_at,updated_at,expires_at) VALUES(?,?,'published',1,'lease-a','runner-a',?,?,?, ?,?,?)`).run(jobId, requestId, created, publication, created, created, created, expires);
+  db.prepare(`INSERT INTO exploration_shared_results(request_id,snapshot_id,artifact_key,transform_code_version,renderer_version,roster_snapshot_id,feasibility,coverage,population_count,assigned_json,unknown_json,lineage_json,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,0,'[]','[]','[]',?,?)`).run(requestId, "snapshot-1", "a".repeat(64), "transform-v1", "renderer-v1", coverage === "missing" ? null : "roster-1", coverage === "missing" ? "no_data" : "available", coverage, created, expires);
+  db.exec("DROP TRIGGER IF EXISTS question_requests_state_machine;");
+  const questionVerdict = JSON.stringify(verdict({ request_id: questionId, tables: coverage === "missing" ? [] : [{ fields: ["goals"], filters: { season: ["2010-11"], competition: ["PL"], opponent_id: [], person_id: [] } }] }));
+  db.prepare("UPDATE question_requests SET status='queued',attempt=1,lease_id='lease-a',lease_owner='runner-a',lease_expires_at=NULL,claimed_at=?,verdict_json=?,exploration_request_id=?,revision=3 WHERE request_id=?").run(created, questionVerdict, requestId, questionId);
 }
 
 describe("question triage service bridge", () => {
@@ -113,6 +137,150 @@ describe("question triage service bridge", () => {
     db.close();
   });
 
+  it("stale_lease_ack_conflicts and ack_replay_returns_replayed with SQLite claim replay and cursor rules", async () => {
+    const { db, d1 } = sqliteForBridge();
+    const deps = sqliteDeps(d1);
+    const claimed = await claimQuestion(deps, service, envelope("claim", { request_id: id, expected_attempt: 0, operation_id: "qt:sqlite-claim" }));
+    expect(payload(claimed).outcome).toBe("claimed");
+    expect(payload(await claimQuestion(deps, service, envelope("claim", { request_id: id, expected_attempt: 0, operation_id: "qt:sqlite-claim" }))).outcome).toBe("claimed");
+    expect(payload(await claimQuestion(deps, service, envelope("claim", { request_id: id, expected_attempt: 1, operation_id: "qt:sqlite-claim" }))).outcome).toBe("conflict");
+    const expiredReplay = await claimQuestion(sqliteDeps(d1, new Date(Date.now() + 901_000).toISOString()), service, envelope("claim", { request_id: id, expected_attempt: 0, operation_id: "qt:sqlite-claim" }));
+    expect(payload(expiredReplay).outcome).toBe("conflict");
+
+    const ackBody = { request_id: id, attempt: 1, lease_id: "lease-new", operation_id: "qt:sqlite-ack", outcome: { status: "verdict", verdict: verdict() } };
+    const acked = await ackQuestion(deps, service, envelope("ack", ackBody));
+    expect(payload(acked)).toMatchObject({ outcome: "accepted", status: "no_data" });
+    expect(payload(await ackQuestion(deps, service, envelope("ack", ackBody))).outcome).toBe("replayed");
+    expect(payload(await ackQuestion(deps, service, envelope("ack", { ...ackBody, outcome: { status: "failed", reason: "source_unavailable" } }))).outcome).toBe("conflict");
+
+    const staleId = "c".repeat(64);
+    addQuestion(db, staleId, "triaging", -1);
+    const staleAck = (overrides: Record<string, unknown> = {}, caller = service) => ackQuestion(deps, caller, envelope("ack", { request_id: staleId, attempt: 1, lease_id: "lease-a", operation_id: `qt:stale-${Object.keys(overrides).join("-") || caller.service}`, outcome: { status: "failed", reason: "source_unavailable" }, ...overrides }));
+    expect(payload(await staleAck()).outcome).toBe("conflict");
+    for (const [label, caller] of [
+      ["lease", service],
+      ["attempt", service],
+      ["owner", { ...service, service: "other_runner" }],
+    ] as const) {
+      const requestId = label === "lease" ? "d".repeat(64) : label === "attempt" ? "e".repeat(64) : "f".repeat(64);
+      addQuestion(db, requestId, "triaging", 900, label === "owner" ? "another_runner" : service.service);
+      const result = await ackQuestion(deps, caller, envelope("ack", { request_id: requestId, attempt: label === "attempt" ? 2 : 1, lease_id: label === "lease" ? "wrong-lease" : "lease-a", operation_id: `qt:wrong-${label}`, outcome: { status: "failed", reason: "source_unavailable" } }));
+      expect(payload(result).outcome, label).toBe("conflict");
+    }
+
+    const second = "b".repeat(64), third = "9".repeat(64); addQuestion(db, second); addQuestion(db, third);
+    const page = payload(await readQuestions(deps, service, envelope("read", { cursor: null, limit: 1 })));
+    expect(page.next_cursor).toBeTruthy();
+    const forged = await readQuestions(deps, service, envelope("read", { cursor: `${page.next_cursor}x`, limit: 1 }));
+    expect(forged.ok ? null : forged.error).toBe("invalid_cursor");
+    const crossCaller = await readQuestions(deps, { ...service, service: "other_runner" }, envelope("read", { cursor: page.next_cursor, limit: 1 }));
+    expect(crossCaller.ok ? null : crossCaller.error).toBe("invalid_cursor");
+    db.close();
+  });
+
+  it("sweep_and_ack_race_one_winner and unexpired sweep fencing use SQLite", async () => {
+    const { db, d1 } = sqliteForBridge();
+    const expiredId = "c".repeat(64); addQuestion(db, expiredId, "triaging", -1);
+    const deps = sqliteDeps(d1);
+    const result = await ackQuestion(deps, service, envelope("ack", { request_id: expiredId, attempt: 1, lease_id: "lease-a", operation_id: "qt:expired-race", outcome: { status: "failed", reason: "source_unavailable" } }));
+    expect(payload(result).outcome).toBe("conflict");
+    expect(await sweepQuestions(deps, 100, "expired")).toEqual({ moved: 1 });
+    expect(await deps.store.get(expiredId)).toMatchObject({ status: "received", lease_expires_at: null });
+
+    const liveId = "d".repeat(64); addQuestion(db, liveId, "triaging", 900);
+    expect(await sweepQuestions(deps, 100, "expired")).toEqual({ moved: 0 });
+    const live = await deps.store.get(liveId);
+    expect(live?.status).toBe("triaging");
+    expect(Date.parse(live!.lease_expires_at!) > Date.now()).toBe(true);
+
+    const raceId = "e".repeat(64); addQuestion(db, raceId, "triaging", 900);
+    const racingDeps = sqliteDeps(d1, new Date(Date.now() + 60_000).toISOString());
+    db.exec("DROP TRIGGER question_requests_state_machine");
+    const racedExpiry = new Date(Date.now() + 30_000).toISOString().replace(/\.\d{3}Z$/, "Z");
+    d1.afterQuestionRead = () => { db.prepare("UPDATE question_requests SET lease_expires_at=? WHERE request_id=?").run(racedExpiry, raceId); };
+    const raced = await ackQuestion(racingDeps, service, envelope("ack", { request_id: raceId, attempt: 1, lease_id: "lease-a", operation_id: "qt:sql-lease-fence", outcome: { status: "failed", reason: "source_unavailable" } }));
+    expect(payload(raced).outcome).toBe("conflict");
+    expect(await racingDeps.store.get(raceId)).toMatchObject({ status: "triaging", lease_expires_at: racedExpiry });
+
+    const queuedRaceId = "f".repeat(64); addQuestion(db, queuedRaceId, "triaging", 900);
+    const queuedRaceExpiry = new Date(Date.now() + 30_000).toISOString().replace(/\.\d{3}Z$/, "Z");
+    d1.afterQuestionRead = () => { db.prepare("UPDATE question_requests SET lease_expires_at=? WHERE request_id=?").run(queuedRaceExpiry, queuedRaceId); };
+    const queuedRace = await ackQuestion(racingDeps, service, envelope("ack", { request_id: queuedRaceId, attempt: 1, lease_id: "lease-a", operation_id: "qt:sql-queued-lease-fence", outcome: { status: "verdict", verdict: verdict({ request_id: queuedRaceId, families: ["arrival_manager"] }) } }));
+    expect(payload(queuedRace).outcome).toBe("conflict");
+    expect(await racingDeps.store.get(queuedRaceId)).toMatchObject({ status: "triaging", lease_expires_at: queuedRaceExpiry });
+    db.close();
+  });
+
+  it("settles queued questions from complete, partial, and missing D1 results", async () => {
+    const { db, d1 } = sqliteForBridge();
+    const completeId = "c".repeat(64), partialId = "d".repeat(64), missingId = "e".repeat(64);
+    for (const questionId of [completeId, partialId, missingId]) addQuestion(db, questionId, "triaging", 900, "runner-a");
+    addPublishedQueue(db, completeId, "1".repeat(64), "complete");
+    addPublishedQueue(db, partialId, "2".repeat(64), "partial");
+    addPublishedQueue(db, missingId, "3".repeat(64), "missing");
+    const goneId = "f".repeat(64); addQuestion(db, goneId, "triaging", 900, "runner-a");
+    db.prepare("UPDATE question_requests SET status='queued',lease_expires_at=NULL,verdict_json=?,exploration_request_id=?,revision=3 WHERE request_id=?").run(JSON.stringify(verdict({ request_id: goneId, tables: [{ fields: ["goals"], filters: { season: ["2010-11"], competition: ["PL"], opponent_id: [], person_id: [] } }] })), "4".repeat(64), goneId);
+    const deps = sqliteDeps(d1);
+    expect(await sweepQuestions(deps, 100, "queued")).toEqual({ moved: 4 });
+    expect(await deps.store.get(completeId)).toMatchObject({ status: "filled" });
+    expect(await deps.store.get(partialId)).toMatchObject({ status: "partial" });
+    expect(await deps.store.get(missingId)).toMatchObject({ status: "no_data" });
+    expect(await deps.store.get(goneId)).toMatchObject({ status: "filled" });
+    db.close();
+  });
+
+  it("rotates queued SQLite sweep pages so rows past the first 100 are reached", async () => {
+    const { db, d1 } = sqliteForBridge();
+    db.exec("DROP TRIGGER question_requests_state_machine");
+    const firstId = (n: number) => n.toString(16).padStart(64, "0");
+    for (let n = 1; n <= 102; n++) {
+      const requestId = firstId(n); addQuestion(db, requestId, "triaging", 900);
+      const v = JSON.stringify(verdict({ request_id: requestId }));
+      db.prepare("UPDATE question_requests SET status='queued',lease_expires_at=NULL,verdict_json=?,exploration_request_id=?,revision=3 WHERE request_id=?").run(v, requestId, requestId);
+    }
+    const store = new D1QuestionTriageStore(d1 as unknown as D1Database);
+    const first = await store.sweepRows("queued", new Date().toISOString(), 100);
+    const second = await store.sweepRows("queued", new Date().toISOString(), 100);
+    expect(first).toHaveLength(100);
+    expect(second).toHaveLength(100);
+    expect(second.slice(0, 2).map(row => row.request_id)).toEqual([firstId(101), firstId(102)]);
+    db.close();
+  });
+
+  it("ack_rejects_verdict_outside_allowlist and shares validator screen fixtures", async () => {
+    const cases = JSON.parse(readFileSync("tests/fixtures/question-triage-screen-parity.json", "utf8")) as { accept: string[]; reject: string[] };
+    const checkScreen = async (question: string, index: number, expected: "accepted" | "invalid_verdict") => {
+      const { db, d1 } = sqliteForBridge(), requestId = (index + 101).toString(16).padStart(64, "0");
+      addQuestion(db, requestId, "triaging", 900);
+      const deps = sqliteDeps(d1);
+      const result = await ackQuestion(deps, service, envelope("ack", { request_id: requestId, attempt: 1, lease_id: "lease-a", operation_id: `qt:screen-${index}`, outcome: { status: "verdict", verdict: verdict({ request_id: requestId, restated_question: question }) } }));
+      expect(payload(result).outcome).toBe(expected);
+      db.close();
+    };
+    for (let i = 0; i < cases.accept.length; i++) {
+      const question = cases.accept[i]!;
+      await checkScreen(question, i, "accepted");
+    }
+    for (let i = 0; i < cases.reject.length; i++) {
+      const question = cases.reject[i]!;
+      await checkScreen(question, cases.accept.length + i, "invalid_verdict");
+    }
+    const rejected: unknown[] = [
+      verdict({ families: ["unknown_family"] }),
+      { ...verdict(), extra: "closed object" },
+      verdict({ relevant: false, junk_reason: null, restated_question: "" }),
+      { ...verdict(), extra: "x".repeat(10_300) },
+    ];
+    for (let i = 0; i < rejected.length; i++) {
+      const { db, d1 } = sqliteForBridge(), requestId = (i + 301).toString(16).padStart(64, "0");
+      addQuestion(db, requestId, "triaging", 900);
+      const deps = sqliteDeps(d1), candidate = typeof rejected[i] === "object" && rejected[i] !== null ? { ...rejected[i] as Record<string, unknown>, request_id: requestId } : rejected[i];
+      const result = await ackQuestion(deps, service, envelope("ack", { request_id: requestId, attempt: 1, lease_id: "lease-a", operation_id: `qt:invalid-${i}`, outcome: { status: "verdict", verdict: candidate } }));
+      expect(payload(result).outcome).toBe("invalid_verdict");
+      db.close();
+    }
+  });
+
   it("continues a sweep after one row aborts", async () => {
     const first = { ...claimedRow(), request_id: "1".repeat(64) }, second = { ...claimedRow(), request_id: "2".repeat(64) };
     const { store, deps } = setup(first); store.rows.set(second.request_id, second); store.throwFirstSettle = true;
@@ -134,5 +302,12 @@ describe("question triage service bridge", () => {
     identity.value = { sub: "", serviceClientId: "runner" };
     const oversized = await app.request("/internal/question-triage-bridge/read", { method: "POST", body: "x".repeat(64 * 1024 + 1) }, env);
     expect(oversized.status).toBe(413);
+    const method = await app.request("/internal/question-triage-bridge/read", { method: "GET" }, env);
+    expect(method.status).toBe(405);
+    const stream = new ReadableStream<Uint8Array>({ pull(controller) { controller.enqueue(new Uint8Array([123])); controller.close(); } });
+    const request = new Request("http://localhost/internal/question-triage-bridge/read", { method: "POST", headers: { "content-length": String(64 * 1024 + 1) }, body: stream, duplex: "half" } as RequestInit);
+    const early = await app.fetch(request, env);
+    expect(early.status).toBe(413);
+    expect(request.bodyUsed).toBe(false);
   });
 });

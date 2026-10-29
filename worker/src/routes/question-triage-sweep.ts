@@ -6,6 +6,7 @@ const SELECT = `SELECT request_id, locale, text, account_sub, status, attempt, l
 type SweepKind = "expired" | "triaged" | "queued";
 let lastSweepAt: number | null = null;
 let nextSweep: SweepKind = "expired";
+const queuedSweepCursor = new WeakMap<object, string>();
 const NEXT: Record<SweepKind, SweepKind> = { expired: "triaged", triaged: "queued", queued: "expired" };
 export async function sweepQuestionBeforeRequest(deps: TriageDeps): Promise<boolean> {
   const now = deps.now().getTime(); if (lastSweepAt !== null && now - lastSweepAt < 60_000) return true;
@@ -28,13 +29,13 @@ export class D1QuestionTriageStore implements TriageStore {
     const result = await this.db.batch([update, this.db.prepare(`INSERT INTO exploration_bridge_operations(service,scope_key,operation_type,operation_id,body_hash,response_json,lease_id,created_at,expires_at) SELECT ?,?,'claim',?,?,?,?,strftime('%Y-%m-%dT%H:%M:%SZ','now'),strftime('%Y-%m-%dT%H:%M:%SZ','now','+30 days') WHERE changes()=1`).bind(op.service,op.service,op.operation_id,op.body_hash,JSON.stringify({version:1,kind:"claim_result",payload:op.response}),op.lease_id)]);
     return result[0]!.results.length === 1;
   }
-  async ack(row: TriageQuestion, next: TriageQuestion, op: TriageOperation, admission: { requestId: string; requestJson: string; jobId: string; accountSub: string; createdAt: string } | null): Promise<boolean> {
+  async ack(row: TriageQuestion, next: TriageQuestion, op: TriageOperation, admission: { requestId: string; requestJson: string; jobId: string; accountSub: string; createdAt: string } | null, now: string): Promise<boolean> {
     const stmts: D1PreparedStatement[] = [];
     if (["queued", "filled", "partial", "no_data"].includes(next.status)) {
-      stmts.push(this.db.prepare(`UPDATE question_requests SET status='triaged', verdict_json=?, lease_expires_at=NULL, retry_after=NULL, revision=?, updated_at=max(updated_at,strftime('%Y-%m-%dT%H:%M:%SZ','now')) WHERE request_id=? AND status='triaging' AND revision=? AND attempt=? AND lease_id=? AND lease_owner=? AND NOT EXISTS (SELECT 1 FROM exploration_bridge_operations WHERE service=? AND operation_type='ack' AND operation_id=?) RETURNING request_id`).bind(next.verdict_json,row.revision + 1,row.request_id,row.revision,row.attempt,row.lease_id,row.lease_owner,op.service,op.operation_id));
+      stmts.push(this.db.prepare(`UPDATE question_requests SET status='triaged', verdict_json=?, lease_expires_at=NULL, retry_after=NULL, revision=?, updated_at=max(updated_at,strftime('%Y-%m-%dT%H:%M:%SZ','now')) WHERE request_id=? AND status='triaging' AND revision=? AND attempt=? AND lease_id=? AND lease_owner=? AND lease_expires_at>? AND NOT EXISTS (SELECT 1 FROM exploration_bridge_operations WHERE service=? AND operation_type='ack' AND operation_id=?) RETURNING request_id`).bind(next.verdict_json,row.revision + 1,row.request_id,row.revision,row.attempt,row.lease_id,row.lease_owner,now,op.service,op.operation_id));
       stmts.push(this.db.prepare(`UPDATE question_requests SET status=?, exploration_request_id=?, revision=?, updated_at=max(updated_at,strftime('%Y-%m-%dT%H:%M:%SZ','now')) WHERE request_id=? AND status='triaged' AND revision=? AND attempt=? AND lease_id=? AND lease_owner=? RETURNING request_id`).bind(next.status,next.exploration_request_id,next.revision,row.request_id,row.revision + 1,row.attempt,row.lease_id,row.lease_owner));
     } else {
-      stmts.push(this.db.prepare(`UPDATE question_requests SET status=?, verdict_json=?, exploration_request_id=?, lease_expires_at=NULL, retry_after=?, revision=?, updated_at=max(updated_at,strftime('%Y-%m-%dT%H:%M:%SZ','now')) WHERE request_id=? AND status='triaging' AND revision=? AND attempt=? AND lease_id=? AND lease_owner=? AND NOT EXISTS (SELECT 1 FROM exploration_bridge_operations WHERE service=? AND operation_type='ack' AND operation_id=?) RETURNING request_id`).bind(next.status,next.verdict_json,next.exploration_request_id,next.retry_after,next.revision,row.request_id,row.revision,row.attempt,row.lease_id,row.lease_owner,op.service,op.operation_id));
+      stmts.push(this.db.prepare(`UPDATE question_requests SET status=?, verdict_json=?, exploration_request_id=?, lease_expires_at=NULL, retry_after=?, revision=?, updated_at=max(updated_at,strftime('%Y-%m-%dT%H:%M:%SZ','now')) WHERE request_id=? AND status='triaging' AND revision=? AND attempt=? AND lease_id=? AND lease_owner=? AND lease_expires_at>? AND NOT EXISTS (SELECT 1 FROM exploration_bridge_operations WHERE service=? AND operation_type='ack' AND operation_id=?) RETURNING request_id`).bind(next.status,next.verdict_json,next.exploration_request_id,next.retry_after,next.revision,row.request_id,row.revision,row.attempt,row.lease_id,row.lease_owner,now,op.service,op.operation_id));
     }
     stmts.push(this.db.prepare(`INSERT INTO exploration_bridge_operations(service,scope_key,operation_type,operation_id,body_hash,response_json,lease_id,created_at,expires_at) SELECT ?,?,'ack',?,?,?,?,strftime('%Y-%m-%dT%H:%M:%SZ','now'),strftime('%Y-%m-%dT%H:%M:%SZ','now','+30 days') WHERE changes()=1`).bind(op.service,op.service,op.operation_id,op.body_hash,JSON.stringify({version:1,kind:"ack_result",payload:op.response}),op.lease_id));
     if (admission) {
@@ -45,6 +46,16 @@ export class D1QuestionTriageStore implements TriageStore {
     const result = await this.db.batch(stmts); return result[0]!.results.length === 1;
   }
   async sweepRows(kind: "expired" | "triaged" | "queued", now: string, limit: number): Promise<TriageQuestion[]> {
+    if (kind === "queued") {
+      const cursor = queuedSweepCursor.get(this.db as object) ?? null;
+      const page = async (operator: ">" | "<=", after: string, count: number) => (await this.db.prepare(`${SELECT} WHERE status='queued' AND request_id ${operator} ? ORDER BY request_id LIMIT ?`).bind(after,count).all<TriageQuestion>()).results;
+      let rows = cursor === null
+        ? (await this.db.prepare(`${SELECT} WHERE status='queued' ORDER BY request_id LIMIT ?`).bind(limit).all<TriageQuestion>()).results
+        : await page(">", cursor, limit);
+      if (cursor !== null && rows.length < limit) rows = rows.concat(await page("<=", cursor, limit - rows.length));
+      if (rows.length) queuedSweepCursor.set(this.db as object, rows[rows.length - 1]!.request_id);
+      return rows;
+    }
     const where = kind === "expired" ? `status='triaging' AND lease_expires_at<=?` : kind === "triaged" ? `status='triaged'` : `status='queued'`;
     return (await this.db.prepare(`${SELECT} WHERE ${where} ORDER BY updated_at,request_id LIMIT ?`).bind(...(kind === "expired" ? [now,limit] : [limit])).all<TriageQuestion>()).results;
   }
@@ -52,8 +63,8 @@ export class D1QuestionTriageStore implements TriageStore {
     const result = await this.db.prepare(`UPDATE question_requests SET status=?, lease_expires_at=?, retry_after=?, revision=?, updated_at=max(updated_at,strftime('%Y-%m-%dT%H:%M:%SZ','now')) WHERE request_id=? AND status=? AND revision=? AND lease_id IS ? AND lease_owner IS ? RETURNING request_id`).bind(next.status,next.lease_expires_at,next.retry_after,next.revision,row.request_id,row.status,row.revision,row.lease_id,row.lease_owner).all();
     return result.results.length === 1;
   }
-  async queueResult(row: TriageQuestion): Promise<"complete" | "partial" | "missing" | "failed" | "pending"> {
+  async queueResult(row: TriageQuestion, now: string): Promise<"complete" | "partial" | "missing" | "gone" | "failed" | "pending"> {
     const result = await this.db.prepare(`SELECT j.status AS job_status,j.failure,r.coverage,r.expires_at FROM exploration_shared_jobs j LEFT JOIN exploration_shared_results r ON r.request_id=j.request_id WHERE j.request_id=?`).bind(row.exploration_request_id).first<{job_status:string;failure:string|null;coverage:string|null;expires_at:string|null}>();
-    if (!result) return "missing"; if (result.job_status === "published") { if (!result.coverage || !result.expires_at || result.expires_at <= new Date().toISOString().replace(/\.\d{3}Z$/, "Z")) return "missing"; return result.coverage === "complete" ? "complete" : result.coverage === "partial" ? "partial" : "missing"; } if (result.job_status === "failed" && result.failure === "attempts_exhausted") return "failed"; return "pending";
+    if (!result || result.job_status === null) return "gone"; if (result.job_status === "published") { if (!result.coverage || !result.expires_at || result.expires_at <= now) return "missing"; return result.coverage === "complete" ? "complete" : result.coverage === "partial" ? "partial" : "missing"; } if (result.job_status === "failed" && result.failure === "attempts_exhausted") return "failed"; return "pending";
   }
 }

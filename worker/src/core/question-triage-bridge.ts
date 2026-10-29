@@ -20,10 +20,10 @@ export interface TriageStore {
   get(id: string): Promise<TriageQuestion | null>;
   operation(service: string, type: "claim" | "ack", id: string): Promise<TriageOperation | null>;
   claim(row: TriageQuestion, next: TriageQuestion, op: TriageOperation): Promise<boolean>;
-  ack(row: TriageQuestion, next: TriageQuestion, op: TriageOperation, admission: { requestId: string; requestJson: string; jobId: string; accountSub: string; createdAt: string } | null): Promise<boolean>;
+  ack(row: TriageQuestion, next: TriageQuestion, op: TriageOperation, admission: { requestId: string; requestJson: string; jobId: string; accountSub: string; createdAt: string } | null, now: string): Promise<boolean>;
   sweepRows(kind: "expired" | "triaged" | "queued", now: string, limit: number): Promise<TriageQuestion[]>;
   settle(row: TriageQuestion, next: TriageQuestion): Promise<boolean>;
-  queueResult(row: TriageQuestion): Promise<"complete" | "partial" | "missing" | "failed" | "pending">;
+  queueResult(row: TriageQuestion, now: string): Promise<"complete" | "partial" | "missing" | "gone" | "failed" | "pending">;
 }
 export interface TriageDeps { store: TriageStore; now(): Date; newLeaseId(): string; cursorKey: Uint8Array }
 export type TriageError = "malformed" | "too_large" | "invalid_caller" | "invalid_cursor";
@@ -48,11 +48,11 @@ function callerOk(c: TriageCaller): boolean { return object(c) && ID.test(c.serv
 function isInt(v: unknown, min: number, max: number): v is number { return Number.isInteger(v) && (v as number) >= min && (v as number) <= max; }
 
 const restatedScreens: readonly RegExp[] = [
-  /(?:(?<![\w+-])[a-z][a-z0-9+.\-]*:\/\/|\b(?:javascript|vbscript)\s*:|\b(?:https?|ftps?|file|data|mailto|blob|wss?|tel|sms|about|gopher|ldap|ssh):\S|(?<![\w-])(?!(?:ee\.uu|p\.ej)(?!\w))[\w-]+(?:\.[\w-]+)*\.[^\W\d_][\w-]{1,62}(?!\w)|(?<!\w)(?:0x[0-9a-f]+|\d+)(?:\.(?:0x[0-9a-f]+|\d+)){2,3}(?!\w)|(?<!\w)0x[0-9a-f]+(?!\w)|(?<!\w)\d{10,}(?!\w)|::|(?<![\w:])[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){2,7}(?![\w:])|\[[0-9a-f:.]{2,}\])/i,
+  /(?:(?<![\w+-])[a-z][a-z0-9+.\-]*:\/\/|\b(?:javascript|vbscript)\s*:|\b(?:https?|ftps?|file|data|mailto|blob|wss?|tel|sms|about|gopher|ldap|ssh):\S|(?<![\w-])[a-z][a-z0-9+.\-]+:[a-z_$][\w$.]*\(|(?<![\w-])(?!(?:ee\.uu|p\.ej)(?!\w))[\w-]+(?:\.[\w-]+)*\.[^\W\d_][\w-]{1,62}(?!\w)|(?<!\w)(?:0x[0-9a-f]+|\d+)(?:\.(?:0x[0-9a-f]+|\d+)){2,3}(?!\w)|(?<!\w)0x[0-9a-f]+(?!\w)|(?<!\w)\d{10,}(?!\w)|::|(?<![\w:])[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){2,7}(?![\w:])|\[[0-9a-f:.]{2,}\])/i,
   /\S@\S|@\w|%[0-9a-f]{2}/i,
   /(?:\\|\/\/|\.\.?\/|~\/|\b[a-z]:[/\\]|(?:^|[\s(["'])\/\S|\b(?:etc|usr|var|bin|tmp|root|proc|dev|api|admin|oauth|login|graphql|cgi-bin|wp-admin|wp-content)\/\w|\bv\d+\/\w)/i,
   /[<>`]|&#?\w+;|\]\(|!\[|[\w.-]+\/[\w.-]+#\d/,
-  /\bunion\s+(?:all\s+)?select\b|\bselect\s+(?:'[^']*'|"[^"]*"|[\w.()*]+)(?:\s*,\s*(?:'[^']*'|"[^"]*"|[\w.()*]+))*\s+from\b|\b(?:insert\s+into|replace\s+into|delete\s+from|drop\s+(?:table|database|view|index|trigger)|alter\s+(?:table|database|view|index|trigger)|create\s+(?:table|database|view|index|trigger)|truncate\s+(?:table|database|view|index|trigger)|pragma\s+\w+|exec(?:ute)?\s*\(|xp_\w+|sqlite_master|information_schema|sleep\s*\(|benchmark\s*\(|pg_sleep\s*\(|waitfor\s+delay)\b|\b(?:or|and)\s+\d+\s*=\s*\d+|;\s*(?:select|insert|update|delete|drop|alter|create|pragma)\b|--|\/\*|\*\//i,
+  /\bunion\s+(?:all\s+)?select\b|\bselect\s+(?:'[^']*'|"[^"]*"|[\w.()*]+)(?:\s*,\s*(?:'[^']*'|"[^"]*"|[\w.()*]+))*\s+from\b|\binsert\s+into\b|\breplace\s+into\b|\bupdate\s+[\w.]+\s+set\b|\bdelete\s+from\b|\b(?:drop|alter|create|truncate)\s+(?:table|database|view|index|trigger)\b|\b(?:attach|detach)\s+database\b|\bpragma\s+\w+|\bexec(?:ute)?\s*\(|\bxp_\w+|\bsqlite_master\b|\binformation_schema\b|\b(?:or|and)\s+\d+\s*=\s*\d+|\b(?:or|and)\s+'[^']*'\s*=\s*'[^']*'?|\b(?:or|and)\s+"[^"]*"\s*=\s*"[^"]*"?|\b(?:sleep|benchmark|pg_sleep)\s*\(|\bwaitfor\s+delay\b|--|\/\*|\*\/|;\s*(?:select|insert|update|delete|drop|alter|create|pragma)\b|(?<![^\W\d_])'\s*(?:or|and)\s|'\s*(?:or|and)\s+['"]/i,
   /(?:\b(?:sk|pk|ghp|gho|ghs|ghu|github_pat|xox[abpr])[-_][a-z0-9_-]{8,}|\bAKIA[0-9A-Z]{16}|-----BEGIN|\bbearer\s+\S|\beyJ[a-z0-9_-]{4,}|(?<![0-9a-f])[0-9a-f]{32,}(?![0-9a-f])|(?:oauth|api)[_ -]?(?:token|key)|\b[a-z][a-z0-9]*_(?:token|secret)\b|\b(?:password|passwd|authorization)\s*[:=])/i,
   /\S{30,}/,
 ];
@@ -64,7 +64,7 @@ function screenQuestion(s: string): boolean {
   const folded = s.normalize("NFKC");
   if (restatedScreens.some(pattern => pattern.test(folded))) return false;
   if ((folded.match(/\S{20,}/g) ?? []).some(token => { const core = token.replace(/[-/]/g, ""); return core.length >= 20 && /[a-z]/i.test(core) && /\d/.test(core); })) return false;
-  return !(/(?:https?:|www\.|\S@\S|@\w|%[0-9a-f]{2}|\\|\/\/|\.\.?\/|~\/|\b[a-z]:[/\\]|\b(?:select|insert|update|delete|drop|alter|create|union|pragma)\b|\b(?:union\s+(?:all\s+)?select|insert\s+into|replace\s+into|update\s+[\w.]+\s+set|delete\s+from|sqlite_master|information_schema)\b|[<>`]|\S{30,})/i.test(folded));
+  return true;
 }
 function validateVerdict(v: unknown, requestId: string): v is Record<string, any> {
   if (!object(v) || !checkStrings(v) || bytes(canonical(v)) > 10240 || !closed(v, ["version", "request_id", "relevant", "junk_reason", "restated_question", "tables", "visuals", "field_status", "families"])) return false;
@@ -130,7 +130,7 @@ export async function ackQuestion(deps: TriageDeps, caller: TriageCaller, raw: u
   if (!closed(p, ["request_id", "attempt", "lease_id", "operation_id", "outcome"]) || typeof p.request_id !== "string" || !HASH.test(p.request_id) || !isInt(p.attempt, 1, 3) || typeof p.lease_id !== "string" || !ID.test(p.lease_id) || typeof p.operation_id !== "string" || !/^qt:[a-z0-9:_-]{1,92}$/.test(p.operation_id) || !object(p.outcome)) return bad("malformed");
   const now = nowMs(deps), bodyHash = await hash(canonical(p)), prior = await deps.store.operation(caller.service, "ack", p.operation_id);
   if (prior) return prior.body_hash === bodyHash ? reply("ack_result", { outcome: "replayed", response: prior.response }) : reply("ack_result", { outcome: "conflict" });
-  const cur = await deps.store.get(p.request_id); if (!cur || cur.status !== "triaging" || cur.attempt !== p.attempt || cur.lease_id !== p.lease_id || cur.lease_owner !== caller.service) return reply("ack_result", { outcome: "conflict" });
+  const cur = await deps.store.get(p.request_id); if (!cur || cur.status !== "triaging" || cur.attempt !== p.attempt || cur.lease_id !== p.lease_id || cur.lease_owner !== caller.service || !cur.lease_expires_at || Date.parse(cur.lease_expires_at) <= now) return reply("ack_result", { outcome: "conflict" });
   const outcome = p.outcome; let next: TriageQuestion; let admission: { requestId: string; requestJson: string; jobId: string; accountSub: string; createdAt: string } | null = null;
   if (closed(outcome, ["status", "reason"]) && outcome.status === "failed" && ["source_unavailable", "validation_failed", "publication_failed"].includes(String(outcome.reason))) {
     if (cur.attempt === 3) next = { ...cur, status: "triage_failed", retry_after: null, lease_expires_at: null, revision: cur.revision + 1 };
@@ -148,7 +148,7 @@ export async function ackQuestion(deps: TriageDeps, caller: TriageCaller, raw: u
   } else return reply("ack_result", { outcome: "invalid_verdict" });
   const response = { outcome: "accepted", status: next.status };
   const op: TriageOperation = { service: caller.service, type: "ack", operation_id: p.operation_id, body_hash: bodyHash, response, lease_id: cur.lease_id };
-  return await deps.store.ack(cur, next, op, admission) ? reply("ack_result", response) : reply("ack_result", { outcome: "conflict" });
+  return await deps.store.ack(cur, next, op, admission, time(now)) ? reply("ack_result", response) : reply("ack_result", { outcome: "conflict" });
 }
 
 export async function sweepQuestions(deps: TriageDeps, limit = 100, selected?: "expired" | "triaged" | "queued"): Promise<{ moved: number }> {
@@ -160,7 +160,7 @@ export async function sweepQuestions(deps: TriageDeps, limit = 100, selected?: "
         let next: TriageQuestion | null = null;
         if (kind === "expired") next = row.attempt >= 3 ? { ...row, status: "triage_failed", lease_expires_at: null, retry_after: null, revision: row.revision + 1 } : { ...row, status: "received", lease_expires_at: null, retry_after: time(Math.min(now + ({ 1: 300, 2: 1800 }[row.attempt] ?? 1800) * 1000, Date.parse(row.claimed_at!) + 86400_000)), revision: row.revision + 1 };
         else if (kind === "triaged") { const v = JSON.parse(row.verdict_json ?? "null"); const cells = cellStatus(v); const status = cells.total === 0 || cells.available === 0 ? "no_data" : cells.total === cells.available ? "filled" : "partial"; next = { ...row, status, revision: row.revision + 1 }; }
-        else { const result = await deps.store.queueResult(row); if (result !== "pending") { const cells = cellStatus(JSON.parse(row.verdict_json ?? "null")); const status = cells.total === 0 || result === "missing" || result === "failed" ? "no_data" : result === "complete" && cells.available === cells.total ? "filled" : "partial"; next = { ...row, status, revision: row.revision + 1 }; } }
+        else { const result = await deps.store.queueResult(row, stamp); if (result !== "pending") { const cells = cellStatus(JSON.parse(row.verdict_json ?? "null")); const fromCells = cells.total === 0 || cells.available === 0 ? "no_data" : cells.available === cells.total ? "filled" : "partial"; const status = result === "gone" || result === "missing" ? fromCells : result === "failed" || cells.total === 0 ? "no_data" : result === "complete" && cells.available === cells.total ? "filled" : "partial"; next = { ...row, status, revision: row.revision + 1 }; } }
         if (next && await deps.store.settle(row, next)) moved++;
       } catch { /* A corrupt or aborting row never blocks later rows in the batch. */ }
     }
