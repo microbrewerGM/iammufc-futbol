@@ -1,4 +1,6 @@
 import { esc } from "./layout";
+import type { LocaleCode } from "../core/locale";
+import { validSeason } from "../core/cl-history";
 
 export interface ChampionsLeagueTotals {
   season: string;
@@ -54,6 +56,7 @@ export interface ChampionsLeagueHistoryStrings {
 export function championsLeagueHistoryBody(
   model: ChampionsLeagueHistoryView,
   strings: ChampionsLeagueHistoryStrings,
+  locale: LocaleCode,
 ): string {
   if (model.unavailable) return `<h1>${esc(strings.heading)}</h1><p role="status">${esc(strings.unavailable)}</p>`;
   const eligible = model.entries.filter((entry) => entry.state !== "out_of_coverage");
@@ -82,7 +85,11 @@ export function championsLeagueHistoryBody(
       return `<tr><th scope="row">${esc(entry.season)}</th><td colspan="6"><span aria-label="${esc(strings.gap)}">—</span> <span>${esc(strings.gap)}</span></td></tr>`;
     }
     const row = entry.row;
-    const seasonLabel = `${esc(row.season)}${entry.state === "partial" ? ` <span>(${esc(strings.partial)})</span>` : ""}`;
+    const seasonText = esc(row.season);
+    const seasonLink = validSeason(row.season)
+      ? `<a href="${esc(`/${locale}/season/${encodeURIComponent(row.season)}`)}">${seasonText}</a>`
+      : seasonText;
+    const seasonLabel = `${seasonLink}${entry.state === "partial" ? ` <span>(${esc(strings.partial)})</span>` : ""}`;
     if (!validLineage(row)) {
       return `<tr><th scope="row">${seasonLabel}</th><td colspan="6"><span aria-label="${esc(strings.attributionUnavailable)}">—</span> <span>${esc(strings.attributionUnavailable)}</span></td></tr>`;
     }

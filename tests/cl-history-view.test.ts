@@ -14,8 +14,8 @@ const row = { season: "2025-26", played: 2, won: 1, drawn: 0, lost: 1, goals: 3,
 const model = (): ChampionsLeagueHistoryView => ({ entries: [{ state: "partial", row }, { state: "observed", row: { ...row, season: "2023-24" } }, { state: "gap", season: "2024-25" }, { state: "out_of_coverage", season: "2026-27" }], credits: { "openfootball:CL:2025-26": "OpenFootball credit" }, snapshotDate: "2026-10-23" });
 
 describe("Champions League history view", () => {
-  it.each([["en", en], ["es", es]] as const)("renders localized headings and table semantics in %s", (_code, strings) => {
-    const body = championsLeagueHistoryBody(model(), strings);
+  it.each([["en", en], ["es", es]] as const)("renders localized headings and table semantics in %s", (locale, strings) => {
+    const body = championsLeagueHistoryBody(model(), strings, locale);
     expect(body).toContain(`<h1>${strings.heading}</h1>`);
     expect(body).toContain(`<caption>${strings.caption}</caption>`);
     expect(body.match(/<th scope="col">/g)).toHaveLength(7);
@@ -23,20 +23,20 @@ describe("Champions League history view", () => {
     expect(body).toContain("OpenFootball credit");
     expect(body).toContain("2026-10-23");
   });
-  it.each([["en", en], ["es", es]] as const)("keeps zero, gaps, partial rows, and out-of-coverage seasons distinct in %s", (_code, strings) => {
-    const body = championsLeagueHistoryBody(model(), strings);
+  it.each([["en", en], ["es", es]] as const)("keeps zero, gaps, partial rows, and out-of-coverage seasons distinct in %s", (locale, strings) => {
+    const body = championsLeagueHistoryBody(model(), strings, locale);
     expect(body).toContain("<td>2</td><td>1</td><td>0</td><td>1</td><td>3</td><td>0</td>");
-    expect(body).toContain(`2025-26 <span>(${strings.partial})</span>`);
+    expect(body).toContain(`<a href="/${locale}/season/2025-26">2025-26</a> <span>(${strings.partial})</span>`);
     expect(body).toContain(strings.gap);
     expect(body).not.toContain("2026-27");
-    const out = championsLeagueHistoryBody({ entries: [{ state: "out_of_coverage", season: "2026-27" }], credits: {} }, strings);
+    const out = championsLeagueHistoryBody({ entries: [{ state: "out_of_coverage", season: "2026-27" }], credits: {} }, strings, locale);
     expect(out).toContain(strings.outsideCoverage);
     expect(out).not.toContain("<table");
   });
-  describe.each([["en", en], ["es", es]] as const)("missing states in %s", (_code, strings) => {
+  describe.each([["en", en], ["es", es]] as const)("missing states in %s", (locale, strings) => {
     it.each([undefined, [], ["missing-ref"]])("withholds observed numbers when lineage is missing or unresolved (%s)", (lineage) => {
       const value: ChampionsLeagueHistoryView = { entries: [{ state: "observed", row: { ...row, lineage } }], credits: {} };
-      const body = championsLeagueHistoryBody(value, strings);
+      const body = championsLeagueHistoryBody(value, strings, locale);
       expect(body).toContain(strings.attributionUnavailable);
       expect(body).not.toMatch(/<td>\d+<\/td>/);
     });
@@ -46,7 +46,7 @@ describe("Champions League history view", () => {
       const value: ChampionsLeagueHistoryView = {
         entries: seasons.map((season) => ({ state: "gap", season })), credits: {},
       };
-      const body = championsLeagueHistoryBody(value, strings);
+      const body = championsLeagueHistoryBody(value, strings, locale);
       expect(body).toContain(`<p role="status">${strings.noResults}</p>`);
       expect(body).toContain("<table>");
       for (const season of seasons) {
@@ -57,16 +57,16 @@ describe("Champions League history view", () => {
       expect(body).not.toContain(strings.attributionUnavailable);
     });
     it("renders zero covered CL seasons as outside coverage", () => {
-      const body = championsLeagueHistoryBody({ entries: [], credits: {} }, strings);
+      const body = championsLeagueHistoryBody({ entries: [], credits: {} }, strings, locale);
       expect(body).toContain(`<p role="status">${strings.outsideCoverage}</p>`);
       expect(body).not.toContain(strings.noResults);
       expect(body).not.toContain("<table");
     });
   });
   it("renders all four season states as distinct typed entries", () => {
-    const body = championsLeagueHistoryBody(model(), en);
-    expect(body).toContain("2025-26 <span>(partial)</span>");
-    expect(body).toContain("2023-24</th><td>2</td>");
+    const body = championsLeagueHistoryBody(model(), en, "en");
+    expect(body).toContain('<a href="/en/season/2025-26">2025-26</a> <span>(partial)</span>');
+    expect(body).toContain('<a href="/en/season/2023-24">2023-24</a></th><td>2</td>');
     expect(body).toContain(en.gap);
     expect(body).not.toContain("2026-27");
   });
@@ -74,13 +74,13 @@ describe("Champions League history view", () => {
     const value = model();
     value.entries = [{ state: "observed", row: { ...row, season: '<script>alert("x")</script>' } }];
     value.credits = { "openfootball:CL:2025-26": '<script>credit</script>' };
-    const body = championsLeagueHistoryBody(value, en);
+    const body = championsLeagueHistoryBody(value, en, "en");
     expect(body).not.toMatch(/<script\b/);
     expect(body).toContain("&lt;script&gt;");
     expect(body).toContain("&lt;script&gt;credit&lt;/script&gt;");
   });
   it("reports gaps-only and temporary unavailable states", () => {
-    expect(championsLeagueHistoryBody({ entries: [{ state: "gap", season: "2024-25" }], credits: {} }, es)).toContain(es.noResults);
-    expect(championsLeagueHistoryBody({ entries: [], credits: {}, unavailable: true }, es)).toContain(es.unavailable);
+    expect(championsLeagueHistoryBody({ entries: [{ state: "gap", season: "2024-25" }], credits: {} }, es, "es")).toContain(es.noResults);
+    expect(championsLeagueHistoryBody({ entries: [], credits: {}, unavailable: true }, es, "es")).toContain(es.unavailable);
   });
 });
