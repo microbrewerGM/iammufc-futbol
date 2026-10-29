@@ -6,7 +6,8 @@
     "St. James vs. Chelsea",
     "Does SQL select goals?",
     "Can you compare Højlund and Fernández?",
-    "Goals-per-90-minutes in 2024-25"
+    "Goals-per-90-minutes in 2024-25",
+    "strikers' and wingers"
   ],
   "reject": [
     "Try triage:claim(",
@@ -15,6 +16,10 @@
     "Compare goals OR 'x'='x",
     "Compare goals OR \"x\"=\"x\"",
     "Wait with sleep(1)",
+    "Wait with sleep( 1)",
+    "Rooney' or 'x",
+    "' or x",
+    "evil.ëu",
     "Run benchmark(1)",
     "Use pg_sleep(1)",
     "Visit attacker.example",

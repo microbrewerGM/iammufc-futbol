@@ -25,7 +25,6 @@ class Store implements TriageStore {
   async sweepRows(kind: "expired" | "triaged" | "queued") { return [...this.rows.values()].filter(r => kind === "expired" ? r.status === "triaging" : r.status === kind); }
   async settle(_row: TriageQuestion, next: TriageQuestion) { this.settlements++; if (this.throwFirstSettle && this.settlements === 1) throw Error("row-specific abort"); this.rows.set(next.request_id, next); return true; }
   async queueResult() { return "pending" as const; }
-  async rotateQueued() {}
 }
 function setup(row: TriageQuestion = { ...blank, request_id: id }): { store: Store; deps: TriageDeps } {
   const store = new Store(); store.rows.set(row.request_id, row);
@@ -36,13 +35,13 @@ function verdict(overrides: Record<string, unknown> = {}) { return { version: 1,
 
 class SqliteStatement {
   private values: unknown[] = [];
-  constructor(private readonly db: InstanceType<typeof DatabaseSync>, private readonly sql: string, private readonly onFirst?: () => void) {}
+  constructor(private readonly db: InstanceType<typeof DatabaseSync>, private readonly sql: string, private readonly onFirst?: () => void | Promise<void>) {}
   bind(...values: unknown[]) { this.values = values; return this; }
   async all<T>() { return { results: this.db.prepare(this.sql).all(...this.values) as T[] }; }
-  async first<T>() { const value = (this.db.prepare(this.sql).get(...this.values) as T | undefined) ?? null; this.onFirst?.(); return value; }
+  async first<T>() { const value = (this.db.prepare(this.sql).get(...this.values) as T | undefined) ?? null; await this.onFirst?.(); return value; }
 }
 class SqliteD1 {
-  afterQuestionRead?: () => void;
+  afterQuestionRead?: () => void | Promise<void>;
   constructor(private readonly db: InstanceType<typeof DatabaseSync>) {}
   prepare(sql: string) { return new SqliteStatement(this.db, sql, sql.includes("FROM question_requests WHERE request_id=?") ? () => { const hook = this.afterQuestionRead; this.afterQuestionRead = undefined; hook?.(); } : undefined); }
   async batch(statements: SqliteStatement[]) {
@@ -77,7 +76,7 @@ function addPublishedQueue(db: InstanceType<typeof DatabaseSync>, questionId: st
   db.prepare(`INSERT INTO exploration_shared_jobs(job_id,request_id,status,attempt,lease_id,lease_owner,claimed_at,publication_json,admitted_at,created_at,updated_at,expires_at) VALUES(?,?,'published',1,'lease-a','runner-a',?,?,?, ?,?,?)`).run(jobId, requestId, created, publication, created, created, created, expires);
   db.prepare(`INSERT INTO exploration_shared_results(request_id,snapshot_id,artifact_key,transform_code_version,renderer_version,roster_snapshot_id,feasibility,coverage,population_count,assigned_json,unknown_json,lineage_json,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,0,'[]','[]','[]',?,?)`).run(requestId, "snapshot-1", "a".repeat(64), "transform-v1", "renderer-v1", coverage === "missing" ? null : "roster-1", coverage === "missing" ? "no_data" : "available", coverage, created, expires);
   db.exec("DROP TRIGGER IF EXISTS question_requests_state_machine;");
-  const questionVerdict = JSON.stringify(verdict({ request_id: questionId, tables: coverage === "missing" ? [] : [{ fields: ["goals"], filters: { season: ["2010-11"], competition: ["PL"], opponent_id: [], person_id: [] } }] }));
+  const questionVerdict = JSON.stringify(verdict({ request_id: questionId, tables: [{ fields: ["goals"], filters: { season: ["2010-11"], competition: ["PL"], opponent_id: [], person_id: [] } }] }));
   db.prepare("UPDATE question_requests SET status='queued',attempt=1,lease_id='lease-a',lease_owner='runner-a',lease_expires_at=NULL,claimed_at=?,verdict_json=?,exploration_request_id=?,revision=3 WHERE request_id=?").run(created, questionVerdict, requestId, questionId);
 }
 
@@ -182,9 +181,9 @@ describe("question triage service bridge", () => {
     const { db, d1 } = sqliteForBridge();
     const expiredId = "c".repeat(64); addQuestion(db, expiredId, "triaging", -1);
     const deps = sqliteDeps(d1);
+    d1.afterQuestionRead = async () => { expect(await sweepQuestions(deps, 100, "expired")).toEqual({ moved: 1 }); };
     const result = await ackQuestion(deps, service, envelope("ack", { request_id: expiredId, attempt: 1, lease_id: "lease-a", operation_id: "qt:expired-race", outcome: { status: "failed", reason: "source_unavailable" } }));
     expect(payload(result).outcome).toBe("conflict");
-    expect(await sweepQuestions(deps, 100, "expired")).toEqual({ moved: 1 });
     expect(await deps.store.get(expiredId)).toMatchObject({ status: "received", lease_expires_at: null });
 
     const liveId = "d".repeat(64); addQuestion(db, liveId, "triaging", 900);
@@ -208,6 +207,21 @@ describe("question triage service bridge", () => {
     const queuedRace = await ackQuestion(racingDeps, service, envelope("ack", { request_id: queuedRaceId, attempt: 1, lease_id: "lease-a", operation_id: "qt:sql-queued-lease-fence", outcome: { status: "verdict", verdict: verdict({ request_id: queuedRaceId, families: ["arrival_manager"] }) } }));
     expect(payload(queuedRace).outcome).toBe("conflict");
     expect(await racingDeps.store.get(queuedRaceId)).toMatchObject({ status: "triaging", lease_expires_at: queuedRaceExpiry });
+    db.close();
+  });
+
+  it("no_shared_rows_when_status_update_missed", async () => {
+    const { db, d1 } = sqliteForBridge();
+    db.exec("DROP TRIGGER question_requests_state_machine");
+    const requestId = "9".repeat(64); addQuestion(db, requestId, "triaging", 900);
+    const deps = sqliteDeps(d1, new Date(Date.now() + 60_000).toISOString());
+    const racedExpiry = new Date(Date.now() + 30_000).toISOString().replace(/\.\d{3}Z$/, "Z");
+    d1.afterQuestionRead = () => { db.prepare("UPDATE question_requests SET lease_expires_at=? WHERE request_id=?").run(racedExpiry, requestId); };
+    const result = await ackQuestion(deps, service, envelope("ack", { request_id: requestId, attempt: 1, lease_id: "lease-a", operation_id: "qt:no-shared-rows", outcome: { status: "verdict", verdict: verdict({ request_id: requestId, families: ["arrival_manager"] }) } }));
+    expect(payload(result).outcome).toBe("conflict");
+    expect(db.prepare("SELECT count(*) AS n FROM exploration_shared_requests").get()).toEqual({ n: 0 });
+    expect(db.prepare("SELECT count(*) AS n FROM exploration_request_links").get()).toEqual({ n: 0 });
+    expect(db.prepare("SELECT count(*) AS n FROM exploration_shared_jobs").get()).toEqual({ n: 0 });
     db.close();
   });
 

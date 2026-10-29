@@ -6,14 +6,14 @@ const SELECT = `SELECT request_id, locale, text, account_sub, status, attempt, l
 type SweepKind = "expired" | "triaged" | "queued";
 let lastSweepAt: number | null = null;
 let nextSweep: SweepKind = "expired";
-const queuedSweepCursor = new WeakMap<object, string>();
+let queuedSweepCursor: string | null = null;
 const NEXT: Record<SweepKind, SweepKind> = { expired: "triaged", triaged: "queued", queued: "expired" };
 export async function sweepQuestionBeforeRequest(deps: TriageDeps): Promise<boolean> {
   const now = deps.now().getTime(); if (lastSweepAt !== null && now - lastSweepAt < 60_000) return true;
   const kind = nextSweep; lastSweepAt = now; nextSweep = NEXT[kind];
   try { await sweepQuestions(deps, 100, kind); return true; } catch { return false; }
 }
-export function resetQuestionSweepForTest(): void { lastSweepAt = null; nextSweep = "expired"; }
+export function resetQuestionSweepForTest(): void { lastSweepAt = null; nextSweep = "expired"; queuedSweepCursor = null; }
 function operationFrom(row: OpRow | null): TriageOperation | null { if (!row) return null; const env = JSON.parse(row.response_json) as { payload: unknown }; return { service: row.service, type: row.operation_type, operation_id: row.operation_id, body_hash: row.body_hash, response: env.payload, lease_id: row.lease_id }; }
 export class D1QuestionTriageStore implements TriageStore {
   constructor(private readonly db: DB) {}
@@ -47,13 +47,13 @@ export class D1QuestionTriageStore implements TriageStore {
   }
   async sweepRows(kind: "expired" | "triaged" | "queued", now: string, limit: number): Promise<TriageQuestion[]> {
     if (kind === "queued") {
-      const cursor = queuedSweepCursor.get(this.db as object) ?? null;
+      const cursor = queuedSweepCursor;
       const page = async (operator: ">" | "<=", after: string, count: number) => (await this.db.prepare(`${SELECT} WHERE status='queued' AND request_id ${operator} ? ORDER BY request_id LIMIT ?`).bind(after,count).all<TriageQuestion>()).results;
       let rows = cursor === null
         ? (await this.db.prepare(`${SELECT} WHERE status='queued' ORDER BY request_id LIMIT ?`).bind(limit).all<TriageQuestion>()).results
         : await page(">", cursor, limit);
       if (cursor !== null && rows.length < limit) rows = rows.concat(await page("<=", cursor, limit - rows.length));
-      if (rows.length) queuedSweepCursor.set(this.db as object, rows[rows.length - 1]!.request_id);
+      if (rows.length) queuedSweepCursor = rows[rows.length - 1]!.request_id;
       return rows;
     }
     const where = kind === "expired" ? `status='triaging' AND lease_expires_at<=?` : kind === "triaged" ? `status='triaged'` : `status='queued'`;
@@ -63,8 +63,8 @@ export class D1QuestionTriageStore implements TriageStore {
     const result = await this.db.prepare(`UPDATE question_requests SET status=?, lease_expires_at=?, retry_after=?, revision=?, updated_at=max(updated_at,strftime('%Y-%m-%dT%H:%M:%SZ','now')) WHERE request_id=? AND status=? AND revision=? AND lease_id IS ? AND lease_owner IS ? RETURNING request_id`).bind(next.status,next.lease_expires_at,next.retry_after,next.revision,row.request_id,row.status,row.revision,row.lease_id,row.lease_owner).all();
     return result.results.length === 1;
   }
-  async queueResult(row: TriageQuestion, now: string): Promise<"complete" | "partial" | "missing" | "gone" | "failed" | "pending"> {
+  async queueResult(row: TriageQuestion, now: string): Promise<"complete" | "partial" | "no_data" | "gone" | "failed" | "pending"> {
     const result = await this.db.prepare(`SELECT j.status AS job_status,j.failure,r.coverage,r.expires_at FROM exploration_shared_jobs j LEFT JOIN exploration_shared_results r ON r.request_id=j.request_id WHERE j.request_id=?`).bind(row.exploration_request_id).first<{job_status:string;failure:string|null;coverage:string|null;expires_at:string|null}>();
-    if (!result || result.job_status === null) return "gone"; if (result.job_status === "published") { if (!result.coverage || !result.expires_at || result.expires_at <= now) return "missing"; return result.coverage === "complete" ? "complete" : result.coverage === "partial" ? "partial" : "missing"; } if (result.job_status === "failed" && result.failure === "attempts_exhausted") return "failed"; return "pending";
+    if (!result || result.job_status === null) return "gone"; if (result.job_status === "published") { if (!result.coverage || !result.expires_at || result.expires_at <= now) return "gone"; return result.coverage === "complete" ? "complete" : result.coverage === "partial" ? "partial" : "no_data"; } if (result.job_status === "failed" && result.failure === "attempts_exhausted") return "failed"; return "pending";
   }
 }
