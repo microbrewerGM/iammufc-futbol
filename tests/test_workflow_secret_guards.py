@@ -62,12 +62,17 @@ def secret_bearing_jobs(source: str) -> list[tuple[str, dict[str, Any]]]:
     jobs = workflow.get("jobs", {})
     assert isinstance(jobs, dict)
     called_workflow = isinstance(workflow.get("on"), dict) and "workflow_call" in workflow["on"]
+    workflow_scope_has_secrets = any(
+        contains_secret_reference(workflow.get(key, {}))
+        for key in ("env", "defaults")
+    )
     return [
         (str(name), job)
         for name, job in jobs.items()
         if isinstance(job, dict)
         and (
             called_workflow
+            or workflow_scope_has_secrets
             or "environment" in job
             or job.get("secrets") == "inherit"
             or "uses" in job
@@ -151,6 +156,20 @@ def test_workflow_call_marks_every_job_secret_bearing() -> None:
     source = """on:\n  workflow_call:\njobs:\n  unguarded:\n    runs-on: ubuntu-latest\n"""
     with pytest.raises(AssertionError, match="mutated.yml:unguarded"):
         assert_approved_secret_job_conditions([("mutated.yml", source)])
+
+
+def test_workflow_level_secret_environment_marks_every_job_secret_bearing() -> None:
+    source = '''env:\n  CF_TOKEN: ${{ secrets.CF_TOKEN }}\njobs:\n  unguarded:\n    runs-on: ubuntu-latest\n'''
+    with pytest.raises(AssertionError, match="mutated.yml:unguarded"):
+        assert_approved_secret_job_conditions([("mutated.yml", source)])
+
+
+def test_workflow_level_secret_defaults_allow_only_approved_jobs() -> None:
+    source = '''defaults:\n  run:\n    env:\n      CF_TOKEN: ${{ secrets.CF_TOKEN }}\njobs:\n  first:\n    if: github.ref == 'refs/heads/main'\n    runs-on: ubuntu-latest\n  second:\n    if: github.ref == 'refs/heads/main'\n    runs-on: ubuntu-latest\n'''
+    assert assert_approved_secret_job_conditions([("mutated.yml", source)]) == [
+        "mutated.yml:first",
+        "mutated.yml:second",
+    ]
 
 
 def test_github_token_only_is_not_secret_bearing() -> None:
