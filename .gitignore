@@ -13,7 +13,10 @@ infra/migrations/*_seed.sql
 .env
 .env.*
 .dev.vars
+.dev.vars.*
 *.pem
+*.key
+*.p12
 
 # Private workspace / AI-assisted development instructions
 /.claude/
@@ -32,6 +35,7 @@ infra/migrations/*_seed.sql
 
 # Local scratch worktrees and experiments
 /scratch/
+.worktrees/
 
 # Build / tooling
 node_modules/
