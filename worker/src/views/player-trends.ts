@@ -87,9 +87,12 @@ export function playerTrendsBody(model: PlayerTrendsView, strings: Readonly<Reco
   const tableLabel = tr("table", t("Season by season values and availability", "Valores y disponibilidad por temporada"));
   const table = `<div class="player-trend-season-table" role="region" tabindex="0" aria-label="${esc(tableLabel)}"><table><caption>${esc(tableLabel)}</caption><thead><tr>${columns.map(c => `<th scope="col">${esc(c)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>`;
   const sufficientSeries = model.series.filter(s => s.cells.filter(c => c.reason === "supported").length >= 2);
+  const insufficientMessage = seasons.length === 1
+    ? tr("single_season", t("Only one supported season is available", "Solo hay una temporada disponible"))
+    : tr("insufficient", t("Not enough points for a trend", "No hay suficientes puntos para mostrar una evolución"));
   const chart
     = model.request.viz === "line"
-      ? `<section aria-label="${esc(heading)}"><h2>${esc(heading)}</h2><p class="trend-alt">${esc(alt)}</p><p class="trend-axis-label">${esc(axisDescription)}</p>${sufficientSeries.length ? sufficientSeries.map(s => seriesMarkup[model.series.indexOf(s)]).join("") : ""}${sufficientSeries.length < model.series.length ? `<p>${esc(tr("insufficient", t("Not enough points for a trend", "No hay suficientes puntos para mostrar una evolución")))}</p>` : ""}</section>` : "";
+      ? `<section aria-label="${esc(heading)}"><h2>${esc(heading)}</h2><p class="trend-alt">${esc(alt)}</p><p class="trend-axis-label">${esc(axisDescription)}</p>${sufficientSeries.length ? sufficientSeries.map(s => seriesMarkup[model.series.indexOf(s)]).join("") : ""}${sufficientSeries.length < model.series.length ? `<p>${esc(insufficientMessage)}</p>` : ""}</section>` : "";
   const threshold = model.request.normalization === "per90"
     ? `<p>${esc(tr("threshold", t("Minimum minutes per season", "Minutos mínimos por temporada")))}: ${n(model.request.min_minutes)}.</p>` : "";
   const belowCount = allCells.filter(c => c.reason === "below_minimum").length;
