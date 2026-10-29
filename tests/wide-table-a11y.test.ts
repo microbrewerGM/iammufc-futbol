@@ -80,16 +80,16 @@ describe.each(["en", "es"] as const)("wide table contract (%s)", locale => {
   it("names and focuses Champions League tables", () => {
     assertTables(championsLeagueHistoryBody({ entries: [{ state: "observed", row: {
       season, played: 1, won: 1, drawn: 0, lost: 0, goals: 2, goals_against: 0, lineage: ["synthetic:league"],
-    } }], credits }, LOCALES[locale].strings.clHistory), 1);
+    } }], credits }, LOCALES[locale].strings.clHistory, locale), 1);
   });
   it("names and focuses the player-trends main table", () => assertTables(trends(locale, trendRows), 1));
   it("names every player-trends leaderboard and exclusion table", () => assertTables(trends(locale, trendRows, true), 3));
   it("omits focusable regions when season-splits has no matches", () => assertTables(splits(locale, []), 0));
   it("omits focusable regions outside Champions League coverage", () => {
-    assertTables(championsLeagueHistoryBody({ entries: [], credits }, LOCALES[locale].strings.clHistory), 0);
+    assertTables(championsLeagueHistoryBody({ entries: [], credits }, LOCALES[locale].strings.clHistory, locale), 0);
   });
   it("omits focusable regions when Champions League history is unavailable", () => {
-    assertTables(championsLeagueHistoryBody({ entries: [], credits, unavailable: true }, LOCALES[locale].strings.clHistory), 0);
+    assertTables(championsLeagueHistoryBody({ entries: [], credits, unavailable: true }, LOCALES[locale].strings.clHistory, locale), 0);
   });
   it("retains informative opponent no-match rows instead of an empty region", () => assertTables(opponent(locale, []), 1));
   it("retains player gap rows when facts are missing", () => assertTables(trends(locale, []), 1));

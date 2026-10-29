@@ -1,4 +1,5 @@
 import { withDefaults, type QueryIntent } from "./intent";
+import { proposeArrivalManager, type ArrivalProposal } from "./discovery-arrivals";
 
 export interface IntentIssue { code: "invalid_intent" | "unsupported_field" | "unsupported_semantics" | "unsupported_execution"; field: string }
 type Parsed = { ok: true; intent: QueryIntent } | { ok: false; issue: IntentIssue };
@@ -49,4 +50,26 @@ export function validateExecutionSupport(intent: QueryIntent): IntentIssue | nul
   if (intent.entity_type !== "player") return { code: "unsupported_execution", field: "entity_type" };
   if (!intent.entity_id.trim()) return { code: "unsupported_execution", field: "entity_id" };
   return ["goals", "assists", "minutes", "points", "xg"].includes(intent.metric) ? null : { code: "unsupported_execution", field: "metric" };
+}
+
+export type ArrivalIntentResult =
+  | { status: "clarification"; proposal: Extract<ArrivalProposal, { status: "clarification" | "not_applicable" }> }
+  | { status: "confirmation_required"; proposal: Extract<ArrivalProposal, { status: "proposed" }> }
+  | { status: "accepted"; request: Extract<ArrivalProposal, { status: "proposed" }>["request"]; canonical: string; route: "/en/discover/arrivals" | "/es/discover/arrivals" };
+
+/** Deterministic admission for the finite arrival-manager language. The model
+ * may suggest ordinary structured intent, but this path never accepts SQL. */
+export function validateArrivalIntent(
+  question: unknown,
+  locale: "en" | "es",
+  resolvedAsOf: string | null,
+  confirmed: boolean,
+): ArrivalIntentResult {
+  const proposal = proposeArrivalManager(question, locale, resolvedAsOf);
+  if (proposal.status !== "proposed") return { status: "clarification", proposal };
+  if (!confirmed) return { status: "confirmation_required", proposal };
+  return {
+    status: "accepted", request: proposal.request, canonical: proposal.canonical,
+    route: `/${locale}/discover/arrivals`,
+  };
 }

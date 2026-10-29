@@ -146,7 +146,7 @@ describe("Cloudflare Access boundary", () => {
 
   it("requires same-origin proof for cost-causing GET and HEAD queries", async () => {
     const { request } = setup();
-    for (const path of ["/en/q", "/es/q", "/seasons/explore", "/en/seasons/explore", "/es/seasons/explore", "/en/seasons/explore/", "/%65n/%73easons/%65xplore", "/es/seasons/%65xplore", "/en/players/trends", "/es/players/trends", "/en/opponents/history", "/es/opponents/history", "/en/players/%74rends", "/en/%6Fpponents/history"]) {
+    for (const path of ["/en/q", "/es/q", "/seasons/explore", "/en/seasons/explore", "/es/seasons/explore", "/en/seasons/explore/", "/%65n/%73easons/%65xplore", "/es/seasons/%65xplore", "/en/players/trends", "/es/players/trends", "/en/opponents/history", "/es/opponents/history", "/en/discover/arrivals", "/es/discover/arrivals", "/en/players/%74rends", "/en/%6Fpponents/history"]) {
       for (const method of ["GET", "HEAD"]) {
         for (const site of [undefined, "cross-site", "same-site", "none"]) {
           expect((await request(path, { method, headers: site ? { "Sec-Fetch-Site": site } : {} })).status).toBe(403);
@@ -185,6 +185,7 @@ describe("Cloudflare Access boundary", () => {
       "/seasons/explore", "/en/seasons/explore", "/es/seasons/explore",
       "/en/players/trends", "/es/players/trends",
       "/en/opponents/history", "/es/opponents/history",
+      "/en/discover/arrivals", "/es/discover/arrivals",
     ];
     for (const path of protectedPaths) {
       for (const suffix of ["", "/", "?competition=PL"]) {
@@ -199,7 +200,7 @@ describe("Cloudflare Access boundary", () => {
     }
     for (const locale of ["en", "es"]) {
       for (const suffix of ["", "/", "?competition=PL"]) {
-        for (const route of ["players/trends", "opponents/history"]) {
+        for (const route of ["players/trends", "opponents/history", "discover/arrivals"]) {
           const target = `/${locale}/${route}${suffix}`;
           expect((await request(target, { headers: {
             "Sec-Fetch-Site": "cross-site", Cookie: "CF_Authorization=browser-session",
