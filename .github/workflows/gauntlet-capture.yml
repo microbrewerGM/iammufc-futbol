@@ -1,0 +1,65 @@
+name: Gauntlet capture
+
+on:
+  workflow_dispatch:
+    inputs:
+      question_id:
+        description: Selected gauntlet question ID
+        required: true
+        type: string
+      dev_route:
+        description: Relative development route
+        required: true
+        type: string
+      revision:
+        description: Deployed 40-character revision
+        required: true
+        type: string
+      override:
+        description: Optional season=YYYY-YYYY or player=slug override
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: dev
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Install age and browser
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y age
+          npx --no-install playwright install --with-deps chromium
+      - name: Capture and encrypt
+        env:
+          QUESTION_ID: ${{ inputs.question_id }}
+          DEV_ROUTE: ${{ inputs.dev_route }}
+          REVISION: ${{ inputs.revision }}
+          OVERRIDE: ${{ inputs.override }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          RUNNER_TEMP: ${{ runner.temp }}
+        run: node scripts/gauntlet-capture.mjs
+      - name: Add blinded pairing hash to summary
+        run: cat "$RUNNER_TEMP/summary.txt" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload encrypted captures
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gauntlet-${{ github.run_id }}
+          path: ${{ runner.temp }}/*.age
+          retention-days: 7
+          if-no-files-found: error
