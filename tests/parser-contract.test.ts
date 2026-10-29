@@ -20,6 +20,13 @@ describe("rule proposal contract", () => {
     expect(parsed.metric).toBe(metric);
   });
 
+  it("parses the Spanish minutes dot-plot example as minutes", () => {
+    const parsed = parseRuleBased("Más minutos gráfico de puntos", catalog).intent;
+    expect(parsed.metric).toBe("minutes");
+    expect(parsed.metric).not.toBe("points");
+    expect(parsed.viz).toBe("dot_plot");
+  });
+
   it("preserves a requested Champions League competition", () => {
     expect(parseRuleBased("Top goals 2024-25 Champions League", catalog).intent.competition)
       .toBe("CL");

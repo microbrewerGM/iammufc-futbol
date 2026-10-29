@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { Catalog, type CompiledCatalog } from "../worker/src/core/feasibility";
 import { LOCALES } from "../worker/src/core/locale";
 import { esc, html, page, type LayoutOptions } from "../worker/src/views/layout";
-import { homeBody } from "../worker/src/views/pages";
+import { exampleQuestion, homeBody } from "../worker/src/views/pages";
 
 function homeCatalog(overrides: Partial<CompiledCatalog> = {}): Catalog {
   const seasons = ["2020-21", "2021-22"];
@@ -91,6 +91,15 @@ describe("localized page links", () => {
 });
 
 describe("homepage actions", () => {
+  it("escapes gallery questions in the hidden value and visible submit label", () => {
+    const question = '<img src=x onerror="alert(1)"> & \'hello\'';
+    const markup = exampleQuestion(LOCALES.en, question);
+
+    expect(markup).toContain('name="q" value="&lt;img src=x onerror=&quot;alert(1)&quot;&gt; &amp; &#39;hello&#39;"');
+    expect(markup).toContain('<button type="submit">&lt;img src=x onerror=&quot;alert(1)&quot;&gt; &amp; &#39;hello&#39;</button>');
+    expect(markup).not.toContain('<img src=x');
+  });
+
   it("seeds the ask form with feasible examples in both languages", () => {
     for (const [locale, goals, assists] of [
       [LOCALES.en, "Top goals 2021-22", "Top assists table 2021-22"],
