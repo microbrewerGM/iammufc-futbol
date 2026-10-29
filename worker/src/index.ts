@@ -70,6 +70,9 @@ import { calculatePer90Leaders, calculatePlayerTrends, parsePlayerTrendsRequest 
 import { playerTrendsBody } from "./views/player-trends";
 import { APPROVED_OPPONENT_IDS, readOpponentHistory } from "./core/opponent-history";
 import { opponentHistoryBody, opponentHistoryUnpublishedBody } from "./views/opponent-history";
+import { adaptArrivalManagerAnswer } from "./core/arrival-manager-answer";
+import { arrivalManagersBody } from "./views/arrival-managers";
+import type { ArrivalManagerRequest } from "./core/discovery-arrivals";
 import { withSecurityHeaders } from "./security/headers";
 import { accessGate, accessIdentity, type AccessEnv, type AccessIdentity } from "./security/auth";
 import { createExplorationBridgeRouter } from "./routes/exploration-bridge";
@@ -388,6 +391,54 @@ app.get("/api/health", async (c) => {
 function registerLocaleRoutes(code: LocaleCode) {
   const locale = LOCALES[code];
   const p = `/${code}`;
+
+  app.get(`${p}/discover/arrivals`, async (c) => {
+    const invalid = code === "es" ? "Solicitud de llegada no válida." : "Invalid arrival question.";
+    const params = new URL(c.req.url).searchParams;
+    const fields = ["academy_basis", "as_of", "family", "joining_basis", "population", "version", "visualization"];
+    if ([...params.keys()].some((key) => !fields.includes(key)) || fields.some((key) => params.getAll(key).length !== 1)) {
+      return html(invalid, 400);
+    }
+    const raw = Object.fromEntries(fields.map((key) => [key, params.get(key)]));
+    const request = raw as unknown as ArrivalManagerRequest;
+    const expected: ArrivalManagerRequest = {
+      version: 1, family: "arrival_manager", as_of: "",
+      population: "first_team_available", joining_basis: "effective_first_team_spell_entry",
+      academy_basis: "documented_first_team_promotion", visualization: "table",
+    };
+    const date = request.as_of;
+    if (fields.some((key) => key !== "as_of" && raw[key] !== String(expected[key as keyof ArrivalManagerRequest])) ||
+        typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date) || date.startsWith("0000") ||
+        !Number.isFinite(Date.parse(`${date}T00:00:00Z`)) || new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date ||
+        new TextEncoder().encode(new URL(c.req.url).search).byteLength > 2048) {
+      return html(invalid, 400);
+    }
+    expected.as_of = date;
+    let model;
+    try {
+      const response = c.env.ASSETS ? await c.env.ASSETS.fetch(new URL(`/answers/arrival-manager/${date}.json`, c.req.url)) : null;
+      if (!response?.ok) {
+        model = { request: expected, players: {}, managers: {}, entries: {}, credits: {}, result: {
+          request: expected, snapshot_id: "unavailable", artifact_key: "0".repeat(64), transform_code_version: "answer-export-v1",
+          renderer_version: "arrival-manager-view-v1", roster_snapshot_id: null, feasibility: "no_data" as const,
+          coverage: "missing" as const, population_count: 0, assigned: [], unknown: [], lineage: [],
+        } };
+      } else {
+        const input = await response.json() as unknown;
+        const snapshot = typeof input === "object" && input !== null && "snapshot_id" in input && typeof input.snapshot_id === "string" ? input.snapshot_id : undefined;
+        model = adaptArrivalManagerAnswer(input, {}, { request: expected, ...(snapshot ? { snapshot_id: snapshot } : {}) });
+        if (model.error) model = { request: expected, players: {}, managers: {}, entries: {}, credits: {}, result: {
+          request: expected, snapshot_id: "unavailable", artifact_key: "0".repeat(64), transform_code_version: "answer-export-v1",
+          renderer_version: "arrival-manager-view-v1", roster_snapshot_id: null, feasibility: "no_data" as const,
+          coverage: "missing" as const, population_count: 0, assigned: [], unknown: [], lineage: [],
+        } };
+      }
+    } catch {
+      return html(code === "es" ? "La respuesta no está disponible temporalmente." : "The answer is temporarily unavailable.", 503);
+    }
+    const body = arrivalManagersBody(model, locale);
+    return html(page(body, { title: code === "es" ? "Jugadores por entrenador al llegar" : "Players by manager at joining", locale, unprefixedPath: "/discover/arrivals" }));
+  });
 
   async function playerTrendsIdentityLabels(env: Env, people: readonly string[]): Promise<{ person_id: string; label: string }[]> {
     const result = await env.DB.prepare(`SELECT i.person_id, p.web_name AS label FROM player_identities i JOIN players p ON p.player_id = i.player_id WHERE i.person_id IN (${people.map(() => "?").join(",")}) ORDER BY i.person_id, i.season DESC`).bind(...people).all<{ person_id: string; label: string }>();
