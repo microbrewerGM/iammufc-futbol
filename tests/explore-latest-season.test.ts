@@ -12,6 +12,7 @@ vi.mock("jose", async (original) => ({
 vi.mock("../worker/src/core/db", async (original) => ({
   ...await original<typeof import("../worker/src/core/db")>(),
   enforceBudget: vi.fn(async () => true),
+  currentSnapshot: vi.fn(async () => "a".repeat(64)),
   currentPublication: vi.fn(async () => ({
     snapshotId: "a".repeat(64), preparedAt: "2026-01-01T00:00:00.000Z", loadedAt: "2026-01-01T00:00:00.000Z", sources: [],
   })),

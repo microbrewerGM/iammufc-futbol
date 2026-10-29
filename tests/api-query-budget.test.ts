@@ -28,7 +28,8 @@ function fixture(options: { d1Fails?: boolean; kvFails?: boolean; count?: number
     if (options.d1Fails) throw new Error("synthetic storage failure");
     return { count: options.count ?? 1 };
   });
-  const bind = vi.fn(() => ({ first }));
+  const all = vi.fn(async () => ({ results: [await first()], meta: { duration: 1, rows_read: 1 } }));
+  const bind = vi.fn(() => ({ first, all }));
   const prepare = vi.fn(() => ({ bind }));
   const env = {
     ACCESS_ISSUER: "https://example.cloudflareaccess.com",
@@ -42,7 +43,7 @@ function fixture(options: { d1Fails?: boolean; kvFails?: boolean; count?: number
       put: async () => {},
     },
   } as unknown as Env;
-  return { env, first, bind, prepare };
+  return { env, first, all, bind, prepare };
 }
 function post(env: Env) {
   return app.request("https://site.invalid/api/query", {
@@ -63,7 +64,7 @@ describe("API query authoritative compute budget", () => {
     expect(await response.json()).toEqual({
       error: "budget_unavailable", message: "Compute budget storage is unavailable. Try again shortly.",
     });
-    expect(f.first).toHaveBeenCalledOnce();
+    expect(f.all).toHaveBeenCalledOnce();
     expect(runQuery).not.toHaveBeenCalled();
     expect(writeQueryCache).not.toHaveBeenCalled();
     expect(response.headers.get("cache-control")).toBe("private, no-store");
@@ -109,6 +110,6 @@ describe("API query authoritative compute budget", () => {
     const response = await app.request(`https://site.invalid/${locale}/q?${query}`, { headers: auth }, f.env);
     expect(response.status).toBe(503);
     expect(runQuery).not.toHaveBeenCalled();
-    expect(f.first).toHaveBeenCalledOnce();
+    expect(f.all).toHaveBeenCalledOnce();
   });
 });

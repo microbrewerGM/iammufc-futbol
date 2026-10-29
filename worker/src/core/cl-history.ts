@@ -25,7 +25,7 @@ const SEASON_RE = /^(\d{4})-(\d{2})$/;
 const SNAPSHOT_RE = /^[a-f0-9]{64}$/;
 const MAX_COVERAGE_SEASONS = 20;
 
-function validSeason(value: unknown): value is string {
+export function validSeason(value: unknown): value is string {
   if (typeof value !== "string") return false;
   const match = SEASON_RE.exec(value);
   return !!match && Number(match[2]) === (Number(match[1]) + 1) % 100;

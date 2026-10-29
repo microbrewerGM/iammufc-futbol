@@ -73,7 +73,7 @@ describe("playerTrendsBody", () => {
     expect(html).toContain("Custom trend");
     expect(html).toContain("Custom goals");
     expect(html).toContain("Custom data table");
-    expect(html).toContain("Not enough points for a trend");
+    expect(html).toContain("Only one supported season is available");
     expect(html).not.toContain("<svg");
   });
 

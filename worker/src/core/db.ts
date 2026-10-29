@@ -11,6 +11,8 @@ import { parseIntent, validateExecutionSupport } from "./validate-intent";
 import type { PlayerRangeCatalog, PlayerRangeRequest, PlayerRangeRow } from "./player-range";
 import type { CoverageCell } from "./feasibility";
 import type { SeasonSplitCatalog, SeasonSplitRow } from "./season-splits";
+import { APPROVED_OPPONENT_IDS } from "./opponent-history";
+import { recordReadTiming } from "./timing";
 
 export interface Env {
   DB: D1Database;
@@ -24,6 +26,43 @@ export interface Env {
   AI?: { run: (model: string, input: unknown) => Promise<unknown> };
   /** Explicit opt-in after a candidate passes evaluation; absent keeps rules-only. */
   AI_PROPOSALS_ENABLED?: string;
+}
+
+const MAX_OPPONENT_LABELS = 44;
+
+/** Read labels only for approved opponent IDs used by the current response. */
+export async function readOpponentLabels(
+  env: Env,
+  snapshot: string,
+  ids: readonly string[],
+): Promise<Map<string, string>> {
+  if (typeof snapshot !== "string" || !/^[0-9a-f]{64}$/.test(snapshot)) throw new Error("invalid opponent label snapshot");
+  if (!Array.isArray(ids) || ids.length > MAX_OPPONENT_LABELS) throw new Error("invalid opponent label IDs");
+  const requested = [...new Set(ids.filter((id) => APPROVED_OPPONENT_IDS.has(id)))];
+  if (requested.length === 0) return new Map();
+  const marks = requested.map(() => "?").join(",");
+  const statement = env.DB.prepare(
+    `SELECT opponent_id, label, snapshot_id FROM opponent_labels
+     WHERE snapshot_id = ? AND opponent_id IN (${marks}) ORDER BY opponent_id LIMIT ${MAX_OPPONENT_LABELS + 1}`,
+  ).bind(snapshot, ...requested);
+  // Lightweight route fixtures may expose only first(); Workers D1 always has all().
+  if (typeof (statement as unknown as { all?: unknown }).all !== "function") return new Map();
+  let results: { opponent_id: string; label: string; snapshot_id: string }[] | null | undefined;
+  try {
+    ({ results } = await statement.all<{ opponent_id: string; label: string; snapshot_id: string }>());
+  } catch (error) {
+    // Older local databases and test fixtures can predate migration 0011.
+    if (error instanceof Error && /no such table:\s*opponent_labels/i.test(error.message)) return new Map();
+    throw error;
+  }
+  const labels = new Map<string, string>();
+  for (const row of results ?? []) {
+    if (requested.includes(row.opponent_id) && APPROVED_OPPONENT_IDS.has(row.opponent_id) &&
+        row.snapshot_id === snapshot && typeof row.label === "string" && row.label.length > 0 && row.label.length <= 80) {
+      labels.set(row.opponent_id, row.label);
+    }
+  }
+  return labels;
 }
 
 /** A successfully parsed, semantically validated website ask. The account key
@@ -337,13 +376,15 @@ export async function enforceBudget(
 
   try {
     // One statement: atomic upsert that returns the post-increment count.
-    const row = await env.DB.prepare(
+    const result = await env.DB.prepare(
       `INSERT INTO budget_counter (day, count) VALUES (?, 1)
          ON CONFLICT(day) DO UPDATE SET count = count + 1
          RETURNING count`,
     )
       .bind(day)
-      .first<{ count: number }>();
+      .all<{ count: number }>();
+    recordReadTiming("enforceBudget", result.meta);
+    const row = result.results?.[0];
     if (!row || !Number.isFinite(row.count)) return deny("unavailable");
     return row.count <= BUDGET_HARD_LIMIT ? true : deny("over_limit");
   } catch {
@@ -797,7 +838,7 @@ export async function resolvePlayerIdentity(
   // Source-namespaced person id (e.g. fpl:code:141746): exact indexed lookup
   // on player_identities.person_id, no substring scan.
   if (PERSON_ID_SHAPE.test(n)) {
-    const { results } = await env.DB.prepare(
+    const result = await env.DB.prepare(
       `SELECT i.person_id, p.web_name
          FROM player_identities i
          JOIN players p ON p.player_id = i.player_id
@@ -811,7 +852,8 @@ export async function resolvePlayerIdentity(
     )
       .bind(n, competition)
       .all<PlayerIdentity>();
-    const row = (results ?? [])[0];
+    recordReadTiming("resolvePlayerIdentity", result.meta);
+    const row = (result.results ?? [])[0];
     return row ? { person_id: row.person_id, web_name: row.web_name } : null;
   }
 
@@ -821,7 +863,7 @@ export async function resolvePlayerIdentity(
   // longer ones throw "LIKE or GLOB pattern too complex". Count the bound
   // pattern, escapes and both % wildcards included, and treat overflow as not found.
   if (new TextEncoder().encode(aliasPattern).length + 2 > D1_LIKE_PATTERN_MAX_BYTES) return null;
-  const { results } = await env.DB.prepare(
+  const result = await env.DB.prepare(
     `SELECT i.person_id, p.web_name,
             CASE WHEN i.person_id = ?
                    OR LOWER(replace(p.web_name, '.', '')) = ?
@@ -842,8 +884,9 @@ export async function resolvePlayerIdentity(
   )
     .bind(n, n, n, n, competition, n, aliasPattern, aliasPattern, aliasPattern)
     .all<IdentityCandidate>();
+  recordReadTiming("resolvePlayerIdentity", result.meta);
 
-  const rows = results ?? [];
+  const rows = result.results ?? [];
   const distinct = (candidates: IdentityCandidate[]) => {
     const identities = new Map<string, PlayerIdentity>();
     for (const candidate of candidates) {

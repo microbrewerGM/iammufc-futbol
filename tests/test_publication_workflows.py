@@ -27,7 +27,9 @@ def test_website_deployment_is_serialized_and_does_not_build_a_public_seed() -> 
 
 def test_manual_publication_is_main_only() -> None:
     deploy = load("deploy.yml")
-    assert deploy["jobs"]["deploy-dev"]["if"] == "github.event_name != 'repository_dispatch'"
+    assert deploy["jobs"]["deploy-dev"]["if"] == (
+        "github.ref == 'refs/heads/main' && github.event_name != 'repository_dispatch'"
+    )
     assert deploy["jobs"]["consume-private-seed"]["if"] == (
         "github.event_name == 'repository_dispatch' && "
         "github.event.action == 'p13-private-seed-ready' && "

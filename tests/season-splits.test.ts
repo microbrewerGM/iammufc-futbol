@@ -42,6 +42,21 @@ describe("season split selection", () => {
 });
 
 describe("same-grain reduction", () => {
+  it("orders opponent groups by played, points, then stable opponent key", () => {
+    const rows: SeasonSplitRow[] = [
+      { ...home, opponent_id: "club:4", played: 1, won: 1, goals_for: 2, lineage: ["synthetic:four"] },
+      { ...home, opponent_id: "club:2", played: 1, won: 0, drawn: 1, goals_for: 1, goals_against: 1, lineage: ["synthetic:two"] },
+      { ...home, opponent_id: "club:3", played: 1, won: 0, drawn: 1, goals_for: 1, goals_against: 1, lineage: ["synthetic:three"] },
+      { ...home, opponent_id: "club:1", venue: "away", played: 1, won: 0, lost: 1, goals_for: 0, goals_against: 1, lineage: ["synthetic:one"] },
+      { ...home, opponent_id: "club:3", venue: "away", played: 1, won: 1, lost: 0, goals_for: 2, goals_against: 0, lineage: ["synthetic:three-away"] },
+    ];
+    const opponentRequest = { ...request, group_by: "opponent" as const };
+    expect(run(rows, opponentRequest).groups.map(g => [g.key, g.played, g.points])).toEqual([
+      ["club:3", 2, 4], ["club:4", 1, 3], ["club:2", 1, 1], ["club:1", 1, 0],
+    ]);
+    expect(run([...rows].reverse(), opponentRequest).groups.map(g => g.key)).toEqual(["club:3", "club:4", "club:2", "club:1"]);
+    expect(run(rows).groups.map(g => g.key)).toEqual(["away", "home"]);
+  });
   it("reconciles the home/away oracle and opponent regrouping", () => {
     const result = run([away, home]);
     expect(result.groups.map(g => g.key)).toEqual(["away", "home"]);
