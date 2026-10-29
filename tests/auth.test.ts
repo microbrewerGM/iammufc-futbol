@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
+// @ts-expect-error The project omits Node typings; Vitest runs this test in Node.
+import { readFileSync } from "node:fs";
 import { Hono } from "hono";
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from "jose";
 import app from "../worker/src/index";
 import type { Env } from "../worker/src/core/db";
-import { accessGate, accessIdentity, type AccessEnv, verifyAccess } from "../worker/src/security/auth";
+import { accessGate, accessIdentity, isProtectedGetPath, type AccessEnv, verifyAccess } from "../worker/src/security/auth";
 
 function setup() {
   const env = {
@@ -146,7 +148,7 @@ describe("Cloudflare Access boundary", () => {
 
   it("requires same-origin proof for cost-causing GET and HEAD queries", async () => {
     const { request } = setup();
-    for (const path of ["/en/q", "/es/q", "/seasons/explore", "/en/seasons/explore", "/es/seasons/explore", "/en/seasons/explore/", "/%65n/%73easons/%65xplore", "/es/seasons/%65xplore"]) {
+    for (const path of ["/en/q", "/es/q", "/seasons/explore", "/en/seasons/explore", "/es/seasons/explore", "/en/seasons/explore/", "/%65n/%73easons/%65xplore", "/es/seasons/%65xplore", "/en/players/trends", "/es/players/trends", "/en/opponents/history", "/es/opponents/history", "/en/players/%74rends", "/en/%6Fpponents/history"]) {
       for (const method of ["GET", "HEAD"]) {
         for (const site of [undefined, "cross-site", "same-site", "none"]) {
           expect((await request(path, { method, headers: site ? { "Sec-Fetch-Site": site } : {} })).status).toBe(403);
@@ -177,13 +179,14 @@ describe("Cloudflare Access boundary", () => {
     }
   });
 
-  it("protects localized player trends GET routes while preserving the existing protected route set", async () => {
+  it("protects localized player trends and opponent history GET routes while preserving the existing protected route set", async () => {
     const { request } = setup();
     const protectedPaths = [
       "/q", "/en/q", "/es/q",
       "/players/compare", "/en/players/compare", "/es/players/compare",
       "/seasons/explore", "/en/seasons/explore", "/es/seasons/explore",
-      "/players/trends", "/en/players/trends", "/es/players/trends",
+      "/en/players/trends", "/es/players/trends",
+      "/en/opponents/history", "/es/opponents/history",
     ];
     for (const path of protectedPaths) {
       for (const suffix of ["", "/", "?competition=PL"]) {
@@ -198,10 +201,12 @@ describe("Cloudflare Access boundary", () => {
     }
     for (const locale of ["en", "es"]) {
       for (const suffix of ["", "/", "?competition=PL"]) {
-        const target = `/${locale}/players/trends${suffix}`;
-        expect((await request(target, { headers: {
-          "Sec-Fetch-Site": "cross-site", Cookie: "CF_Authorization=browser-session",
-        } })).status, target).toBe(403);
+        for (const route of ["players/trends", "opponents/history"]) {
+          const target = `/${locale}/${route}${suffix}`;
+          expect((await request(target, { headers: {
+            "Sec-Fetch-Site": "cross-site", Cookie: "CF_Authorization=browser-session",
+          } })).status, target).toBe(403);
+        }
       }
     }
 
@@ -223,6 +228,28 @@ describe("Cloudflare Access boundary", () => {
     expect((await serviceRequest("/en/players/trends?competition=PL", {
       Origin: "https://site.invalid", "Sec-Fetch-Site": "same-origin",
     })).status).toBe(200);
+  });
+
+  it("covers every budgeted GET route with the protected path matcher", () => {
+    const source = readFileSync(new URL("../worker/src/index.ts", import.meta.url), "utf8");
+    const routePattern = /app\.get\((`[^`]+`|"[^"]+"|'[^']+'),\s*async\s*\(c\)\s*=>\s*\{/g;
+    const routes: string[] = [];
+    for (const match of source.matchAll(routePattern)) {
+      const start = match.index! + match[0].length;
+      const nextRoute = source.indexOf("\n  app.get(", start);
+      const end = nextRoute >= 0 ? nextRoute : source.length;
+      if (!source.slice(start, end).replace(/\/\/[^\n]*/g, "").includes("enforceBudget(")) continue;
+      routes.push(match[1]!);
+    }
+
+    expect(routes.length).toBeGreaterThan(0);
+    for (const route of routes) {
+      expect(route.startsWith("`")).toBe(true);
+      for (const locale of ["en", "es"]) {
+        const path = route.slice(1, -1).replace("${p}", `/${locale}`);
+        expect(isProtectedGetPath(path), `${route} registered for ${locale} as ${path}`).toBe(true);
+      }
+    }
   });
 });
 
