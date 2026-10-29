@@ -12,7 +12,7 @@ const result = queryOpponentHistory(request, catalog, []);
 
 const sentinel = (tag: string): OpponentHistoryStrings => ({
   opponent: `${tag}-opponent`, title: `${tag}-title`, context: `${tag}-context`, season: `${tag}-season`, played: `${tag}-played`, wins: `${tag}-wins`,
-  draws: `${tag}-draws`, losses: `${tag}-losses`, goalsFor: `${tag}-gf`, goalsAgainst: `${tag}-ga`, points: `${tag}-points`, combined: `${tag}-combined`,
+  draws: `${tag}-draws`, losses: `${tag}-losses`, goalsFor: `${tag}-gf`, goalsAgainst: `${tag}-ga`, points: `${tag}-points`, goalDifference: `${tag}-gd`, combined: `${tag}-combined`,
   partial: `${tag}-partial`, missing: `${tag}-missing`, noMatches: `${tag}-no-matches`, failure: `${tag}-failure`, available: `${tag}-available`,
   status: `${tag}-status`, complete: `${tag}-complete`, source: `${tag}-source`, attributionUnavailable: `${tag}-attr`, snapshot: `${tag}-snapshot`,
   chart: `${tag}-chart`, chartDescription: `${tag}-chartdesc`, chartUnavailable: `${tag}-chartunavail`, pointsPerMatch: `${tag}-ppm`,
@@ -36,7 +36,7 @@ describe("opponent history with zero meetings", () => {
     const rows = tbody(html).match(/<tr>[\s\S]*?<\/tr>/g) ?? [];
     expect(rows).toHaveLength(seasons.length + 1);
     for (const row of rows) {
-      expect(row).toContain('<td colspan="7">—</td>');
+      expect(row).toContain('<td colspan="9">—</td>');
       expect(row).not.toMatch(/<td>\s*0\s*<\/td>/);
     }
     expect(html).not.toContain('id="h2h-record"');

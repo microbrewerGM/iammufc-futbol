@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import { proposeArrivalManager } from "../worker/src/core/discovery-arrivals";
 
 const EN = "Show current players grouped by the manager in charge when they joined";
+const SELECTED_EN = "Which current players joined under which manager?";
 const ORIGINAL = "show current players that were acquired or joined for which managers were in charge of the team at the time of joining";
 const ES = "Muestra los jugadores actuales del United agrupados por el entrenador que estaba al mando cuando llegaron";
+const SELECTED_ES = "¿Qué jugadores actuales llegaron con cada entrenador?";
 const DATE = "2026-10-20";
 const REQUEST = {
   academy_basis: "documented_first_team_promotion", as_of: DATE, family: "arrival_manager",
@@ -19,7 +21,7 @@ function clarification(question: unknown, reason: string, date: string | null = 
 }
 
 describe("joining-manager proposals", () => {
-  it.each([ORIGINAL, EN, ES, `¿${ES}?`, `  ${EN.toUpperCase()}.  `,
+  it.each([ORIGINAL, EN, ES, SELECTED_EN, SELECTED_ES, `¡¡¿${SELECTED_ES}`, `¿${ES}?`, `  ${EN.toUpperCase()}.  `,
     EN.replace("Show current", "List me the current United"),
     ES.replace("Muestra los", "Lista los").replace("United", "Manchester United"),
     EN.replaceAll(" ", "  "),
