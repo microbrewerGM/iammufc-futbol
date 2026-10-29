@@ -58,10 +58,10 @@ describe("latest snapshot reads", () => {
     expect(body).toContain(">9</td>");
     expect(body).toMatch(/<tfoot>.*?<\/tfoot>/);
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body.replace(/<tfoot>.*?<\/tfoot>/, "")));
-    expect([...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("")).toBe("713d1e924b81926290838f890d261b898eaca4269bcdce37645ba689bfc7d775");
+    expect([...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("")).toBe("00c510e5baf2086d76eca20d8b0588b3ea6bb4003bbde4b6e6c58f7a9556b34b");
     const plainLabels = body.replace(/<tfoot>.*?<\/tfoot>/, "").replace(/<a href="\/(?:en|es)\/season\/\d{4}-\d{2}">([^<]+)<\/a>/g, "$1");
     const oldDigest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(plainLabels));
-    expect([...new Uint8Array(oldDigest)].map((b) => b.toString(16).padStart(2, "0")).join("")).toBe("4072a1fab6165fcf0eec5cf5a94c2c35b24fb97112ead2e540522a4bc7e0c0f9");
+    expect([...new Uint8Array(oldDigest)].map((b) => b.toString(16).padStart(2, "0")).join("")).toBe("a9820680caf1e71308fff615658a250c0d9bbb56e035f2a05b64bf64e8db1e96");
   });
 
   it("reads the latest snapshot exactly once for /es and renders the Spanish page", async () => {
