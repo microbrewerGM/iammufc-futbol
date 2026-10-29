@@ -106,7 +106,8 @@ export function adaptArrivalManagerAnswer(input: unknown, lineageCredits: Readon
     const creditKeys = keys(lineageCredits);
     if (!creditKeys) return fail(asOf);
     const credits: Record<string,string> = {};
-    for (const ref of lineage) {
+    const creditRefs = new Set([...lineage, ...rows.flatMap(row => row.lineage)]);
+    for (const ref of creditRefs) {
       if (!Object.hasOwn(lineageCredits, ref)) continue;
       const d = Object.getOwnPropertyDescriptor(lineageCredits, ref);
       if (!d || !("value" in d)) return fail(asOf);

@@ -83,6 +83,29 @@ describe("arrival manager dated answer route", () => {
     expect(body).toContain("Player data derived from the Fantasy Premier League public API.");
   });
 
+  it("renders row-only FPL credit in EN and ES", async () => {
+    const rowOnly = { ...answer, lineage: [] };
+    const runtime = env(async () => Response.json(rowOnly));
+    for (const locale of ["en", "es"] as const) {
+      const response = await app.request(`https://site.invalid/${locale}/discover/arrivals?${request}`, { headers: access }, runtime);
+      const body = await response.text();
+      expect(response.status, body).toBe(200);
+      expect(body).toContain(locale === "es"
+        ? "Datos de jugadores derivados de la API pública de Fantasy Premier League."
+        : "Player data derived from the Fantasy Premier League public API.");
+      expect(body).not.toContain(locale === "es" ? "Atribución de fuente no disponible para algunos datos." : "Source attribution unavailable for some data.");
+    }
+  });
+
+  it("shows unavailable attribution for unknown row-only lineage", async () => {
+    const unknown = { ...answer, lineage: [], rows: answer.rows.map(row => ({ ...row, lineage: ["unknown-source"] })) };
+    const runtime = env(async () => Response.json(unknown));
+    const response = await app.request(`https://site.invalid/en/discover/arrivals?${request}`, { headers: access }, runtime);
+    const body = await response.text();
+    expect(response.status, body).toBe(200);
+    expect(body).toContain("Data use is not permitted for this question");
+  });
+
   it.each([
     ["invalid request", "as_of=2026-02-30"],
     ["mismatched answer", "family=manager_eras"],

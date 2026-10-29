@@ -126,7 +126,7 @@ describe("arrival manager answer adapter", () => {
     expect(adaptArrivalManagerAnswer(base(), { "source:one": "<b>bad</b>" }).error).toBeTruthy();
     expect(adaptArrivalManagerAnswer(base(), { "source:one": "x".repeat(241) }).error).toBeTruthy();
     const rowOnly = { ...base(), lineage: [], rows: base().rows };
-    expect(adaptArrivalManagerAnswer(rowOnly, { "source:one": "Row only" }).credits).toEqual({});
+    expect(adaptArrivalManagerAnswer(rowOnly, { "source:one": "Row only" }).credits).toEqual({ "source:one": "Row only" });
   });
 
   it("validates expected requests and fails closed on request getters", () => {
