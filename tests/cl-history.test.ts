@@ -16,12 +16,18 @@ function fakeDb(rows: Record<string, unknown>[], current = snapshot) {
   const DB = { prepare(sql: string) {
     let bindings: unknown[] = [];
     const statement = {
+      sql,
       bind(...values: unknown[]) { bindings = values; return statement; },
       async first<T>() { calls.push({ sql, bindings }); return { snapshot_id: current } as T; },
       async all<T>() { calls.push({ sql, bindings }); return { results: rows as T[] }; },
     };
     return statement;
-  } };
+  },
+    batch: async (statements: { sql: string; all: () => Promise<unknown> }[]) => Promise.all(statements.map(async (item) => {
+      const result = await item.all() as { results: unknown[] };
+      return /FROM snapshots/.test(item.sql) ? { results: [{ snapshot_id: current, sources_json: "{}" }] } : result;
+    })),
+  };
   return { env: { DB } as unknown as Env, calls };
 }
 const row = (season: string, patch: Record<string, unknown> = {}) => ({

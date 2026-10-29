@@ -1,14 +1,14 @@
 {
-  "artifact_sha256": "827605f9e5e88dd175e333f4e4871b08943f1d264afc00bac890b9ca9e6271fb",
+  "artifact_sha256": "ab186cccdfe6c33426771e3032143d2a5f9755642e1450ef22f120a18d41c816",
   "builder": "iammufc-private-public-catalog",
   "builder_version": 2,
   "catalog_contract_version": 1,
   "coverage_count": 63,
   "metric_count": 6,
-  "producer_artifact_id": 12374495961,
+  "producer_artifact_id": 12661271455,
   "producer_run_attempt": 1,
-  "producer_run_id": 39661404283,
-  "source_revision": "02142836e5cb15e8d1e48776c2de471f7aa60823",
+  "producer_run_id": 40345403445,
+  "source_revision": "4a822e11b296ca2adfa5518e9067a8d1e1206367",
   "statement_version": 2,
   "validation_passed": true
 }

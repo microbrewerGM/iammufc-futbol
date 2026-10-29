@@ -307,14 +307,27 @@ function utcDay(): string {
  * Returns false if D1 cannot confirm the authoritative count. KV remains an
  * advisory pre-filter; callers can choose route-specific failure handling.
  */
-export async function enforceBudget(env: Env, options: { failClosed?: boolean } = {}): Promise<boolean> {
+export async function enforceBudget(
+  env: Env,
+  options: { failClosed?: boolean; denial?: { reason?: "over_limit" | "unavailable" } } = {},
+): Promise<boolean> {
+  // `denial` is an optional out-param: on false it says whether the budget is
+  // really spent ("over_limit") or storage could not confirm ("unavailable").
+  // A non-finite stored count is always denied as "unavailable".
+  if (options.denial) options.denial.reason = undefined;
+  // Fail closed unless the caller explicitly passes failClosed: false.
+  const failClosed = options.failClosed !== false;
+  const deny = (reason: "over_limit" | "unavailable") => {
+    if (options.denial) options.denial.reason = reason;
+    return false;
+  };
   const day = utcDay();
 
   try {
     const kvKey = `budget:${day}`;
     const raw = await env.CFG.get(kvKey);
     const kvCount = raw ? Number(raw) : 0;
-    if (Number.isFinite(kvCount) && kvCount >= BUDGET_FAST_LIMIT) return false;
+    if (Number.isFinite(kvCount) && kvCount >= BUDGET_FAST_LIMIT) return deny("over_limit");
     // Best-effort increment. KV's eventual consistency means this can race --
     // deliberately not the enforcement point, see the D1 check below.
     await env.CFG.put(kvKey, String(kvCount + 1), { expirationTtl: 172800 }); // 2 days, covers UTC-boundary clock skew
@@ -331,9 +344,10 @@ export async function enforceBudget(env: Env, options: { failClosed?: boolean } 
     )
       .bind(day)
       .first<{ count: number }>();
-    return (row?.count ?? 0) <= BUDGET_HARD_LIMIT;
+    if (!row || !Number.isFinite(row.count)) return deny("unavailable");
+    return row.count <= BUDGET_HARD_LIMIT ? true : deny("over_limit");
   } catch {
-    return options.failClosed === true ? false : true;
+    return failClosed ? deny("unavailable") : true;
   }
 }
 
@@ -403,7 +417,7 @@ export async function seasonSplitFacts(
       WHERE snapshot_id = ? AND competition = 'PL' AND season IN (${marks})
       GROUP BY season`,
   ).bind(snapshotId, ...seasons).all<{ season: string; played: number; row_count: number }>();
-  const allowedSources = new Set(["openfootball_cl", "football_data_couk", "fpl"]);
+  const allowedSources = new Set(["football_data_couk", "fpl"]);
   const validLineage = (value: unknown): value is string[] => Array.isArray(value) && value.length > 0 && value.length <= 32 &&
     value.every((source) => typeof source === "string" && allowedSources.has(source)) && new Set(value).size === value.length;
   const rows: SeasonSplitRow[] = [];
@@ -440,6 +454,49 @@ export async function seasonSplitFacts(
   const completeSeasons = new Set(seasonCoverage.filter((entry) => entry.coverage === "complete").map((entry) => entry.season));
   return { catalog: { snapshot_id: snapshotId, seasons: seasonCoverage },
     rows: rows.filter((row) => completeSeasons.has(row.season)) };
+}
+
+export const PLAYER_CHOICES_DEFAULT_LIMIT = 60;
+export const PLAYER_CHOICES_MAX_LIMIT = 100;
+
+/** Stable `{ person_id, label }` choices for the player trends form: players
+ * with minutes in the seasons/competition, most minutes first. Rows are bound
+ * to the caller's snapshot id, so they never mix snapshots. The
+ * label is the latest season's `web_name`, as in `playerRangeFacts`. */
+export async function playerChoices(
+  env: Env,
+  snapshotId: string,
+  { seasons, competition = "PL", limit = PLAYER_CHOICES_DEFAULT_LIMIT }:
+    { seasons: readonly string[]; competition?: "PL" | "CL"; limit?: number },
+): Promise<{ person_id: string; label: string }[]> {
+  if (!SNAPSHOT_RE.test(snapshotId)) throw new Error("invalid player choices snapshot");
+  if (competition !== "PL" && competition !== "CL") throw new Error("invalid player choices competition");
+  const unique = [...new Set(seasons)];
+  if (unique.length === 0) return [];
+  if (unique.length > 16 || !unique.every((season) => SEASON_RE.test(season))) {
+    throw new Error("invalid player choices seasons");
+  }
+  const capped = Number.isInteger(limit) && limit >= 1
+    ? Math.min(limit, PLAYER_CHOICES_MAX_LIMIT)
+    : PLAYER_CHOICES_DEFAULT_LIMIT;
+  const marks = unique.map(() => "?").join(",");
+  const { results } = await env.DB.prepare(
+    `SELECT i.person_id AS person_id,
+            (SELECT p2.web_name FROM player_identities i2
+               JOIN players p2 ON p2.player_id = i2.player_id
+              WHERE i2.person_id = i.person_id
+              ORDER BY i2.season DESC LIMIT 1) AS label,
+            SUM(s.minutes) AS total_minutes
+       FROM player_season_stats s
+       JOIN player_identities i ON i.player_id = s.player_id
+      WHERE s.season IN (${marks}) AND s.competition = ?
+        AND s.snapshot_id = ?
+      GROUP BY i.person_id
+     HAVING SUM(s.minutes) > 0
+      ORDER BY total_minutes DESC, i.person_id
+      LIMIT ?`,
+  ).bind(...unique, competition, snapshotId, capped).all<{ person_id: string; label: string }>();
+  return (results ?? []).map((row) => ({ person_id: row.person_id, label: row.label }));
 }
 
 /** Bounded, stable-ID-only facts for the selected-player comparison. */
@@ -708,6 +765,8 @@ interface IdentityCandidate extends PlayerIdentity {
   exact_match: number;
 }
 
+const D1_LIKE_PATTERN_MAX_BYTES = 50;
+
 /**
  * Resolve a source-namespaced person id or loose historical alias to one
  * stable identity. Exact aliases win only when they identify one person;
@@ -730,6 +789,8 @@ export async function resolvePlayerIdentity(
   needle: string,
   competition = "PL",
 ): Promise<PlayerIdentity | null> {
+  // SQLite LIKE truncates at NUL, which can turn a literal alias into a wildcard.
+  if (needle.includes("\0")) return null;
   const n = needle.toLowerCase().replaceAll(".", "").trim();
   if (n.length < 3) return null; // avoid pathological short-substring collisions
 
@@ -754,6 +815,12 @@ export async function resolvePlayerIdentity(
     return row ? { person_id: row.person_id, web_name: row.web_name } : null;
   }
 
+  // Keep user punctuation literal in LIKE; exact comparisons still use n.
+  const aliasPattern = n.replace(/[!%_]/g, "!$&");
+  // D1 caps a LIKE pattern at 50 bytes (developers.cloudflare.com/d1/platform/limits);
+  // longer ones throw "LIKE or GLOB pattern too complex". Count the bound
+  // pattern, escapes and both % wildcards included, and treat overflow as not found.
+  if (new TextEncoder().encode(aliasPattern).length + 2 > D1_LIKE_PATTERN_MAX_BYTES) return null;
   const { results } = await env.DB.prepare(
     `SELECT i.person_id, p.web_name,
             CASE WHEN i.person_id = ?
@@ -767,13 +834,13 @@ export async function resolvePlayerIdentity(
       WHERE s.competition = ?
         AND (
           i.person_id = ?
-          OR LOWER(replace(p.web_name, '.', '')) LIKE '%' || ? || '%'
-          OR LOWER(p.second_name) LIKE '%' || ? || '%'
-          OR LOWER(p.first_name || ' ' || p.second_name) LIKE '%' || ? || '%'
+          OR LOWER(replace(p.web_name, '.', '')) LIKE '%' || ? || '%' ESCAPE '!'
+          OR LOWER(p.second_name) LIKE '%' || ? || '%' ESCAPE '!'
+          OR LOWER(p.first_name || ' ' || p.second_name) LIKE '%' || ? || '%' ESCAPE '!'
         )
       ORDER BY p.season DESC`,
   )
-    .bind(n, n, n, n, competition, n, n, n, n)
+    .bind(n, n, n, n, competition, n, aliasPattern, aliasPattern, aliasPattern)
     .all<IdentityCandidate>();
 
   const rows = results ?? [];

@@ -86,6 +86,28 @@ describe("opponent history routes", () => {
     expect(enforceBudget).not.toHaveBeenCalled();
     expect(env.DB.prepare).not.toHaveBeenCalled();
   });
+  it.each(["en", "es"])("keeps budget exhaustion unavailable in %s", async locale => {
+    vi.mocked(enforceBudget).mockResolvedValueOnce(false);
+    const response = await app.request(`https://site.invalid/${locale}/opponents/history${query}`, { headers }, env);
+    expect(response.status).toBe(503);
+    expect(enforceBudget).toHaveBeenCalledWith(env, { failClosed: true });
+    expect(seasonSplitFacts).not.toHaveBeenCalled();
+    expect(readOpponentHistory).not.toHaveBeenCalled();
+  });
+  it.each(["en", "es"])("keeps query failure unavailable in %s", async locale => {
+    vi.mocked(seasonSplitFacts).mockRejectedValueOnce(new Error("synthetic read failure"));
+    const response = await app.request(`https://site.invalid/${locale}/opponents/history${query}`, { headers }, env);
+    expect(response.status).toBe(503);
+    expect(readOpponentHistory).not.toHaveBeenCalled();
+  });
+  it.each(["en", "es"])("rejects malformed requests before unpublished capability in %s", async locale => {
+    clear.mockReturnValue("partial");
+    const response = await app.request(`https://site.invalid/${locale}/opponents/history?opponent_id=invalid&seasons=2024-25`, { headers }, env);
+    expect(response.status).toBe(400);
+    expect(enforceBudget).not.toHaveBeenCalled();
+    expect(seasonSplitFacts).not.toHaveBeenCalled();
+    expect(readOpponentHistory).not.toHaveBeenCalled();
+  });
   it("accepts exactly 16 selected seasons and rejects 17 before SQL", async () => {
     const seasons = Array.from({ length: 16 }, (_, i) => `${String(2000 + i).padStart(4, "0")}-${String((i + 1) % 100).padStart(2, "0")}`);
     coverage.mockReturnValue(Array.from({ length: 16 }, (_, i) => ({

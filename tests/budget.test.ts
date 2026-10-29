@@ -83,11 +83,12 @@ describe("enforceBudget", () => {
     expect(await enforceBudget(env)).toBe(false);
   });
 
-  it("fails open when D1 itself is unavailable, rather than taking the site down", async () => {
+  it("fails open when D1 itself is unavailable and the caller opts in with failClosed: false, rather than taking the site down", async () => {
     const env = fakeEnv();
     (env.DB as unknown as { prepare: () => never }).prepare = () => {
       throw new Error("D1 down");
     };
-    expect(await enforceBudget(env)).toBe(true);
+    expect(await enforceBudget(env, { failClosed: false })).toBe(true);
+    expect(await enforceBudget(env)).toBe(false);
   });
 });

@@ -72,7 +72,7 @@ ${langToggle}
 <a href="/${locale.code}/compare">${locale.code === "es" ? "Comparar por 90 minutos" : "Compare output per 90"}</a>
 <a href="/${locale.code}/players/compare">${esc(t.playerRangeLink)}</a>
 <a href="/${locale.code}/players/trends">${esc(t.playerTrendsLink)}</a>
-<a href="/${locale.code}/opponents/history">${esc(t.opponentHistoryLink)}</a>
+<a href="/${locale.code}/opponents/history?opponent_id=club%3A1001&amp;seasons=2010-11">${esc(t.opponentHistoryLink)}</a>
 <a href="/${locale.code}/seasons/explore">${locale.code === "es" ? "Explorar desgloses" : "Explore season splits"}</a>
 <a href="/${locale.code}/season/2025-26#team-seasons">${locale.code === "es" ? "Comparar temporadas" : "Compare league seasons"}</a>
 <a href="/${locale.code}/data">${locale.code === "es" ? "Datos y fuentes" : "Data and sources"}</a>

@@ -45,7 +45,7 @@ import {
   type QuestionHistoryEntry,
   type PublicationState,
 } from "./core/db";
-import { clHistoryRows } from "./core/cl-history";
+import { clHistoryRead } from "./core/cl-history";
 import { decodeCompiledCatalog } from "./core/catalog-contract";
 import { Catalog, columnFeasibility, hasSubstance } from "./core/feasibility";
 import { artifactKey, canonicalize } from "./core/intent";
@@ -66,7 +66,7 @@ import { championsLeagueHistoryBody } from "./views/cl-history";
 import type { PlayerRangeRequest } from "./core/player-range";
 import { playerRangeBody, playerRangeSelection } from "./views/player-range";
 import { playerTrendsFacts } from "./core/player-trends-db";
-import { calculatePlayerTrends, parsePlayerTrendsRequest } from "./core/player-trends";
+import { calculatePer90Leaders, calculatePlayerTrends, parsePlayerTrendsRequest } from "./core/player-trends";
 import { playerTrendsBody } from "./views/player-trends";
 import { APPROVED_OPPONENT_IDS, readOpponentHistory } from "./core/opponent-history";
 import { opponentHistoryBody, opponentHistoryUnpublishedBody } from "./views/opponent-history";
@@ -96,17 +96,20 @@ const catalog = new Catalog(decodedCatalog);
 const app = new Hono<AccessEnv>();
 
 /** Fire-and-forget the demand-aggregate write: never awaited by the response,
- * never throws, and survives the response via waitUntil when a context exists. */
+ * tolerates a missing context, and survives the response via waitUntil when one exists. */
 function deferAggregate(
   c: { executionCtx: { waitUntil(promise: Promise<unknown>): void } },
   write: Promise<void>,
 ): void {
   const safe = write.catch(() => {});
+  let ctx: { waitUntil(promise: Promise<unknown>): void };
   try {
-    c.executionCtx.waitUntil(safe);
+    ctx = c.executionCtx;
   } catch {
     // No execution context (unit tests): the write is already detached and error-safe.
+    return;
   }
+  ctx.waitUntil(safe);
 }
 
 /** Choose a default only from metric/season pairs with executable catalog coverage. */
@@ -132,8 +135,8 @@ export function selectComparisonDefaults(
 const CACHE_CONTROL = "private, no-store";
 
 type CachedExecution =
-  | { result: Awaited<ReturnType<typeof runQuery>>; cacheOutcome: CacheOutcome; overBudget: false }
-  | { result: null; cacheOutcome: CacheOutcome; overBudget: boolean };
+  | { result: Awaited<ReturnType<typeof runQuery>>; cacheOutcome: CacheOutcome; overBudget: false; budgetUnavailable: false }
+  | { result: null; cacheOutcome: CacheOutcome; overBudget: boolean; budgetUnavailable: boolean };
 
 /** Cache hits are free; only a miss reaches the budget breaker and executor.
  * Cache storage is advisory, so every read/write failure degrades to compute. */
@@ -143,17 +146,20 @@ async function executeWithCache(
   key: string,
   snapshot: string | null,
   allowCompute: boolean,
+  budgetOptions: Parameters<typeof enforceBudget>[1] = {},
 ): Promise<CachedExecution> {
   const cached = await readQueryCache(env, key, snapshot, intent);
   if (cached.result) {
     // Publication can change after the route's initial snapshot read even
     // when the result comes from cache rather than a new data SELECT.
     if (await currentSnapshot(env) !== snapshot) throw new Error("snapshot_changed_during_query");
-    return { result: cached.result, cacheOutcome: "hit", overBudget: false };
+    return { result: cached.result, cacheOutcome: "hit", overBudget: false, budgetUnavailable: false };
   }
-  if (!allowCompute) return { result: null, cacheOutcome: cached.outcome, overBudget: false };
-  if (!(await enforceBudget(env))) {
-    return { result: null, cacheOutcome: cached.outcome, overBudget: true };
+  if (!allowCompute) return { result: null, cacheOutcome: cached.outcome, overBudget: false, budgetUnavailable: false };
+  const denial: { reason?: "over_limit" | "unavailable" } = {};
+  if (!(await enforceBudget(env, { ...budgetOptions, denial }))) {
+    const unavailable = denial.reason === "unavailable";
+    return { result: null, cacheOutcome: cached.outcome, overBudget: !unavailable, budgetUnavailable: unavailable };
   }
   const result = await runQuery(env, intent, snapshot);
   // The seed import is atomic, but it can commit between the first snapshot
@@ -163,7 +169,7 @@ async function executeWithCache(
   if (snapshotAfterExecution !== snapshot) throw new Error("snapshot_changed_during_query");
   const stored = await writeQueryCache(env, key, snapshot, result, intent);
   const cacheOutcome = cached.outcome === "unavailable" || !stored ? "unavailable" : cached.outcome;
-  return { result, cacheOutcome, overBudget: false };
+  return { result, cacheOutcome, overBudget: false, budgetUnavailable: false };
 }
 
 app.use("*", async (c, next) => {
@@ -230,16 +236,24 @@ app.post("/api/query", async (c) => {
   if (executionIssue) return c.json({ error: executionIssue }, 422);
 
   const execution = await executeWithCache(
-    c.env, intent, key, snapshot, feasibility.state !== "computable_but_expensive",
+    c.env, intent, key, snapshot, feasibility.state !== "computable_but_expensive", { failClosed: true },
   );
   const responseFeasibility = execution.cacheOutcome === "hit"
     ? catalog.checkFeasibility(intent, "en", true)
     : feasibility;
+  // The aggregate CHECK enum has no outage value (and no migration here), so a
+  // storage outage logs "refused" -- distinct from "budget_exceeded".
   const resultOutcome = execution.overBudget
     ? "budget_exceeded"
     : execution.result ? "success" : "refused";
   deferAggregate(c, logQueryAggregate(c.env, intent, responseFeasibility.state, execution.cacheOutcome,
     resultOutcome, "api", "query_api"));
+  if (execution.budgetUnavailable) {
+    return c.json(
+      { error: "budget_unavailable", message: "Compute budget storage is unavailable. Try again shortly." },
+      503,
+    );
+  }
   if (execution.overBudget) {
     return c.json(
       { error: "budget_exceeded", message: "Daily compute budget spent. Try again after midnight UTC." },
@@ -409,6 +423,15 @@ function registerLocaleRoutes(code: LocaleCode) {
       group_by: params.get("group_by") ?? "venue", venue: params.get("venue") || null,
       opponent_id: params.get("opponent_id") || null };
     const availableSeasons = [...new Set(catalog.coverage.filter((cell) => cell.competition === "PL").map((cell) => cell.season))].sort();
+    // Only a bare URL (no query at all) preselects the newest season that has
+    // season-splits source coverage while the capability is clear. Any submitted
+    // or explicit query, including an empty seasons selection, is never altered.
+    if ([...params.keys()].length === 0 && catalog.outputCapability("season_splits") === "clear") {
+      const splitSeasons = new Set(catalog.coverage.filter((cell) => cell.competition === "PL" && cell.metric === "goals" &&
+        cell.entity_type === "season" && cell.granularity === "box_score" && cell.source_id === "football_data_couk").map((cell) => cell.season));
+      const newest = availableSeasons.filter((season) => splitSeasons.has(season)).at(-1);
+      if (newest) raw.seasons = [newest];
+    }
     let request;
     let result;
     let error: string | undefined;
@@ -426,6 +449,7 @@ function registerLocaleRoutes(code: LocaleCode) {
     }
     const credits = Object.fromEntries([...sourceCredits].map(([id, texts]) => [id, [...texts].join(" · ")]));
     try {
+      if (raw.opponent_id !== null && !APPROVED_OPPONENT_IDS.has(raw.opponent_id)) throw new Error("unsupported opponent");
       request = parseSeasonSplitRequest(raw, availableSeasons);
       if (catalog.outputCapability("season_splits") !== "clear") {
         error = locale.code === "es" ? "La capacidad de desgloses por temporada no está publicada." : "Season splits capability is not published.";
@@ -701,12 +725,13 @@ function registerLocaleRoutes(code: LocaleCode) {
       request = parsePlayerTrendsRequest(raw, identity);
       const rows = await playerTrendsFacts(c.env.DB, request, snapshot, identity.person_ids, identity.seasons, catalog.coverage.map(cell => ({ ...cell, feasibility: catalog.checkFeasibility({ metric: cell.metric, entity_type: "player", entity_id: "all", season: cell.season, competition: "PL", dimensions: [], filters: {}, viz: "table", limit: 50 }, locale.code).state })));
       const result = calculatePlayerTrends(request, identity, rows);
+      const leaders = request.normalization === "per90" ? calculatePer90Leaders(identity, request.seasons[request.seasons.length - 1], request.metric, request.min_minutes, rows) : undefined;
       if (await currentSnapshot(c.env) !== snapshot) return renderError(unavailable, 503);
       const facts = await playerTrendsIdentityLabels(c.env, request.person_ids);
       if (facts.length !== request.person_ids.length || facts.some(person => !person.label?.trim())) return renderError(unknown, 404);
       const credits = Object.fromEntries(catalog.coverage.map(cell => [`${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`, locale.code === "es" ? cell.attribution_text_es ?? cell.attribution_text ?? "" : cell.attribution_text ?? ""]));
       const form = `<form method="get" action="/${locale.code}/players/trends"><input type="hidden" name="schema_version" value="1"><input type="hidden" name="competition" value="PL"><label>${esc(t.playerTrendsPlayerLabel)}<select name="person_ids">${facts.map(person => `<option value="${esc(person.person_id)}"${person.person_id === request!.person_ids[0] ? " selected" : ""}>${esc(person.label)}</option>`).join("")}</select></label><label>${esc(t.playerTrendsFromLabel)}<select name="start_season">${eligibleSeasons.map(season => `<option value="${esc(season)}"${season === request!.seasons[0] ? " selected" : ""}>${esc(season)}</option>`).join("")}</select></label><label>${esc(t.playerTrendsThroughLabel)}<select name="end_season">${eligibleSeasons.map(season => `<option value="${esc(season)}"${season === request!.seasons[request!.seasons.length - 1] ? " selected" : ""}>${esc(season)}</option>`).join("")}</select></label><button type="submit">${esc(t.playerTrendsSubmit)}</button></form>`;
-      const body = form + playerTrendsBody({ ...result, people: facts, credits }, {}, locale);
+      const body = form + playerTrendsBody({ ...result, ...(leaders ? { leaders } : {}), people: facts, credits }, {}, locale);
       const canonical = new URLSearchParams(); canonical.set("schema_version", "1"); canonical.set("competition", "PL"); request.person_ids.forEach(id => canonical.append("person_ids", id)); request.seasons.forEach(season => canonical.append("seasons", season)); canonical.set("metric", request.metric); canonical.set("normalization", request.normalization); canonical.set("min_minutes", String(request.min_minutes)); canonical.set("viz", request.viz);
       const res = html(page(body, { title: locale.strings.playerTrendsLink, locale, unprefixedPath: `/players/trends?${canonical}`, snapshotId: snapshot }));
       res.headers.set("Cache-Control", CACHE_CONTROL);
@@ -911,7 +936,7 @@ function registerLocaleRoutes(code: LocaleCode) {
   });
 
   app.get(`${p}/player/:name/:season?`, async (c) => {
-    const nameParam = decodeURIComponent(c.req.param("name"));
+    const nameParam = c.req.param("name");
     const seasonParam = c.req.param("season");
 
     const identity = await resolvePlayerIdentity(c.env, nameParam);
@@ -990,19 +1015,14 @@ function registerLocaleRoutes(code: LocaleCode) {
     let body: string;
     let credits: (string | null | undefined)[] = [];
     try {
-      const [publication, result, snapshotMetadata] = await Promise.all([
-        currentPublication(c.env),
-        clHistoryRows(c.env, decodedCatalog),
-        c.env.DB.prepare("SELECT snapshot_id, sources_json FROM snapshots ORDER BY created_at DESC LIMIT 1")
-          .first<{ snapshot_id: unknown; sources_json: unknown }>(),
-      ]);
+      const [publication, read] = await Promise.all([currentPublication(c.env), clHistoryRead(c.env, decodedCatalog)]);
+      const result = read.result;
       snapshot = result.snapshot_id;
-      if (!publication || publication.snapshotId !== result.snapshot_id || !snapshot ||
-          !snapshotMetadata || snapshotMetadata.snapshot_id !== snapshot || typeof snapshotMetadata.sources_json !== "string") {
+      if (!publication || publication.snapshotId !== result.snapshot_id || !snapshot || typeof read.sourcesJson !== "string") {
         throw new Error("CL history publication unavailable");
       }
       let sourceHashes: unknown;
-      try { sourceHashes = JSON.parse(snapshotMetadata.sources_json); } catch { throw new Error("Invalid snapshot lineage"); }
+      try { sourceHashes = JSON.parse(read.sourcesJson); } catch { throw new Error("Invalid snapshot lineage"); }
       if (!sourceHashes || typeof sourceHashes !== "object" || Array.isArray(sourceHashes)) throw new Error("Invalid snapshot lineage");
       const hashKeys = sourceHashes as Record<string, unknown>;
       for (const [key, value] of Object.entries(hashKeys)) {
@@ -1013,7 +1033,6 @@ function registerLocaleRoutes(code: LocaleCode) {
       const source = publication.sources.find((item) => item.id === "openfootball_cl");
       if (source?.status === "unavailable" && result.entries.some((entry) => entry.status === "observed")) throw new Error("CL source unavailable");
       if (seasons.length === 0) {
-        if (await currentSnapshot(c.env) !== snapshot) throw new Error("CL history snapshot changed");
         body = championsLeagueHistoryBody({ entries: [{ state: "out_of_coverage", season: "2026-27" }], credits: {} }, locale.strings.clHistory);
       } else {
         const mapped = result.entries.map((entry) => {
@@ -1034,7 +1053,6 @@ function registerLocaleRoutes(code: LocaleCode) {
           `${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`,
           (code === "es" ? cell.attribution_text_es ?? cell.attribution_text : cell.attribution_text) ?? cell.source_name,
         ])), snapshotDate: publication.loadedAt.slice(0, 10) }, locale.strings.clHistory);
-        if (await currentSnapshot(c.env) !== snapshot) throw new Error("CL history snapshot changed");
       }
     } catch {
       body = championsLeagueHistoryBody({ entries: [], credits: {}, unavailable: true }, locale.strings.clHistory);
@@ -1331,8 +1349,9 @@ ${intentPanel(proposal, locale)}
         key,
         snapshot,
         feasibility.state !== "computable_but_expensive",
+        { failClosed: true },
       )
-    : { result: null, cacheOutcome: "not_applicable" as const, overBudget: false as const };
+    : { result: null, cacheOutcome: "not_applicable" as const, overBudget: false as const, budgetUnavailable: false as const };
   const responseFeasibility = execution.cacheOutcome === "hit"
     ? catalog.checkFeasibility(proposal.intent, locale.code, true)
     : feasibility;
@@ -1345,6 +1364,8 @@ ${intentPanel(proposal, locale)}
     locale.code,
     routeFamily,
   ));
+  // Storage outage: same generic 503 as app.onError; never the 429 budget page.
+  if (execution.budgetUnavailable) return new Response("Request unavailable.", { status: 503 });
   const overBudget = execution.overBudget;
   if (question !== null && identity?.sub && !overBudget && responseFeasibility.state !== "no_rights") {
     await saveQuestionHistory(c.env, identity.sub, question, proposal.intent, locale.code).catch(() => {});
