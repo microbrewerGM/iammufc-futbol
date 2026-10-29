@@ -232,22 +232,47 @@ describe("Cloudflare Access boundary", () => {
 
   it("covers every budgeted GET route with the protected path matcher", () => {
     const source = readFileSync(new URL("../worker/src/index.ts", import.meta.url), "utf8");
-    const routePattern = /app\.get\((`[^`]+`|"[^"]+"|'[^']+'),\s*async\s*\(c\)\s*=>\s*\{/g;
-    const routes: string[] = [];
-    for (const match of source.matchAll(routePattern)) {
-      const start = match.index! + match[0].length;
-      const nextRoute = source.indexOf("\n  app.get(", start);
-      const end = nextRoute >= 0 ? nextRoute : source.length;
-      if (!source.slice(start, end).replace(/\/\/[^\n]*/g, "").includes("enforceBudget(")) continue;
-      routes.push(match[1]!);
+    // Strip comments while preserving offsets, then balance delimiters so handler
+    // bodies can have any shape (including synchronous arrows and functions).
+    const code = source.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (comment: string) => comment.replace(/[^\n]/g, " "));
+    const calls: number[] = [];
+    for (const match of code.matchAll(/\benforceBudget\s*\(/g)) calls.push(match.index!);
+    const registrations: { start: number; open: number; method: string; path: string; end: number }[] = [];
+    const routeStart = /\bapp\.(get|on|route|all|post|put|patch|delete)\s*\(/g;
+    for (const match of code.matchAll(routeStart)) {
+      const open = match.index! + match[0].lastIndexOf("(");
+      const next = [...code.slice(open + 1).matchAll(routeStart)][0];
+      const end = next ? open + 1 + next.index! : code.length;
+      const args = code.slice(open + 1, end);
+      const pathMatch = args.match(/^\s*(`[^`]*`|"[^"]*"|'[^']*')/);
+      registrations.push({ start: match.index!, open, method: match[1]!, path: pathMatch?.[1] ?? "", end });
     }
 
-    expect(routes.length).toBeGreaterThan(0);
-    for (const route of routes) {
-      expect(route.startsWith("`")).toBe(true);
+    // These explicit non-GET call sites are infrastructure/POST handling.
+    const nonGet = new Set(["app.post(\"/api/chat\", budget-free)", "app.post(\"/api/query\", budget-free)", "helper.executeWithCache(budget-free)"]);
+    const attributed: typeof registrations = [];
+    for (const call of calls) {
+      const owner = registrations.filter((route) => route.open < call && call < route.end).at(-1);
+      const helperStart = code.indexOf("async function executeWithCache(");
+      const helperCall = call > helperStart && code.lastIndexOf("async function executeWithCache(", call) === helperStart;
+      expect(owner || helperCall, `enforceBudget at offset ${call} must belong to a route registration or explicitly listed helper`).toBeTruthy();
+      if (!owner) {
+        expect(nonGet.has("helper.executeWithCache(budget-free)"), `helper budget call at ${call} must be explicitly listed`).toBe(true);
+        continue;
+      }
+      const route = owner!;
+      if (route.method === "get") attributed.push(route);
+      else expect(nonGet.has(`app.${route.method}(${route.path}, budget-free)`),
+        `budget call at ${call} belongs to non-GET app.${route.method} ${route.path}; list it explicitly`).toBe(true);
+    }
+
+    const budgetedGetRoutes = [...new Map(attributed.map((route) => [`${route.start}`, route])).values()];
+    expect(budgetedGetRoutes.length).toBeGreaterThan(0);
+    for (const route of budgetedGetRoutes) {
+      expect(route.path, `GET registration at ${route.start} needs a literal path`).not.toBe("");
       for (const locale of ["en", "es"]) {
-        const path = route.slice(1, -1).replace("${p}", `/${locale}`);
-        expect(isProtectedGetPath(path), `${route} registered for ${locale} as ${path}`).toBe(true);
+        const path = route.path.slice(1, -1).replace(/\$\{p\}/g, `/${locale}`).replace(/\$\{code\}/g, locale);
+        expect(isProtectedGetPath(path), `${route.path} registered for ${locale} as ${path}`).toBe(true);
       }
     }
   });
