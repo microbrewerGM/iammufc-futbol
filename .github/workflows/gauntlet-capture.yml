@@ -1,0 +1,63 @@
+name: Gauntlet capture
+
+on:
+  workflow_dispatch:
+    inputs:
+      question_id:
+        description: Selected gauntlet question ID
+        required: true
+        type: string
+      dev_route:
+        description: Relative development route
+        required: true
+        type: string
+      revision:
+        description: Deployed 40-character revision
+        required: true
+        type: string
+      override:
+        description: Optional season:YYYY-YYYY or player:slug override
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: dev
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Install age and browser
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y age
+          npx playwright install --with-deps chromium
+      - name: Capture and encrypt
+        env:
+          QUESTION_ID: ${{ inputs.question_id }}
+          DEV_ROUTE: ${{ inputs.dev_route }}
+          REVISION: ${{ inputs.revision }}
+          OVERRIDE: ${{ inputs.override }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          RUNNER_TEMP: ${{ runner.temp }}
+        run: node scripts/gauntlet-capture.mjs
+      - name: Upload encrypted captures
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gauntlet-${{ github.run_id }}
+          path: ${{ runner.temp }}/*.age
+          retention-days: 7
+          if-no-files-found: error
