@@ -11,6 +11,14 @@ vi.mock("jose", async (original) => ({
   ...await original<typeof import("jose")>(),
   jwtVerify: vi.fn(async () => ({ payload: { sub: "trust-test", email: "owner@example.invalid" } })),
 }));
+vi.mock("../worker/src/core/db", async (original) => ({
+  ...await original<typeof import("../worker/src/core/db")>(),
+  currentSnapshot: vi.fn(async (env: Env) => {
+    const row = await env.DB.prepare("SELECT snapshot_id FROM snapshots ORDER BY rowid DESC LIMIT 1")
+      .first<{ snapshot_id: string }>();
+    return row?.snapshot_id ?? null;
+  }),
+}));
 import app from "../worker/src/index";
 
 const sqliteModuleName: string = "node:sqlite";

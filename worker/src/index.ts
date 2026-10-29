@@ -38,6 +38,7 @@ import {
   seasonHistoryRows,
   seasonRecordRow,
   seasonSplitFacts,
+  readOpponentLabels,
   seasonSquadRows,
   writeQueryCache,
   type CacheOutcome,
@@ -537,11 +538,17 @@ function registerLocaleRoutes(code: LocaleCode) {
           const publication = await currentPublication(c.env);
           snapshot = publication?.snapshotId ?? null;
           if (!snapshot) throw new Error("snapshot unavailable");
-          const facts = await seasonSplitFacts(c.env, snapshot, request.seasons, {
+      const facts = await seasonSplitFacts(c.env, snapshot, request.seasons, {
             venue: request.venue, opponent_id: request.opponent_id,
           });
           result = querySeasonSplits(request, facts.catalog, facts.rows);
-          opponents = [...new Set(facts.rows.map((row) => row.opponent_id))].sort().map((opponent_id) => ({ opponent_id, label: opponent_id }));
+          const opponentIds = [...new Set([
+            ...facts.rows.map((row) => row.opponent_id),
+            ...(request.opponent_id ? [request.opponent_id] : []),
+          ])].filter((id) => APPROVED_OPPONENT_IDS.has(id)).sort();
+          const labels = await readOpponentLabels(c.env, snapshot, opponentIds);
+          if (await currentSnapshot(c.env) !== snapshot) throw new Error("snapshot_changed_during_query");
+          opponents = opponentIds.map((opponent_id) => ({ opponent_id, label: labels.get(opponent_id) ?? opponent_id }));
         }
       }
     } catch {
@@ -861,6 +868,7 @@ function registerLocaleRoutes(code: LocaleCode) {
       if (!snapshot) throw new Error("snapshot unavailable");
       const facts = await seasonSplitFacts(c.env, snapshot, request.seasons, { venue: null, opponent_id: opponent });
       const result = await readOpponentHistory(c.env, request, facts.catalog);
+      const labels = await readOpponentLabels(c.env, snapshot, [opponent]);
       if (await currentSnapshot(c.env) !== snapshot) throw new Error("snapshot changed");
       // season_splits lineage_json contains bare catalog source IDs.
       const sourceCredits = new Map<string, Set<string>>();
@@ -871,7 +879,7 @@ function registerLocaleRoutes(code: LocaleCode) {
         sourceCredits.get(cell.source_id)!.add(credit);
       }
       const credits = Object.fromEntries([...sourceCredits].map(([id, texts]) => [id, [...texts].join(" · ")]));
-      const body = opponentHistoryBody({ result, credits }, locale.code);
+      const body = opponentHistoryBody({ result, opponentLabel: labels.get(opponent) ?? opponent, credits }, locale.code);
       const res = html(page(body, { title: t.opponentHistoryTitle, locale, unprefixedPath: `/opponents/history?${new URLSearchParams(params)}`, snapshotId: snapshot }));
       res.headers.set("Cache-Control", CACHE_CONTROL);
       return res;
