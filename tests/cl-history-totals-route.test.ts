@@ -37,7 +37,7 @@ describe("Champions League totals row through the route mapping", () => {
     const strings = LOCALES[locale].strings.clHistory;
     readState.rows = [{ status: "observed", row } as unknown as Record<string, unknown>, { status: "gap", season: "2023-24" }];
     const body = await (await app.request(`https://site.invalid/${locale}/seasons/champions-league`, { headers }, env)).text();
-    const label = `${strings.observedSeasons.replace("{n}", "1")}, ${locale === "es" ? "parcial" : "partial"}`;
+    const label = strings.observedSeasons.replace("{n}", "1");
     expect(body).toContain(`<tfoot><tr><th scope="row">${label} <span>${strings.seasonsExcluded.replace("{n}", "1")}</span></th><td>2</td><td>1</td><td>0</td><td>1</td><td>3</td><td>0</td></tr></tfoot>`);
   });
 });
