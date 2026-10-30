@@ -21,7 +21,7 @@ export function validateInputs(env) {
   return { question, route, revision, override };
 }
 export function isDevRequest(url) {
-  try { const parsed = new URL(url); return parsed.protocol === 'https:' && parsed.hostname === DEV_HOST && !parsed.username && !parsed.password; } catch { return false; }
+  try { const parsed = new URL(url); return parsed.protocol === 'https:' && parsed.host === DEV_HOST && !parsed.username && !parsed.password; } catch { return false; }
 }
 export function accessHeadersFor(url, headers, credentials) {
   if (!isDevRequest(url)) return headers;
@@ -75,9 +75,16 @@ export async function run(deps = {}) {
     logStep('dev-navigation');
     await devContext.route('**/*', async (route) => {
       try {
-        const requestUrl = route.request().url();
+        const request = route.request();
+        const requestUrl = request.url();
         if (isDevRequest(requestUrl)) {
-          const headers = accessHeadersFor(requestUrl, route.request().headers(), { id: env.CF_ACCESS_CLIENT_ID, secret: env.CF_ACCESS_CLIENT_SECRET });
+          let isDevFrame = false;
+          if (!request.isNavigationRequest()) {
+            try { isDevFrame = isDevRequest(request.frame().url()); } catch { isDevFrame = false; }
+          }
+          const headers = request.isNavigationRequest() || isDevFrame
+            ? accessHeadersFor(requestUrl, request.headers(), { id: env.CF_ACCESS_CLIENT_ID, secret: env.CF_ACCESS_CLIENT_SECRET })
+            : request.headers();
           return await route.fulfill({ response: await route.fetch({ headers, maxRedirects: 0 }) });
         }
         await route.abort('blockedbyclient');

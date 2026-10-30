@@ -46,9 +46,9 @@ function mockChromium({ routeRequests = [], failGoto = false, gotoStatus = 200, 
   const chromium = { launch: async () => { observations.launches += 1; return { newContext: async () => context(), close: async () => {} }; } };
   return { chromium, observations };
 }
-function fakeRoute(url, observations, { fetchError, fetchStatus = 200, headers = { accept: 'text/html' } } = {}) {
+function fakeRoute(url, observations, { fetchError, fetchStatus = 200, headers = { accept: 'text/html' }, navigation = true, frameUrl = url, frameError = false } = {}) {
   return {
-    request: () => ({ url: () => url, headers: () => headers }),
+    request: () => ({ url: () => url, headers: () => headers, isNavigationRequest: () => navigation, frame: () => { if (frameError) throw new Error('frame unavailable'); return { url: () => frameUrl }; } }),
     fetch: async (options) => {
       observations.fetches.push({ url, options });
       if (fetchError) throw fetchError;
@@ -195,9 +195,36 @@ describe('gauntlet capture guards', () => {
     }
   });
 
+  it('adds origin overrides on dev navigations and dev-frame subresources only', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gauntlet-test-'));
+    const files = await setup(dir);
+    const fake = mockChromium({ routeRequests: [
+      { url: devUrl, navigation: true },
+      { url: `${devUrl}/asset.js`, navigation: false, frameUrl: devUrl },
+      { url: `${devUrl}/from-blank.js`, navigation: false, frameUrl: 'about:blank' },
+    ] });
+    const oldLog = console.log;
+    console.log = () => {};
+    try {
+      await run({ ...files, chromium: fake.chromium, env: valid });
+      expect(fake.observations.fetches).toHaveLength(3);
+      expect(fake.observations.fetches.map(({ options }) => options.headers.origin)).toEqual([
+        'https://iammufc-dev.aaron-cf2.workers.dev',
+        'https://iammufc-dev.aaron-cf2.workers.dev',
+        undefined,
+      ]);
+      expect(fake.observations.fetches[2].options.headers['sec-fetch-site']).toBeUndefined();
+      expect(fake.observations.continues).toHaveLength(0);
+    } finally {
+      console.log = oldLog;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('recognises the exact dev host without a port and rejects userinfo', () => {
     expect(isDevRequest(devUrl)).toBe(true);
-    expect(isDevRequest('https://iammufc-dev.aaron-cf2.workers.dev:8443/')).toBe(true);
+    expect(isDevRequest('https://iammufc-dev.aaron-cf2.workers.dev:8443/')).toBe(false);
+    expect(isDevRequest('https://iammufc-dev.aaron-cf2.workers.dev:443/')).toBe(true);
     expect(isDevRequest('https://iammufc-dev.aaron-cf2.workers.dev.evil.test/')).toBe(false);
     expect(isDevRequest('https://iammufc-dev.aaron-cf2.workers.dev@evil.test/')).toBe(false);
     expect(isDevRequest('https://user@iammufc-dev.aaron-cf2.workers.dev/')).toBe(false);
