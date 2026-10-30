@@ -7,7 +7,7 @@
  * implementation; regenerating the fixture would defeat the check.
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   RENDERER_VERSION,
@@ -20,7 +20,23 @@ import {
   type VizType,
 } from "../worker/src/core/intent";
 import { LOCALES } from "../worker/src/core/locale";
+import type { Env } from "../worker/src/core/db";
+import { parseRuleBased, type Proposal } from "../worker/src/core/parser";
 import vectors from "./vectors/artifact-keys.json" with { type: "json" };
+
+vi.mock("jose", async (original) => ({
+  ...await original<typeof import("jose")>(),
+  jwtVerify: vi.fn(async () => ({ payload: { sub: "owner", email: "owner@example.invalid" } })),
+}));
+vi.mock("../worker/src/core/db", async (original) => ({
+  ...await original<typeof import("../worker/src/core/db")>(),
+  allPlayerNames: vi.fn(async () => []),
+}));
+vi.mock("../worker/src/core/parser", async (original) => ({
+  ...await original<typeof import("../worker/src/core/parser")>(),
+  parseRuleBased: vi.fn(),
+}));
+import app from "../worker/src/index";
 
 interface RawInput {
   metric: string;
@@ -137,13 +153,39 @@ describe("low-confidence clarification copy", () => {
     },
   ];
 
-  for (const vector of equivalentVectors) {
-    it(`uses the ${vector.locale} clarification for the equivalent low-confidence vector`, () => {
-      const clarification = LOCALES[vector.locale].strings.clarificationRequired;
-      const fallbackClarification = LOCALES[vector.fallbackLocale].strings.clarificationRequired;
+  const env = {
+    ACCESS_ISSUER: "https://example.cloudflareaccess.com",
+    ACCESS_AUD: "a".repeat(64),
+    ACCESS_OWNER_EMAILS: "owner@example.invalid",
+  } as Env;
+  const proposal: Proposal = {
+    intent: build({ metric: "goals", entity_type: "player", entity_id: "all", season: "2024-25" }),
+    confidence: "low",
+    notes: [],
+    source: "rules",
+    model_status: "not_attempted_ambiguous",
+  };
 
-      expect(clarification).toBe(vector.expected);
-      expect(clarification).not.toBe(fallbackClarification);
+  for (const vector of equivalentVectors) {
+    it(`renders only the ${vector.locale} clarification for a low-confidence proposal`, async () => {
+      vi.mocked(parseRuleBased).mockClear();
+      vi.mocked(parseRuleBased).mockReturnValue(proposal);
+
+      const response = await app.request(`https://site.invalid/${vector.locale}/ask`, {
+        method: "POST",
+        headers: {
+          "cf-access-jwt-assertion": "synthetic",
+          Origin: "https://site.invalid",
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({ q: vector.locale === "en" ? "How many goals?" : "¿Cuántos goles?" }).toString(),
+      }, env);
+      const markup = await response.text();
+
+      expect(response.status).toBe(200);
+      expect(markup).toContain(vector.expected);
+      expect(markup).not.toContain(LOCALES[vector.fallbackLocale].strings.clarificationRequired);
+      expect(parseRuleBased).toHaveBeenCalledOnce();
     });
   }
 });
