@@ -26,7 +26,10 @@ export function seasonSplitsBody(model: SeasonSplitView, locale: Locale): string
   const s = model.selection;
   const result = model.error ? undefined : model.result;
   const venueName = (key: string) => key === "home" ? t("Home", "Local") : t("Away", "Visitante");
-  const opponentName = (key: string) => model.opponents.find(o => o.opponent_id === key)?.label ?? key;
+  const opponentName = (key: string) => {
+    const label = model.opponents.find(o => o.opponent_id === key)?.label;
+    return label?.trim() ? label : key;
+  };
   const select = (id: string, label: string, choices: [string, string][], selected: string) => {
     const all = choices.some(([v]) => v === selected) ? choices : [...choices, [selected, selected] as [string, string]];
     return `<label for="splits-${id}">${label}</label><select id="splits-${id}" name="${id}">${all.map(([v, text]) => `<option value="${esc(v)}"${v === selected ? " selected" : ""}>${esc(text)}</option>`).join("")}</select>`;

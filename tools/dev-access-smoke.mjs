@@ -379,6 +379,33 @@ export async function smoke(env, request = fetch) {
       results.push({ path: `/${locale}/players/trends`, pass: false, error_class: safeErrorClass(error) });
     }
   }
+  for (const [locale, marker] of [['en', 'Per-90 leaderboard'], ['es', 'Clasificación por 90 minutos']]) {
+    if (!trendId) {
+      results.push({ path: `/${locale}/players/trends`, pass: false, error_class: 'PrerequisiteError' });
+      continue;
+    }
+    const params = new URLSearchParams({ schema_version: '1', competition: 'PL',
+      person_ids: trendId, seasons: '2024-25', metric: 'goals', normalization: 'per90', viz: 'table' });
+    const path = `/${locale}/players/trends?${params.toString()}`;
+    try {
+      const response = await request(origin + path, {
+        method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(15000),
+        headers: { ...headers, 'Sec-Fetch-Site': 'same-origin' },
+      });
+      const body = await response.text();
+      const url = new URL(origin + path);
+      const queryPass = url.searchParams.get('schema_version') === '1' &&
+        url.searchParams.get('competition') === 'PL' && url.searchParams.get('person_ids') === trendId &&
+        url.searchParams.get('seasons') === '2024-25' && url.searchParams.get('metric') === 'goals' &&
+        url.searchParams.get('normalization') === 'per90' && url.searchParams.get('viz') === 'table' &&
+        !url.searchParams.has('min_minutes');
+      const pass = response.status === 200 &&
+        response.headers.get('cache-control')?.includes('no-store') && queryPass && body.includes(marker);
+      results.push({ path, status: response.status, pass });
+    } catch (error) {
+      results.push({ path: `/${locale}/players/trends`, pass: false, error_class: safeErrorClass(error) });
+    }
+  }
   for (const locale of ['en', 'es']) {
     const params = new URLSearchParams({ schema_version: '1', competition: 'PL' });
     params.append('seasons', '2024-25');
