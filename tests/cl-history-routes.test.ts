@@ -50,7 +50,7 @@ describe("Champions League history routes", () => {
     expect(response.status).toBe(200);
     expect(body).toContain(heading);
     expect(body).toContain(">3</td>");
-    expect(body).toContain(locale === "es" ? '<a href="/es/season/2024-25">2024-25</a> <span>(Parcial)</span>' : '<a href="/en/season/2024-25">2024-25</a> <span>(Partial)</span>');
+    expect(body).toContain(locale === "es" ? '<a href="/es/season/2024-25">2024-25</a>' : '<a href="/en/season/2024-25">2024-25</a>');
     expect(body).toContain(locale === "es" ? "Fecha de los datos" : "Data snapshot");
     expect((await app.request(`https://site.invalid/${locale}/season/2024-25`, { headers }, env)).status).toBe(200);
     expect(await (await app.request(`https://site.invalid/${locale}/season/2024-25`, { headers }, env)).text()).toContain(`href="/${locale}/seasons/champions-league"`);

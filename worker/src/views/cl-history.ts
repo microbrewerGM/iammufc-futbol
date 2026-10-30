@@ -76,7 +76,7 @@ export function championsLeagueHistoryBody(
   const totalled = eligible.flatMap((entry) => (entry.state !== "gap" && validLineage(entry.row) ? [entry] : []));
   const sum = (pick: (row: ChampionsLeagueTotals) => number): number => totalled.reduce((total, entry) => total + pick(entry.row), 0);
   const notTotalled = eligible.length - totalled.length;
-  const totalsLabel = `${strings.observedSeasons.replace("{n}", String(totalled.length))}${totalled.some((entry) => entry.state === "partial") ? `, ${strings.partial.toLowerCase()}` : ""}`;
+  const totalsLabel = strings.observedSeasons.replace("{n}", String(totalled.length));
   const totalsRow = totalled.length
     ? `<tfoot><tr><th scope="row">${esc(totalsLabel)}${notTotalled ? ` <span>${esc(strings.seasonsExcluded.replace("{n}", String(notTotalled)))}</span>` : ""}</th>${[sum((r) => r.played), sum((r) => r.won), sum((r) => r.drawn), sum((r) => r.lost), sum((r) => r.goals), sum((r) => r.goals_against)].map((value) => `<td>${value}</td>`).join("")}</tr></tfoot>`
     : "";
@@ -89,7 +89,7 @@ export function championsLeagueHistoryBody(
     const seasonLink = validSeason(row.season)
       ? `<a href="${esc(`/${locale}/season/${encodeURIComponent(row.season)}`)}">${seasonText}</a>`
       : seasonText;
-    const seasonLabel = `${seasonLink}${entry.state === "partial" ? ` <span>(${esc(strings.partial)})</span>` : ""}`;
+    const seasonLabel = seasonLink;
     if (!validLineage(row)) {
       return `<tr><th scope="row">${seasonLabel}</th><td colspan="6"><span aria-label="${esc(strings.attributionUnavailable)}">—</span> <span>${esc(strings.attributionUnavailable)}</span></td></tr>`;
     }

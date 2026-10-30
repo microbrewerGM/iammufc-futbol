@@ -23,10 +23,10 @@ describe("Champions League history view", () => {
     expect(body).toContain("OpenFootball credit");
     expect(body).toContain("2026-10-23");
   });
-  it.each([["en", en], ["es", es]] as const)("keeps zero, gaps, partial rows, and out-of-coverage seasons distinct in %s", (locale, strings) => {
+  it.each([["en", en], ["es", es]] as const)("keeps zero, gaps, attributed rows, and out-of-coverage seasons distinct in %s", (locale, strings) => {
     const body = championsLeagueHistoryBody(model(), strings, locale);
     expect(body).toContain("<td>2</td><td>1</td><td>0</td><td>1</td><td>3</td><td>0</td>");
-    expect(body).toContain(`<a href="/${locale}/season/2025-26">2025-26</a> <span>(${strings.partial})</span>`);
+    expect(body).toContain(`<a href="/${locale}/season/2025-26">2025-26</a>`);
     expect(body).toContain(strings.gap);
     expect(body).not.toContain("2026-27");
     const out = championsLeagueHistoryBody({ entries: [{ state: "out_of_coverage", season: "2026-27" }], credits: {} }, strings, locale);
@@ -63,10 +63,12 @@ describe("Champions League history view", () => {
       expect(body).not.toContain("<table");
     });
   });
-  it("renders all four season states as distinct typed entries", () => {
+  it("renders season states with the caption carrying the completeness qualifier", () => {
     const body = championsLeagueHistoryBody(model(), en, "en");
-    expect(body).toContain('<a href="/en/season/2025-26">2025-26</a> <span>(partial)</span>');
+    expect(body).toContain('<caption>Recorded matches; records may be incomplete</caption>');
+    expect(body).toContain('<a href="/en/season/2025-26">2025-26</a></th>');
     expect(body).toContain('<a href="/en/season/2023-24">2023-24</a></th><td>2</td>');
+    expect(body).not.toContain("(partial)");
     expect(body).toContain(en.gap);
     expect(body).not.toContain("2026-27");
   });

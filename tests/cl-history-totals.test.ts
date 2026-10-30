@@ -25,7 +25,7 @@ describe("Champions League totals row", () => {
       ],
       credits,
     }, strings, code);
-    const label = `${strings.observedSeasons.replace("{n}", "3")}, ${code === "es" ? "parcial" : "partial"}`;
+    const label = strings.observedSeasons.replace("{n}", "3");
     expect(body).toContain(`<tfoot><tr><th scope="row">${label} <span>${strings.seasonsExcluded.replace("{n}", "2")}</span></th>${cells}`);
     expect(body.indexOf("<tfoot>")).toBeGreaterThan(body.indexOf("</tbody>"));
   });

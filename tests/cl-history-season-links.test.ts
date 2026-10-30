@@ -23,7 +23,7 @@ describe("Champions League history season links", () => {
     const body = championsLeagueHistoryBody({ entries: [{ state, row }], credits: { source: "Source credit" } }, strings(locale), locale);
     expect(body).toContain(`<th scope="row"><a href="${href}">2025-26</a>`);
     expect(body).toContain("<td>2</td>");
-    if (state === "partial") expect(body).toContain(`(${locale === "en" ? "partial" : "parcial"})`);
+    expect(body).not.toContain(`(${locale === "en" ? "partial" : "parcial"})`);
   });
 
   it.each([["en", "/en/"], ["es", "/es/"]] as const)("keeps %s gap rows unlinked", (locale, prefix) => {
