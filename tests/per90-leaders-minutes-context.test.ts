@@ -30,8 +30,9 @@ describe("leaderboard minutes denominator", () => {
     const html = render(locale);
     const label = locale === "en" ? "Per-90 leaderboard" : "Clasificación por 90 minutos";
     const table = html.split(`<div role="region" tabindex="0" aria-label="${label}">`)[1]!.split("</div>")[0]!;
-    const caption = table.match(/<caption>(.*?)<\/caption>/s)![1]!;
-    expect(caption).toContain(locale === "en"
+    const description = table.match(/<p id="leaderboard-minutes-context">(.*?)<\/p>/s)![1]!;
+    expect(table).toContain('<th scope="col" aria-describedby="leaderboard-minutes-context">');
+    expect(description).toContain(locale === "en"
       ? "Minutes played are the supported minutes used to calculate each per-90 value."
       : "Los minutos jugados son los minutos disponibles utilizados para calcular cada valor por 90 minutos.");
     const rows = [...table.matchAll(/<tr>(.*?)<\/tr>/gs)].slice(1).map(m => m[1]!);
