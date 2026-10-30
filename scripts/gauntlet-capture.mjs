@@ -89,9 +89,6 @@ export async function run(deps = {}) {
     const devPage = await devContext.newPage();
     const devBase = `https://${DEV_HOST}`;
     const overrideQuery = input.override ? `?${input.override.split('=').map(encodeURIComponent).join('=')}` : '';
-    const devUrl = `${devBase}${input.route}${overrideQuery}`;
-    const devResponse = await devPage.goto(devUrl, { waitUntil: 'networkidle' });
-    requireOk(devResponse);
     for (const view of captureViewports()) {
       const localeUrl = `${devBase}/${view.locale}${input.route}${overrideQuery}`;
       requireOk(await devPage.goto(localeUrl, { waitUntil: 'networkidle' }));
