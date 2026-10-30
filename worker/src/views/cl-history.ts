@@ -10,6 +10,7 @@ export interface ChampionsLeagueTotals {
   lost: number;
   goals: number;
   goals_against: number;
+  stage_reached?: string | null;
   lineage?: readonly string[] | null;
 }
 
@@ -32,6 +33,8 @@ export interface ChampionsLeagueHistoryStrings {
   heading: string;
   caption: string;
   season: string;
+  stage?: string;
+  stages?: Record<"group_stage" | "league_phase" | "knockout_playoff" | "round_of_16" | "quarter_final" | "semi_final" | "final" | "winner", string>;
   played: string;
   won: string;
   drawn: string;
@@ -68,7 +71,16 @@ export function championsLeagueHistoryBody(
     return typeof value === "string" && value.trim() ? value : undefined;
   };
   const credits = [...new Set(lineage.map(creditFor).filter((value): value is string => value !== undefined))];
-  const headers = [strings.season, strings.played, strings.won, strings.drawn, strings.lost, strings.goalsFor, strings.goalsAgainst];
+  const headers = strings.stage && strings.stages
+    ? [strings.season, strings.stage, strings.played, strings.won, strings.drawn, strings.lost, strings.goalsFor, strings.goalsAgainst]
+    : [strings.season, strings.played, strings.won, strings.drawn, strings.lost, strings.goalsFor, strings.goalsAgainst];
+  const stageCell = (code: string | null): string => {
+    const labels = strings.stages;
+    const label = code && labels && Object.hasOwn(labels, code) ? labels[code as keyof typeof labels] : null;
+    return label === null || label === undefined
+      ? `<td><span aria-label="${esc(strings.attributionUnavailable)}">—</span> <span>${esc(strings.attributionUnavailable)}</span></td>`
+      : `<td>${esc(label)}</td>`;
+  };
   const validLineage = (row: ChampionsLeagueTotals): boolean => {
     const refs = Array.isArray(row.lineage) ? row.lineage.filter((ref) => typeof ref === "string" && ref.trim()) : [];
     return refs.length > 0 && refs.every((ref) => creditFor(ref) !== undefined);
@@ -82,7 +94,7 @@ export function championsLeagueHistoryBody(
     : "";
   const rows = eligible.map((entry) => {
     if (entry.state === "gap") {
-      return `<tr><th scope="row">${esc(entry.season)}</th><td colspan="6"><span aria-label="${esc(strings.gap)}">—</span> <span>${esc(strings.gap)}</span></td></tr>`;
+      return `<tr><th scope="row">${esc(entry.season)}</th><td colspan="${headers.length - 1}"><span aria-label="${esc(strings.gap)}">—</span> <span>${esc(strings.gap)}</span></td></tr>`;
     }
     const row = entry.row;
     const seasonText = esc(row.season);
@@ -91,14 +103,14 @@ export function championsLeagueHistoryBody(
       : seasonText;
     const seasonLabel = seasonLink;
     if (!validLineage(row)) {
-      return `<tr><th scope="row">${seasonLabel}</th><td colspan="6"><span aria-label="${esc(strings.attributionUnavailable)}">—</span> <span>${esc(strings.attributionUnavailable)}</span></td></tr>`;
+      return `<tr><th scope="row">${seasonLabel}</th><td colspan="${headers.length - 1}"><span aria-label="${esc(strings.attributionUnavailable)}">—</span> <span>${esc(strings.attributionUnavailable)}</span></td></tr>`;
     }
     const rowCreditIds = [...new Set(row.lineage!.map(creditFor).filter((credit): credit is string => credit !== undefined))]
       .map((credit) => `cl-history-source-${credits.indexOf(credit)}`);
     const describedBy = rowCreditIds.length ? ` aria-describedby="${rowCreditIds.join(" ")}"` : "";
     const sourceLinks = rowCreditIds.map((id) => `<a class="cl-history-row-source" href="#${id}" aria-label="${esc(strings.sources)}">§</a>`).join(" ");
     const values = [row.played, row.won, row.drawn, row.lost, row.goals, row.goals_against];
-    return `<tr${describedBy}><th scope="row">${seasonLabel}${sourceLinks ? ` <span class="cl-history-row-sources">${sourceLinks}</span>` : ""}</th>${values.map((value) => `<td>${value}</td>`).join("")}</tr>`;
+    return `<tr${describedBy}><th scope="row">${seasonLabel}${sourceLinks ? ` <span class="cl-history-row-sources">${sourceLinks}</span>` : ""}</th>${strings.stage && strings.stages ? stageCell(row.stage_reached ?? null) : ""}${values.map((value) => `<td>${value}</td>`).join("")}</tr>`;
   }).join("");
   const table = `<div class="comparison-table" role="region" tabindex="0" aria-label="${esc(strings.heading)}"><table><caption>${esc(strings.caption)}</caption><thead><tr>${headers.map((header) => `<th scope="col">${esc(header)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody>${totalsRow}</table></div>`;
   const sourceSection = lineage.length

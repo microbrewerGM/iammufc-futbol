@@ -169,6 +169,7 @@ const EN: Locale = {
     clHistory: {
       heading: "Champions League history", caption: "Recorded matches; records may be incomplete",
       season: "Season", played: "Played", won: "Won", drawn: "Drawn", lost: "Lost",
+      stage: "Stage reached", stages: { group_stage: "Group stage", league_phase: "League phase", knockout_playoff: "Knockout play-off", round_of_16: "Round of 16", quarter_final: "Quarter-final", semi_final: "Semi-final", final: "Final", winner: "Winner" },
       goalsFor: "Goals for", goalsAgainst: "Goals against",
       gap: "No recorded matches available; this does not establish non-participation",
       partial: "Partial", outsideCoverage: "Champions League history is outside current coverage",
@@ -312,6 +313,7 @@ const ES: Locale = {
     clHistory: {
       heading: "Historial de la Liga de Campeones", caption: "Partidos registrados; los datos pueden estar incompletos",
       season: "Temporada", played: "Jugados", won: "Ganados", drawn: "Empatados", lost: "Perdidos",
+      stage: "Fase alcanzada", stages: { group_stage: "Fase de grupos", league_phase: "Fase liga", knockout_playoff: "Eliminatoria previa", round_of_16: "Octavos de final", quarter_final: "Cuartos de final", semi_final: "Semifinal", final: "Final", winner: "Campeón" },
       goalsFor: "Goles a favor", goalsAgainst: "Goles en contra",
       gap: "No hay partidos registrados disponibles; esto no demuestra que el equipo no participara",
       partial: "Parcial", outsideCoverage: "El historial de la Liga de Campeones está fuera de la cobertura actual",

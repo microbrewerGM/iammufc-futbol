@@ -6,12 +6,16 @@ const requiredKeys: readonly (keyof ChampionsLeagueHistoryStrings)[] = [
   "heading", "caption", "season", "played", "won", "drawn", "lost", "goalsFor", "goalsAgainst",
   "gap", "partial", "outsideCoverage", "noResults", "unavailable", "snapshotDate", "sources", "attributionUnavailable",
   "observedSeasons", "seasonsExcluded",
+  "stage", "stages",
 ];
 
 describe("Champions League history locales", () => {
   it.each(["en", "es"] as const satisfies readonly LocaleCode[])("provides every view string in %s", (code) => {
     const strings = LOCALES[code].strings.clHistory;
-    for (const key of requiredKeys) expect(strings[key], `${code}.${key}`).toEqual(expect.any(String));
+    for (const key of requiredKeys) {
+      if (key === "stages") expect(Object.keys(strings.stages ?? {})).toHaveLength(8);
+      else expect(strings[key], `${code}.${key}`).toEqual(expect.any(String));
+    }
     expect(Object.keys(strings).sort()).toEqual([...requiredKeys].sort());
   });
 
