@@ -51,6 +51,11 @@ export async function encryptFiles(files, recipientPath, outputDir, ageBinary = 
 }
 function logStep(step) { console.log(`step=${step}`); }
 function emitStatus(status) { console.log(`status=${status}`); }
+function requireOk(response) {
+  const status = response?.status() ?? 0;
+  emitStatus(status);
+  if (status < 200 || status > 299) throw new Error('navigation not ok');
+}
 
 export async function run(deps = {}) {
   const env = deps.env ?? process.env;
@@ -86,10 +91,10 @@ export async function run(deps = {}) {
     const overrideQuery = input.override ? `?${input.override.split('=').map(encodeURIComponent).join('=')}` : '';
     const devUrl = `${devBase}${input.route}${overrideQuery}`;
     const devResponse = await devPage.goto(devUrl, { waitUntil: 'networkidle' });
-    emitStatus(devResponse?.status() ?? 0);
+    requireOk(devResponse);
     for (const view of captureViewports()) {
       const localeUrl = `${devBase}/${view.locale}${input.route}${overrideQuery}`;
-      await devPage.goto(localeUrl, { waitUntil: 'networkidle' }).then((response) => emitStatus(response?.status() ?? 0));
+      requireOk(await devPage.goto(localeUrl, { waitUntil: 'networkidle' }));
       await devPage.setViewportSize({ width: view.width, height: view.height });
       const name = `ours-${images.length}`;
       const path = join(work, `${name}.png`);
