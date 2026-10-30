@@ -89,7 +89,7 @@ export function opponentHistoryBody(model: OpponentHistoryView, locale: LocaleCo
     ? { played: total.played, won: total.won, drawn: total.drawn, lost: total.lost, gf: total.goals_for, ga: total.goals_against } : undefined;
   const headline = headlineNumbers
     ? `<p id="h2h-record">${esc(s.recordHeadline.replace(/\{(\w+)\}/g, (_m, key: string) => new Intl.NumberFormat(locale === "es" ? "es-ES" : "en-GB").format(headlineNumbers[key] ?? 0)))}${partial ? ` · ${esc(s.partial)}` : ""}</p>` : "";
-  const table = `<div class="comparison-table opponent-history-table" role="region" tabindex="0" aria-label="${esc(s.title)}"><table aria-describedby="h2h-summary"><caption>${esc(s.title)}${partial ? ` · ${esc(s.partial)}` : ""}</caption><thead><tr>${headers.map(h => `<th scope="col">${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
+  const table = `<div class="comparison-table opponent-history-table" role="region" tabindex="0" aria-label="${esc(s.title)}"><table aria-describedby="h2h-summary${headline ? " h2h-record" : ""}"><caption>${esc(s.title)}${partial ? ` · ${esc(s.partial)}` : ""}</caption><thead><tr>${headers.map(h => `<th scope="col">${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
   const scaleY = (v: number) => 74 - Math.max(0, Math.min(3, v)) * 20;
   const plot = result.seasons.map((entry, i) => {
     const x = 42 + i * 54;
