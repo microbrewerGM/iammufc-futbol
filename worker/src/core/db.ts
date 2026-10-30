@@ -28,7 +28,7 @@ export interface Env {
   AI_PROPOSALS_ENABLED?: string;
 }
 
-const MAX_OPPONENT_LABELS = 44;
+export const MAX_OPPONENT_LABELS = 44;
 
 /** Read labels only for approved opponent IDs used by the current response. */
 export async function readOpponentLabels(
