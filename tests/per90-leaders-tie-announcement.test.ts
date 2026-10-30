@@ -35,7 +35,7 @@ describe("per-90 leaderboard tie announcement", () => {
 
     expect(rows).toHaveLength(4);
     expect(rows.map(rowHtml => rowHtml.match(/<td>(.*?)<\/td>/)?.[1])).toEqual([
-      "1",
+      locale === "en" ? "1 (tied)" : "1 (empate)",
       locale === "en" ? "1 (tied)" : "1 (empate)",
       locale === "en" ? "1 (tied)" : "1 (empate)",
       "4",

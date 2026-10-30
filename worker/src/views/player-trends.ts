@@ -109,8 +109,9 @@ export function playerTrendsBody(model: PlayerTrendsView, strings: Readonly<Reco
     const l = model.leaders;
     let previousRank = 0;
     const leaderRows = l.leaders.map((p, i) => {
-      const tied = i > 0 && p.rate === l.leaders[i - 1]!.rate;
-      const rank = tied ? previousRank : i + 1;
+      const tied = (i > 0 && p.rate === l.leaders[i - 1]!.rate)
+        || (i + 1 < l.leaders.length && p.rate === l.leaders[i + 1]!.rate);
+      const rank = i > 0 && p.rate === l.leaders[i - 1]!.rate ? previousRank : i + 1;
       previousRank = rank;
       const rankText = tied ? `${rank} (${t("tied", "empate")})` : `${rank}`;
       return `<tr><td>${rankText}</td><th scope="row">${safeName(p.person_id)}</th><td>${n(p.total)}</td><td>${n(p.minutes)}</td><td>${n(p.rate, 2)}</td></tr>`;
