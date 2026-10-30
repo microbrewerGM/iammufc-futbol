@@ -68,7 +68,6 @@ export async function run(deps = {}) {
   const results = [];
   const summaryPath = env.GITHUB_STEP_SUMMARY;
   if (summaryPath) await appendFile(summaryPath, '\n### Hosted keyboard checks\n\n```json\n');
-  let summaryClosed = false;
   try {
     for (const locale of ['en', 'es']) {
       for (const viewport of [{ width: 1280, height: 900 }, { width: 320, height: 800 }, { width: 375, height: 812 }]) {
@@ -110,7 +109,7 @@ export async function run(deps = {}) {
           let tabNav = false;
           let tabControls = false;
           let tabSubmit = false;
-          let focusVisible = true;
+          let focusVisible = false;
           if (identity && await nav.count()) {
             const navBefore = await focusSnapshot(nav).catch(() => null);
             await page.keyboard.press('Tab').catch(() => {});
@@ -140,7 +139,7 @@ export async function run(deps = {}) {
             tab_nav: tabNav,
             tab_form_controls: input.requireForm ? controlsCount > 0 && tabControls : true,
             tab_submit: input.requireForm ? Boolean(await submit.count()) && tabSubmit : true,
-            focus_visible: input.requireForm ? focusVisible : (tabNav && await focusCheck(page, nav).catch(() => false)),
+            focus_visible: focusVisible,
           };
           for (const check of CHECKS) {
             const result = { revision: input.revision, route: input.route, locale, viewport: `${viewport.width}x${viewport.height}`, check, pass: values[check] };
@@ -152,10 +151,7 @@ export async function run(deps = {}) {
     }
   } finally {
     await browser.close();
-    if (summaryPath && !summaryClosed) {
-      await appendFile(summaryPath, '```\n');
-      summaryClosed = true;
-    }
+    if (summaryPath) await appendFile(summaryPath, '```\n');
   }
   if (results.some((result) => !result.pass)) throw new Error('hosted check failed');
   return results;

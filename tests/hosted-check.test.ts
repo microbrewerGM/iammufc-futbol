@@ -3,6 +3,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const DEV_HOST = 'iammufc-dev.aaron-cf2.workers.dev';
 const nodeModuleName: string = 'node:module';
 const fsPromisesName: string = 'node:fs/promises';
+const nodeRequire: any = (globalThis as any).process.mainModule?.require ?? (await import(nodeModuleName) as any).createRequire(`${process.cwd()}/package.json`);
+const os: any = nodeRequire('node:os');
+const path: any = nodeRequire('node:path');
 const vm: any = (globalThis as any).process.mainModule?.require('node:vm') ?? (await import(nodeModuleName) as any).createRequire(`${process.cwd()}/package.json`)('node:vm');
 const validEnv = {
   HOSTED_ROUTE: '/opponents/history',
@@ -12,11 +15,11 @@ const validEnv = {
   CF_ACCESS_CLIENT_SECRET: 'client-secret-sentinel',
 };
 
-function mockBrowser(options: { status?: number; identity?: boolean; abortNavigation?: boolean } = {}) {
+function mockBrowser(options: { status?: number; identity?: boolean; abortNavigation?: boolean; noOutlineFor?: string[] } = {}) {
   const elements = [{ kind: 'nav' }, { kind: 'control' }, { kind: 'radio' }, { kind: 'submit' }];
   let active: any = null;
   let keyboardModality = false;
-  const styleFor = (item: any) => active === item
+  const styleFor = (item: any) => active === item && !options.noOutlineFor?.includes(item.kind)
     ? { outline: '2px solid blue', boxShadow: 'none' }
     : { outline: 'none', boxShadow: 'none' };
   const locator = (selector: string) => {
@@ -95,11 +98,33 @@ describe('hosted-check', () => {
     log.mockRestore();
   });
 
+  it('fails focus_visible for the specific radio or nav context without a focus indicator', async () => {
+    const mod = await import('../tools/hosted-check.mjs');
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      for (const noOutlineFor of [['radio'], ['nav']]) {
+        log.mockClear();
+        await expect(mod.run({ chromium: mockBrowser({ noOutlineFor }).chromium, env: validEnv })).rejects.toThrow('hosted check failed');
+        const failures = log.mock.calls.map(([line]) => JSON.parse(String(line))).filter((result) => !result.pass);
+        expect(failures).toHaveLength(6);
+        expect(failures.every((result) => result.check === 'focus_visible')).toBe(true);
+        expect(new Set(failures.map((result) => result.locale))).toEqual(new Set(['en', 'es']));
+      }
+    } finally { log.mockRestore(); }
+  });
+
+  it("passes focus_visible when REQUIRE_FORM is 'false'", async () => {
+    const mod = await import('../tools/hosted-check.mjs');
+    const results = await mod.run({ chromium: mockBrowser().chromium, env: { ...validEnv, REQUIRE_FORM: 'false' } });
+    expect(results).toHaveLength(42);
+    expect(results.every((result) => result.pass)).toBe(true);
+  });
+
   it('fails closed on status, identity, and aborted navigation without exposing credentials', async () => {
     const mod = await import('../tools/hosted-check.mjs');
     await expect(mod.run({ chromium: mockBrowser({ status: 302 }).chromium, env: validEnv })).rejects.toThrow('hosted check failed');
     await expect(mod.run({ chromium: mockBrowser({ identity: false }).chromium, env: validEnv })).rejects.toThrow('hosted check failed');
-    const summary = `${process.cwd()}/.hosted-check-summary-test.md`;
+    const summary = path.join(os.tmpdir(), 'hosted-check-summary-test.md');
     const fs: any = await import(fsPromisesName);
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
