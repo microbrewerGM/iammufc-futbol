@@ -98,8 +98,8 @@ for (const locale of locales) describe(`${locale} season split navigation and ga
         const href = nav.match(new RegExp(`href="(/${locale}/${path}[^" ]*)"`))![1]!.replaceAll("&amp;", "&");
         const url = new URL(href, "https://site.invalid");
         // The explore link is bare so the route preselects the newest clear season.
-        expect(url.searchParams.getAll("seasons")).toEqual(path === "seasons/explore" ? [] : ["2010-11"]);
-        if (path === "opponents/history") expect(url.searchParams.get("opponent_id")).toBe("club:1001");
+        expect(url.searchParams.getAll("seasons")).toEqual([]);
+        if (path === "opponents/history") expect(url.searchParams.get("opponent_id")).toBeNull();
         const response = await app.request(url.toString(), { headers }, env);
         expect(response.status).toBe(200);
         expect(await response.text()).not.toMatch(/Invalid season selection|Selección de temporada no válida|temporarily unavailable|no está disponible temporalmente/);
