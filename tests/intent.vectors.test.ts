@@ -122,15 +122,28 @@ describe("snapshot participation in the key", () => {
 });
 
 describe("low-confidence clarification copy", () => {
-  it("includes the English clarification text", () => {
-    expect(LOCALES.en.strings.clarificationRequired).toBe(
-      "This proposal is ambiguous and has not been run. Add the missing metric or season, then ask again.",
-    );
-  });
+  const equivalentVectors = [
+    {
+      locale: "en" as const,
+      fallbackLocale: "es" as const,
+      expected:
+        "This proposal is ambiguous and has not been run. Add the missing metric or season, then ask again.",
+    },
+    {
+      locale: "es" as const,
+      fallbackLocale: "en" as const,
+      expected:
+        "Esta propuesta es ambigua y no se ha ejecutado. Añade la métrica o la temporada que falta y vuelve a preguntar.",
+    },
+  ];
 
-  it("includes the Spanish clarification text", () => {
-    expect(LOCALES.es.strings.clarificationRequired).toBe(
-      "Esta propuesta es ambigua y no se ha ejecutado. Añade la métrica o la temporada que falta y vuelve a preguntar.",
-    );
-  });
+  for (const vector of equivalentVectors) {
+    it(`uses the ${vector.locale} clarification for the equivalent low-confidence vector`, () => {
+      const clarification = LOCALES[vector.locale].strings.clarificationRequired;
+      const fallbackClarification = LOCALES[vector.fallbackLocale].strings.clarificationRequired;
+
+      expect(clarification).toBe(vector.expected);
+      expect(clarification).not.toBe(fallbackClarification);
+    });
+  }
 });
