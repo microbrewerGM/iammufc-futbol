@@ -55,15 +55,16 @@ def test_optional_sources_are_closed_and_strict(artifact):
     assert validate_public_catalog_value(without_sources).sources == []
 
     with_sources = deepcopy(artifact)
+    matching_cell = with_sources["coverage"][0]
     source = {
-        "source_id": "example_source",
-        "source_name": "Example source",
-        "attribution_asset": None,
-        "attribution_text": "Credit",
-        "attribution_text_es": None,
+        "source_id": matching_cell["source_id"],
+        "source_name": matching_cell["source_name"],
+        "attribution_asset": matching_cell["attribution_asset"],
+        "attribution_text": matching_cell["attribution_text"],
+        "attribution_text_es": matching_cell["attribution_text_es"],
     }
     with_sources["sources"] = [source]
-    assert validate_public_catalog_value(with_sources).sources[0].source_id == "example_source"
+    assert validate_public_catalog_value(with_sources).sources[0].source_id == source["source_id"]
 
     extra_key = deepcopy(with_sources)
     extra_key["sources"][0]["private_notes"] = "forbidden"
@@ -84,6 +85,70 @@ def test_optional_sources_are_closed_and_strict(artifact):
     unknown_root["other"] = True
     with pytest.raises(PublicCatalogError, match="extra_forbidden"):
         validate_public_catalog_value(unknown_root)
+
+
+def test_source_id_must_match_public_pattern(artifact):
+    candidate = deepcopy(artifact)
+    candidate["sources"] = [
+        {
+            "source_id": "Bad-Source",
+            "source_name": "Example source",
+            "attribution_asset": None,
+            "attribution_text": None,
+            "attribution_text_es": None,
+        }
+    ]
+
+    with pytest.raises(PublicCatalogError, match="sources\\[0\\].source_id does not match"):
+        validate_public_catalog_value(candidate)
+
+
+def test_source_name_must_be_nonempty_after_trimming(artifact):
+    candidate = deepcopy(artifact)
+    candidate["sources"] = [
+        {
+            "source_id": "example_source",
+            "source_name": "  ",
+            "attribution_asset": None,
+            "attribution_text": None,
+            "attribution_text_es": None,
+        }
+    ]
+
+    with pytest.raises(PublicCatalogError, match="sources\\[0\\].source_name must be non-empty"):
+        validate_public_catalog_value(candidate)
+
+
+def test_duplicate_source_ids_fail_closed(artifact):
+    candidate = deepcopy(artifact)
+    source = {
+        "source_id": "example_source",
+        "source_name": "Example source",
+        "attribution_asset": None,
+        "attribution_text": None,
+        "attribution_text_es": None,
+    }
+    candidate["sources"] = [source, deepcopy(source)]
+
+    with pytest.raises(PublicCatalogError, match="duplicate source_id: example_source"):
+        validate_public_catalog_value(candidate)
+
+
+def test_source_display_must_match_coverage_for_same_id(artifact):
+    candidate = deepcopy(artifact)
+    cell = candidate["coverage"][0]
+    candidate["sources"] = [
+        {
+            "source_id": cell["source_id"],
+            "source_name": "Different source name",
+            "attribution_asset": cell["attribution_asset"],
+            "attribution_text": cell["attribution_text"],
+            "attribution_text_es": cell["attribution_text_es"],
+        }
+    ]
+
+    with pytest.raises(PublicCatalogError, match="source display disagrees"):
+        validate_public_catalog_value(candidate)
 
 
 def test_duplicate_metrics_and_cells_fail_closed(artifact):

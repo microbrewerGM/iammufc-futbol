@@ -156,7 +156,7 @@ function decodeOutputCoverage(value: unknown, index: number) {
   };
 }
 
-interface PublicSource {
+export interface PublicSource {
   source_id: string;
   source_name: string;
   attribution_asset: string | null;
@@ -168,9 +168,13 @@ function decodeSource(value: unknown, index: number): PublicSource {
   const path = `$.sources[${index}]`;
   const item = record(value, path);
   exactKeys(item, SOURCE_KEYS, path);
+  const sourceId = stringValue(item.source_id, `${path}.source_id`);
+  if (!SOURCE_ID.test(sourceId)) {
+    invalid(`${path}.source_id`, "does not match the public contract");
+  }
   return {
-    source_id: stringValue(item.source_id, `${path}.source_id`),
-    source_name: stringValue(item.source_name, `${path}.source_name`),
+    source_id: sourceId,
+    source_name: nonemptyString(item.source_name, `${path}.source_name`),
     attribution_asset: nullableString(item.attribution_asset, `${path}.attribution_asset`),
     attribution_text: nullableString(item.attribution_text, `${path}.attribution_text`),
     attribution_text_es: nullableString(item.attribution_text_es, `${path}.attribution_text_es`),
@@ -179,7 +183,7 @@ function decodeSource(value: unknown, index: number): PublicSource {
 
 export function decodeCompiledCatalog(
   value: unknown,
-): CompiledCatalog & { sources?: PublicSource[] } {
+): CompiledCatalog & { sources: PublicSource[] } {
   const root = record(value, "$");
   const hasSources = Object.hasOwn(root, "sources");
   const hasOutputCoverage = Object.hasOwn(root, "output_coverage");
@@ -210,7 +214,7 @@ export function decodeCompiledCatalog(
   }
 
   const coverage = root.coverage.map(decodeCoverage);
-  const sources = hasSources ? (root.sources as unknown[]).map(decodeSource) : undefined;
+  const sources = hasSources ? (root.sources as unknown[]).map(decodeSource) : [];
   const seenCells = new Set<string>();
   const sourceDisplay = new Map<string, string>();
   for (const cell of coverage) {
@@ -238,6 +242,34 @@ export function decodeCompiledCatalog(
     sourceDisplay.set(cell.source_id, display);
   }
 
+  const sourceIds = new Set<string>();
+  for (let index = 0; index < sources.length; index += 1) {
+    const source = sources[index]!;
+    if (sourceIds.has(source.source_id)) {
+      invalid("$.sources", `duplicate source_id: ${source.source_id}`);
+    }
+    sourceIds.add(source.source_id);
+
+    const matchingCell = coverage.find((cell) => cell.source_id === source.source_id);
+    if (
+      matchingCell &&
+      JSON.stringify([
+        source.source_name,
+        source.attribution_asset,
+        source.attribution_text,
+        source.attribution_text_es,
+      ]) !==
+        JSON.stringify([
+          matchingCell.source_name,
+          matchingCell.attribution_asset,
+          matchingCell.attribution_text,
+          matchingCell.attribution_text_es,
+        ])
+    ) {
+      invalid(`$.sources[${index}]`, `source display disagrees for ${source.source_id}`);
+    }
+  }
+
   const outputCoverage = hasOutputCoverage
     ? (root.output_coverage as unknown[]).map(decodeOutputCoverage)
     : [];
@@ -253,7 +285,7 @@ export function decodeCompiledCatalog(
     version: 1,
     metrics,
     coverage,
-    ...(sources === undefined ? {} : { sources }),
+    sources,
     output_coverage: outputCoverage,
   };
 }
