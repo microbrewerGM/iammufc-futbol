@@ -45,17 +45,17 @@ describe("Champions League history query", () => {
     const store = fakeDb([row("2024-25"), row("2016-17")]);
     const result = await clHistoryRows(store.env, catalog(["2024-25", "2016-17", "2017-18"]));
     expect(result.entries).toEqual([
-      { status: "observed", row: row("2024-25") },
+      { status: "observed", row: { ...row("2024-25"), stage_reached: null } },
       { status: "gap", season: "2017-18" },
-      { status: "observed", row: row("2016-17") },
+      { status: "observed", row: { ...row("2016-17"), stage_reached: null } },
     ]);
     expect(store.calls[1]).toEqual({
       sql: `SELECT season, played, won, drawn, lost, goals, goals_against, snapshot_id
-       FROM season_stats
-      WHERE competition = ? AND season IN (?, ?, ?)
-      ORDER BY season DESC LIMIT 4`,
+       FROM season_stats WHERE competition = ? AND season IN (?, ?, ?)
+       ORDER BY season DESC LIMIT 4`,
       bindings: ["CL", "2024-25", "2017-18", "2016-17"],
     });
+    expect(store.calls[2]?.sql).toContain("FROM cl_season_stage");
   });
 
   it("rejects coverage larger than the hard cap of 20 seasons", async () => {
