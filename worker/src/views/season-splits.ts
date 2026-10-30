@@ -67,9 +67,10 @@ export function seasonSplitsBody(model: SeasonSplitView, locale: Locale): string
       total[entry.coverage]++;
       return total;
     }, { complete: 0, partial: 0, missing: 0 });
+    const countLabel = (count: number, singular: string, plural: string) => `${count} ${count === 1 ? singular : plural}`;
     return `<p id="splits-coverage-summary">${t(
-      `Coverage across ${result.coverage.length} selected seasons: ${counts.complete} complete, ${counts.partial} partial, ${counts.missing} missing.`,
-      `Cobertura de ${result.coverage.length} temporadas seleccionadas: ${counts.complete} completa, ${counts.partial} parcial, ${counts.missing} sin cobertura.`,
+      `Coverage across ${result.coverage.length} selected ${result.coverage.length === 1 ? "season" : "seasons"}: ${countLabel(counts.complete, "complete", "complete")}, ${countLabel(counts.partial, "partial schedule", "partial schedules")}, ${countLabel(counts.missing, "missing split coverage", "missing split coverage")}.`,
+      `Cobertura de ${result.coverage.length} ${result.coverage.length === 1 ? "temporada seleccionada" : "temporadas seleccionadas"}: ${countLabel(counts.complete, "completa", "completas")}, ${countLabel(counts.partial, "parcial", "parciales")}, ${countLabel(counts.missing, "sin cobertura", "sin cobertura")}.`,
     )}</p>`;
   })() : "";
   const headers = [result.request.group_by === "venue" ? t("Venue", "Localía") : t("Opponent", "Rival"), t("Played", "Jugados"), t("Wins", "Victorias"), t("Draws", "Empates"), t("Losses", "Derrotas"), t("Goals for", "Goles a favor"), t("Goals against", "Goles en contra"), t("Goal difference", "Diferencia de goles"), t("Points", "Puntos"), t("Points / match", "Puntos / partido"), t("Goals for / match", "Goles a favor / partido"), t("Goals against / match", "Goles en contra / partido"), t("Win rate (%)", "Victorias (%)"), t("Contributing seasons", "Temporadas con datos")];
