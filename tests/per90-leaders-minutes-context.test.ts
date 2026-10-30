@@ -21,14 +21,16 @@ function render(locale: "en" | "es") {
 
 describe("per-90 leaderboard minutes context", () => {
   it.each([
-    ["en", "Per-90 leaderboard", "Supported minutes (per-90 denominator)", "These are the supported minutes used to calculate each player's per-90 value."],
-    ["es", "Clasificación por 90 minutos", "Minutos válidos (denominador por 90)", "Estos son los minutos válidos usados para calcular el valor por 90 de cada jugador."],
-  ] as const)("explains the minutes denominator and associates the description with the table in %s", (locale, label, heading, description) => {
+    ["en", "Supported minutes (per-90 denominator)", "These are the supported minutes used to calculate each player's per-90 value."],
+    ["es", "Minutos con datos (denominador por 90)", "Estos son los minutos con datos usados para calcular el valor por 90 de cada jugador."],
+  ] as const)("explains the minutes denominator and associates the description with the table in %s", (locale, heading, description) => {
     const html = render(locale);
-    const region = html.split(`aria-label="${label}"><table>`)[1]!.split("</div>")[0]!;
+    const tableTag = html.match(/<table aria-describedby="([^"]+)">/);
+    expect(tableTag).not.toBeNull();
+    const id = tableTag![1]!;
 
-    expect(region).toContain(`<th scope="col">${heading}</th>`);
-    expect(region).toContain(`<p>${description.replaceAll("'", "&#39;")}</p>`);
-    expect(region).toContain(locale === "en" ? "<td>1,800</td>" : "<td>1800</td>");
+    expect(html).toContain(`<th scope="col">${heading}</th>`);
+    expect(html).toContain(`<p id="${id}">${description.replaceAll("'", "&#39;")}</p>`);
+    expect(html).toContain(`<td>${locale === "en" ? "1,800" : "1800"}</td>`);
   });
 });
