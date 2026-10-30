@@ -8,7 +8,7 @@ import type {
   SquadRow,
 } from "../core/db";
 import { columnFeasibility, type Catalog, type FeasibilityResult } from "../core/feasibility";
-import type { QueryIntent } from "../core/intent";
+import type { QueryIntent, VizType } from "../core/intent";
 import { formatNumber, metricLabel, positionLabel, type Locale } from "../core/locale";
 import type { Proposal } from "../core/parser";
 import { parseRuleBased } from "../core/parser";
@@ -62,15 +62,31 @@ export function exampleQuestion(locale: Locale, question: string): string {
 
 /** The parsed intent is shown before anything executes. Ambiguity becomes a
  *  correction opportunity instead of a wrong answer. */
-export function intentPanel(proposal: Proposal, locale: Locale): string {
+export function intentPanel(proposal: Proposal, catalog: Catalog, locale: Locale): string {
   const t = locale.strings;
   const i = proposal.intent;
+  const labels = {
+    en: {
+      metric: "Metric", scope: "Scope", season: "Season", competition: "Competition", visualization: "Visualization",
+      all: "All", pl: "Premier League", cl: "Champions League",
+      viz: { table: "Table", bar: "Bar chart", dot_plot: "Dot plot", line: "Line chart", shot_map: "Shot map", pass_map: "Pass map", heatmap: "Heatmap" } satisfies Record<VizType, string>,
+    },
+    es: {
+      metric: "Métrica", scope: "Alcance", season: "Temporada", competition: "Competición", visualization: "Visualización",
+      all: "Todos", pl: "Premier League", cl: "Liga de Campeones",
+      viz: { table: "Tabla", bar: "Barras", dot_plot: "Gráfico de puntos", line: "Gráfico de líneas", shot_map: "Mapa de tiros", pass_map: "Mapa de pases", heatmap: "Mapa de calor" } satisfies Record<VizType, string>,
+    },
+  }[locale.code];
+  const entity = i.entity_id === "all" ? labels.all : i.entity_id;
+  const scope = `${ENTITY_LABELS[locale.code][i.entity_type]}: ${entity}`;
+  const competition = i.competition === "PL" ? labels.pl : i.competition === "CL" ? labels.cl : i.competition;
+  const visualization = labels.viz[i.viz];
   const lines = [
-    `metric      ${i.metric}`,
-    `entity      ${i.entity_type} = ${i.entity_id}`,
-    `season      ${i.season}`,
-    `competition ${i.competition}`,
-    `viz         ${i.viz}`,
+    `${labels.metric}: ${metricLabel(catalog, i.metric, locale.code)}`,
+    `${labels.scope}: ${scope}`,
+    `${labels.season}: ${i.season}`,
+    `${labels.competition}: ${competition}`,
+    `${labels.visualization}: ${visualization}`,
   ].join("\n");
 
   const notes = proposal.notes.length

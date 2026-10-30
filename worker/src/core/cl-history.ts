@@ -10,7 +10,16 @@ export interface CLHistoryRecord {
   goals: number;
   goals_against: number;
   snapshot_id: string;
+  stage_reached: StageCode | null;
 }
+
+export type StageCode = "group_stage" | "league_phase" | "knockout_playoff" | "round_of_16" |
+  "quarter_final" | "semi_final" | "final" | "winner";
+
+const STAGE_CODES = new Set<StageCode>([
+  "group_stage", "league_phase", "knockout_playoff", "round_of_16",
+  "quarter_final", "semi_final", "final", "winner",
+]);
 
 export type CLHistoryEntry =
   | { status: "observed"; row: CLHistoryRecord }
@@ -50,7 +59,7 @@ function eligibleSeasons(catalog: CompiledCatalog): string[] {
   return [...seasons].sort((a, b) => Number(b.slice(0, 4)) - Number(a.slice(0, 4)));
 }
 
-function validateRows(rows: unknown[], seasons: readonly string[], snapshotId: string): CLHistoryRecord[] {
+function validateRows(rows: unknown[], seasons: readonly string[], snapshotId: string): Omit<CLHistoryRecord, "stage_reached">[] {
   const allowed = new Set(seasons);
   const seen = new Set<string>();
   return rows.map((value) => {
@@ -61,14 +70,15 @@ function validateRows(rows: unknown[], seasons: readonly string[], snapshotId: s
         !validSeason(row.season) || !allowed.has(row.season) || seen.has(row.season) ||
         !safeCount(row.played, true) || !safeCount(row.won) || !safeCount(row.drawn) || !safeCount(row.lost) ||
         !safeCount(row.goals) || !safeCount(row.goals_against) || row.won + row.drawn + row.lost !== row.played ||
-        row.snapshot_id !== snapshotId) throw new Error("invalid CL history row");
+        row.snapshot_id !== snapshotId) {
+      throw new Error("invalid CL history row");
+    }
     seen.add(row.season);
-    return row as unknown as CLHistoryRecord;
+    return row as unknown as Omit<CLHistoryRecord, "stage_reached">;
   });
 }
 
-/** Read the latest snapshot row and the CL season rows in one D1 batch (a single
- * implicit transaction), so a seed load cannot land between the two reads. */
+/** Read totals against the latest snapshot, then load stage cells independently. */
 export async function clHistoryRead(env: Env, catalog: CompiledCatalog): Promise<{ result: CLHistoryResult; sourcesJson: unknown }> {
   const seasons = eligibleSeasons(catalog);
   const statements = [env.DB.prepare("SELECT snapshot_id, sources_json FROM snapshots ORDER BY created_at DESC LIMIT 1")];
@@ -76,9 +86,8 @@ export async function clHistoryRead(env: Env, catalog: CompiledCatalog): Promise
     const placeholders = seasons.map(() => "?").join(", ");
     statements.push(env.DB.prepare(
       `SELECT season, played, won, drawn, lost, goals, goals_against, snapshot_id
-       FROM season_stats
-      WHERE competition = ? AND season IN (${placeholders})
-      ORDER BY season DESC LIMIT ${seasons.length + 1}`,
+       FROM season_stats WHERE competition = ? AND season IN (${placeholders})
+       ORDER BY season DESC LIMIT ${seasons.length + 1}`,
     ).bind("CL", ...seasons));
   }
   const [latest, rowsResult] = await env.DB.batch(statements);
@@ -88,10 +97,32 @@ export async function clHistoryRead(env: Env, catalog: CompiledCatalog): Promise
     return { result: { snapshot_id: null, entries: [] }, sourcesJson: undefined };
   }
   if (seasons.length === 0) return { result: { snapshot_id: snapshotId, entries: [] }, sourcesJson: meta?.sources_json };
-  const results = (rowsResult?.results ?? []) as CLHistoryRecord[];
+  const results = (rowsResult?.results ?? []) as unknown[];
   if (results.length > seasons.length) throw new Error("invalid CL history row");
   const rows = validateRows(results, seasons, snapshotId);
-  const observed = new Map(rows.map((row) => [row.season, row]));
+  const stages = new Map<string, StageCode>();
+  try {
+    const stageResult = await env.DB.prepare(
+      `SELECT season, stage_reached, snapshot_id FROM cl_season_stage
+       WHERE season IN (${seasons.map(() => "?").join(", ")}) AND snapshot_id = ?
+       ORDER BY season DESC LIMIT ${seasons.length + 1}`,
+    ).bind(...seasons, snapshotId).all<unknown>();
+    const stageRows = stageResult.results ?? [];
+    if (stageRows.length <= seasons.length) {
+      const seen = new Set<string>();
+      for (const value of stageRows) {
+        if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+        const row = value as Record<string, unknown>;
+        if (!validSeason(row.season) || !seasons.includes(row.season) || seen.has(row.season)) continue;
+        seen.add(row.season);
+        if (row.snapshot_id === snapshotId && typeof row.stage_reached === "string" &&
+            STAGE_CODES.has(row.stage_reached as StageCode)) stages.set(row.season, row.stage_reached as StageCode);
+      }
+    }
+  } catch {
+    // Stage storage is optional for serving totals; unavailable cells stay null.
+  }
+  const observed = new Map(rows.map((row) => [row.season, { ...row, stage_reached: stages.get(row.season) ?? null }]));
   return {
     sourcesJson: meta?.sources_json,
     result: {

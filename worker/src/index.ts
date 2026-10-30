@@ -1560,7 +1560,7 @@ async function renderChat(
   if (question !== null && proposal.confidence === "low") {
     const body = `<h1>iammufc</h1>
 <div class="card">${chatForm(locale, question)}</div>
-${intentPanel(proposal, locale)}
+${intentPanel(proposal, catalog, locale)}
 <div class="stop"><p><strong>${esc(locale.strings.clarificationRequired)}</strong></p></div>
 <p><a href="/${locale.code}">${esc(locale.strings.backToMatrix)}</a></p>`;
     return html(
@@ -1622,7 +1622,7 @@ ${intentPanel(proposal, locale)}
 
   const body = `<h1>iammufc</h1>
 <div class="card">${chatForm(locale, question ?? "")}</div>
-${intentPanel(proposal, locale)}
+${intentPanel(proposal, catalog, locale)}
 ${resultBlock}
 ${identity?.sub ? `<p><a href="/${locale.code}/history">${locale.code === "es" ? "Preguntas anteriores" : "Past questions"}</a></p>` : ""}
 <p><a href="/${locale.code}">${locale.strings.backToMatrix}</a></p>`;

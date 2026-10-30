@@ -90,8 +90,8 @@ describe.each(["en", "es"] as const)("%s example questions return fixture answer
       const response = await ask(store.env, language, `${LOCALES[language].strings[example.key]} 2025-26`);
       const html = await response.text();
       expect(response.status).toBe(200);
-      expect(html).toContain(`metric      ${example.metric}`);
-      expect(html).toContain(`viz         ${example.viz}`);
+      expect(html).toContain(`${language === "es" ? "Métrica" : "Metric"}: ${language === "es" ? compiledCatalog.metrics.find((candidate) => candidate.metric_id === example.metric)!.label_es : compiledCatalog.metrics.find((candidate) => candidate.metric_id === example.metric)!.label_en}`);
+      expect(html).toContain(`${language === "es" ? "Visualización" : "Visualization"}: ${example.viz === "dot_plot" ? (language === "es" ? "Gráfico de puntos" : "Dot plot") : example.viz === "bar" ? (language === "es" ? "Barras" : "Bar chart") : (language === "es" ? "Tabla" : "Table")}`);
       const table = html.match(/<table[\s\S]*?<\/table>/)?.[0];
       expect(table).toBeDefined();
       expect(html.includes('<div class="chart-region"')).toBe(example.viz !== "table");
@@ -129,9 +129,9 @@ describe.each(["en", "es"] as const)("%s example questions return fixture answer
       const response = await ask(store.env, language, `${LOCALES[language].strings[example.key]} ${season}`);
       const html = await response.text();
       expect(response.status).toBe(200);
-      expect(html).toContain(`metric      ${example.metric}`);
-      expect(html).toContain(`viz         ${example.viz}`);
-      expect(html).toContain(`season      ${season}`);
+      expect(html).toContain(`${language === "es" ? "Métrica" : "Metric"}: ${language === "es" ? compiledCatalog.metrics.find((candidate) => candidate.metric_id === example.metric)!.label_es : compiledCatalog.metrics.find((candidate) => candidate.metric_id === example.metric)!.label_en}`);
+      expect(html).toContain(`${language === "es" ? "Visualización" : "Visualization"}: ${example.viz === "dot_plot" ? (language === "es" ? "Gráfico de puntos" : "Dot plot") : example.viz === "bar" ? (language === "es" ? "Barras" : "Bar chart") : (language === "es" ? "Tabla" : "Table")}`);
+      expect(html).toContain(`${language === "es" ? "Temporada" : "Season"}: ${season}`);
       const facts = store.reads.filter((read) => read.sql.includes("FROM player_season_stats"));
       expect(facts).toHaveLength(1);
       expect(facts[0]!.bound).toEqual([season, "PL", 10]);
@@ -159,7 +159,7 @@ describe.each(["en", "es"] as const)("%s example questions return fixture answer
       const html = await response.text();
       expect(response.status).toBe(200);
       expect(html).toContain('class="state">no_data</p>');
-      expect(html).toContain("season      2000-01");
+      expect(html).toContain(`${language === "es" ? "Temporada" : "Season"}: 2000-01`);
       expect(html).not.toContain("<table");
       expect(store.reads.some((read) => read.sql.includes("FROM player_season_stats"))).toBe(false);
       expect(enforceBudget).not.toHaveBeenCalled();
