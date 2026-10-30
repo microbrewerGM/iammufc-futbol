@@ -2,6 +2,20 @@ name: Dev Access smoke
 
 on:
   workflow_dispatch:
+    inputs:
+      hosted_route:
+        description: Optional route for hosted keyboard and viewport checks
+        required: false
+        type: string
+      hosted_revision:
+        description: Optional deployed 40-character revision
+        required: false
+        type: string
+      require_form:
+        description: Require form controls and submit button on the hosted route
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -11,7 +25,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: dev
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -21,6 +35,22 @@ jobs:
           node-version: '22'
       - name: Validate smoke client without credentials
         run: node --test tools/test_dev_access_smoke.mjs tools/test_p17_canary_smoke.mjs
+      - name: Install dependencies for hosted checks
+        if: inputs.hosted_route != ''
+        run: npm ci
+      - name: Install Chromium for hosted checks
+        if: inputs.hosted_route != ''
+        run: npx --no-install playwright install --with-deps chromium
+      - name: Check hosted route keyboard and viewport behavior
+        if: inputs.hosted_route != ''
+        env:
+          HOSTED_ROUTE: ${{ inputs.hosted_route }}
+          HOSTED_REVISION: ${{ inputs.hosted_revision }}
+          REQUIRE_FORM: ${{ inputs.require_form }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          GITHUB_STEP_SUMMARY: ${{ env.GITHUB_STEP_SUMMARY }}
+        run: node tools/hosted-check.mjs
       - name: Test protected dev site
         env:
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
