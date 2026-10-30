@@ -23,7 +23,7 @@ describe("ask intent summary", () => {
     const markup = intentPanel(proposal(), catalog, LOCALES.en);
 
     expect(markup).toContain(`Metric: ${metricLabel(catalog, "goals", "en")}`);
-    expect(markup).toContain("Player scope: Player: All players");
+    expect(markup).toContain("Scope: Player: All");
     expect(markup).toContain("Season: 2024-25");
     expect(markup).toContain("Competition: Premier League");
     expect(markup).toContain("Visualization: Dot plot");
@@ -34,10 +34,21 @@ describe("ask intent summary", () => {
     const markup = intentPanel(proposal(), catalog, LOCALES.es);
 
     expect(markup).toContain(`Métrica: ${metricLabel(catalog, "goals", "es")}`);
-    expect(markup).toContain("Alcance: Jugador: Todos los jugadores");
+    expect(markup).toContain("Alcance: Jugador: Todos");
     expect(markup).toContain("Temporada: 2024-25");
     expect(markup).toContain("Competición: Premier League");
     expect(markup).toContain("Visualización: Gráfico de puntos");
     expect(markup).not.toMatch(/entity_type|dot_plot/);
+  });
+
+  it.each([
+    ["en", "line", "Line chart"],
+    ["en", "pass_map", "Pass map"],
+    ["es", "line", "Gráfico de líneas"],
+    ["es", "pass_map", "Mapa de pases"],
+  ] as const)("labels %s visualization %s", (language, viz, label) => {
+    const markup = intentPanel({ ...proposal(), intent: withDefaults({ ...proposal().intent, viz }) }, catalog, LOCALES[language]);
+    expect(markup).toContain(`${language === "es" ? "Visualización" : "Visualization"}: ${label}`);
+    expect(markup).not.toContain(viz);
   });
 });
