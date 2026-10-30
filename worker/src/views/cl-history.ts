@@ -68,6 +68,7 @@ export function championsLeagueHistoryBody(
     return typeof value === "string" && value.trim() ? value : undefined;
   };
   const credits = [...new Set(lineage.map(creditFor).filter((value): value is string => value !== undefined))];
+  const sourceId = (credit: string): string => `cl-history-source-${credits.indexOf(credit) + 1}`;
   const headers = [strings.season, strings.played, strings.won, strings.drawn, strings.lost, strings.goalsFor, strings.goalsAgainst];
   const validLineage = (row: ChampionsLeagueTotals): boolean => {
     const refs = Array.isArray(row.lineage) ? row.lineage.filter((ref) => typeof ref === "string" && ref.trim()) : [];
@@ -94,11 +95,12 @@ export function championsLeagueHistoryBody(
       return `<tr><th scope="row">${seasonLabel}</th><td colspan="6"><span aria-label="${esc(strings.attributionUnavailable)}">—</span> <span>${esc(strings.attributionUnavailable)}</span></td></tr>`;
     }
     const values = [row.played, row.won, row.drawn, row.lost, row.goals, row.goals_against];
-    return `<tr><th scope="row">${seasonLabel}</th>${values.map((value) => `<td>${value}</td>`).join("")}</tr>`;
+    const describedBy = [...new Set(row.lineage!.filter((ref) => typeof ref === "string" && ref.trim()).map((ref) => creditFor(ref)).filter((credit): credit is string => credit !== undefined))].map(sourceId).join(" ");
+    return `<tr><th scope="row" aria-describedby="${describedBy}">${seasonLabel}</th>${values.map((value) => `<td>${value}</td>`).join("")}</tr>`;
   }).join("");
   const table = `<div class="comparison-table" role="region" tabindex="0" aria-label="${esc(strings.heading)}"><table><caption>${esc(strings.caption)}</caption><thead><tr>${headers.map((header) => `<th scope="col">${esc(header)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody>${totalsRow}</table></div>`;
   const sourceSection = lineage.length
-    ? `<section aria-label="${esc(strings.sources)}"><h2>${esc(strings.sources)}</h2>${credits.map((credit) => `<p>${esc(credit)}</p>`).join("")}${lineage.some((ref) => creditFor(ref) === undefined) ? `<p>${esc(strings.attributionUnavailable)}</p>` : ""}${model.snapshotDate ? `<p>${esc(strings.snapshotDate)}: ${esc(model.snapshotDate)}</p>` : ""}</section>`
+    ? `<section aria-label="${esc(strings.sources)}"><h2>${esc(strings.sources)}</h2>${credits.map((credit) => `<p id="${sourceId(credit)}">${esc(credit)}</p>`).join("")}${lineage.some((ref) => creditFor(ref) === undefined) ? `<p>${esc(strings.attributionUnavailable)}</p>` : ""}${model.snapshotDate ? `<p>${esc(strings.snapshotDate)}: ${esc(model.snapshotDate)}</p>` : ""}</section>`
     : "";
   return `<h1>${esc(strings.heading)}</h1>${eligible.every((entry) => entry.state === "gap") ? `<p role="status">${esc(strings.noResults)}</p>` : ""}${table}${sourceSection}`;
 }
