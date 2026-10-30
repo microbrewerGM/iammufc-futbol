@@ -1,6 +1,6 @@
 import { esc } from "./layout";
 import type { LocaleCode } from "../core/locale";
-import { validSeason } from "../core/cl-history";
+import { validSeason, type StageCode } from "../core/cl-history";
 
 export interface ChampionsLeagueTotals {
   season: string;
@@ -33,8 +33,8 @@ export interface ChampionsLeagueHistoryStrings {
   heading: string;
   caption: string;
   season: string;
-  stage?: string;
-  stages?: Record<"group_stage" | "league_phase" | "knockout_playoff" | "round_of_16" | "quarter_final" | "semi_final" | "final" | "winner", string>;
+  stage: string;
+  stages: Record<StageCode, string>;
   played: string;
   won: string;
   drawn: string;
@@ -90,7 +90,7 @@ export function championsLeagueHistoryBody(
   const notTotalled = eligible.length - totalled.length;
   const totalsLabel = strings.observedSeasons.replace("{n}", String(totalled.length));
   const totalsRow = totalled.length
-    ? `<tfoot><tr><th scope="row">${esc(totalsLabel)}${notTotalled ? ` <span>${esc(strings.seasonsExcluded.replace("{n}", String(notTotalled)))}</span>` : ""}</th>${[sum((r) => r.played), sum((r) => r.won), sum((r) => r.drawn), sum((r) => r.lost), sum((r) => r.goals), sum((r) => r.goals_against)].map((value) => `<td>${value}</td>`).join("")}</tr></tfoot>`
+    ? `<tfoot><tr><th scope="row">${esc(totalsLabel)}${notTotalled ? ` <span>${esc(strings.seasonsExcluded.replace("{n}", String(notTotalled)))}</span>` : ""}</th><td></td>${[sum((r) => r.played), sum((r) => r.won), sum((r) => r.drawn), sum((r) => r.lost), sum((r) => r.goals), sum((r) => r.goals_against)].map((value) => `<td>${value}</td>`).join("")}</tr></tfoot>`
     : "";
   const rows = eligible.map((entry) => {
     if (entry.state === "gap") {
@@ -110,7 +110,7 @@ export function championsLeagueHistoryBody(
     const describedBy = rowCreditIds.length ? ` aria-describedby="${rowCreditIds.join(" ")}"` : "";
     const sourceLinks = rowCreditIds.map((id) => `<a class="cl-history-row-source" href="#${id}" aria-label="${esc(strings.sources)}">§</a>`).join(" ");
     const values = [row.played, row.won, row.drawn, row.lost, row.goals, row.goals_against];
-    return `<tr${describedBy}><th scope="row">${seasonLabel}${sourceLinks ? ` <span class="cl-history-row-sources">${sourceLinks}</span>` : ""}</th>${strings.stage && strings.stages ? stageCell(row.stage_reached ?? null) : ""}${values.map((value) => `<td>${value}</td>`).join("")}</tr>`;
+    return `<tr${describedBy}><th scope="row">${seasonLabel}${sourceLinks ? ` <span class="cl-history-row-sources">${sourceLinks}</span>` : ""}</th>${stageCell(row.stage_reached ?? null)}${values.map((value) => `<td>${value}</td>`).join("")}</tr>`;
   }).join("");
   const table = `<div class="comparison-table" role="region" tabindex="0" aria-label="${esc(strings.heading)}"><table><caption>${esc(strings.caption)}</caption><thead><tr>${headers.map((header) => `<th scope="col">${esc(header)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody>${totalsRow}</table></div>`;
   const sourceSection = lineage.length

@@ -3,13 +3,14 @@ import { championsLeagueHistoryBody, type ChampionsLeagueHistoryStrings, type Ch
 
 const en: ChampionsLeagueHistoryStrings = {
   heading: "Champions League history", caption: "Recorded matches; records may be incomplete", season: "Season",
+  stage: "Stage reached", stages: { group_stage: "Group stage", league_phase: "League phase", knockout_playoff: "Knockout play-off", round_of_16: "Round of 16", quarter_final: "Quarter-final", semi_final: "Semi-final", final: "Final", winner: "Winner" },
   played: "Played", won: "Won", drawn: "Drawn", lost: "Lost", goalsFor: "Goals for", goalsAgainst: "Goals against",
   gap: "No recorded matches available; this does not establish non-participation",
   outsideCoverage: "Champions League history is outside current coverage", partial: "partial", noResults: "No recorded Champions League results are available", unavailable: "History is temporarily unavailable",
   snapshotDate: "Data snapshot", sources: "Sources and snapshot", attributionUnavailable: "Source attribution unavailable for some data.",
   observedSeasons: "Recorded seasons ({n})", seasonsExcluded: "Not totalled: {n} (no data or without attribution)",
 };
-const es: ChampionsLeagueHistoryStrings = { ...en, heading: "Historial de la Liga de Campeones", caption: "Partidos registrados; los datos pueden estar incompletos", season: "Temporada", played: "Jugados", won: "Ganados", drawn: "Empatados", lost: "Perdidos", goalsFor: "Goles a favor", goalsAgainst: "Goles en contra", gap: "No hay partidos registrados disponibles; esto no demuestra que el equipo no participara", outsideCoverage: "El historial de la Liga de Campeones está fuera de la cobertura actual", partial: "parcial", noResults: "No hay resultados registrados de la Liga de Campeones disponibles", unavailable: "El historial no está disponible temporalmente", snapshotDate: "Fecha de los datos", sources: "Fuentes y versión de datos", attributionUnavailable: "Atribución de fuente no disponible para algunos datos.", observedSeasons: "Temporadas registradas ({n})", seasonsExcluded: "No sumadas: {n} (sin datos o sin atribución)" };
+const es: ChampionsLeagueHistoryStrings = { ...en, heading: "Historial de la Liga de Campeones", caption: "Partidos registrados; los datos pueden estar incompletos", season: "Temporada", stage: "Fase alcanzada", stages: { group_stage: "Fase de grupos", league_phase: "Fase liga", knockout_playoff: "Eliminatoria previa", round_of_16: "Octavos de final", quarter_final: "Cuartos de final", semi_final: "Semifinal", final: "Final", winner: "Campeón" }, played: "Jugados", won: "Ganados", drawn: "Empatados", lost: "Perdidos", goalsFor: "Goles a favor", goalsAgainst: "Goles en contra", gap: "No hay partidos registrados disponibles; esto no demuestra que el equipo no participara", outsideCoverage: "El historial de la Liga de Campeones está fuera de la cobertura actual", partial: "parcial", noResults: "No hay resultados registrados de la Liga de Campeones disponibles", unavailable: "El historial no está disponible temporalmente", snapshotDate: "Fecha de los datos", sources: "Fuentes y versión de datos", attributionUnavailable: "Atribución de fuente no disponible para algunos datos.", observedSeasons: "Temporadas registradas ({n})", seasonsExcluded: "No sumadas: {n} (sin datos o sin atribución)" };
 const row = { season: "2025-26", played: 2, won: 1, drawn: 0, lost: 1, goals: 3, goals_against: 0, lineage: ["openfootball:CL:2025-26"] };
 const model = (): ChampionsLeagueHistoryView => ({ entries: [{ state: "partial", row }, { state: "observed", row: { ...row, season: "2023-24" } }, { state: "gap", season: "2024-25" }, { state: "out_of_coverage", season: "2026-27" }], credits: { "openfootball:CL:2025-26": "OpenFootball credit" }, snapshotDate: "2026-10-23" });
 
@@ -18,7 +19,7 @@ describe("Champions League history view", () => {
     const body = championsLeagueHistoryBody(model(), strings, locale);
     expect(body).toContain(`<h1>${strings.heading}</h1>`);
     expect(body).toContain(`<caption>${strings.caption}</caption>`);
-    expect(body.match(/<th scope="col">/g)).toHaveLength(7);
+    expect(body.match(/<th scope="col">/g)).toHaveLength(8);
     expect(body).toContain('role="region" tabindex="0"');
     expect(body).toContain("OpenFootball credit");
     expect(body).toContain("2026-10-23");
@@ -50,7 +51,7 @@ describe("Champions League history view", () => {
       expect(body).toContain(`<p role="status">${strings.noResults}</p>`);
       expect(body).toContain("<table>");
       for (const season of seasons) {
-        expect(body).toContain(`<tr><th scope="row">${season}</th><td colspan="6"><span aria-label="${strings.gap}">—</span> <span>${strings.gap}</span></td></tr>`);
+        expect(body).toContain(`<tr><th scope="row">${season}</th><td colspan="7"><span aria-label="${strings.gap}">—</span> <span>${strings.gap}</span></td></tr>`);
       }
       expect(body).not.toMatch(/<td>\d+<\/td>/);
       expect(body).not.toContain(strings.outsideCoverage);

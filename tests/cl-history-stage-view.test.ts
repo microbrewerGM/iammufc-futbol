@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { championsLeagueHistoryBody, type ChampionsLeagueHistoryStrings, type ChampionsLeagueHistoryView } from "../worker/src/views/cl-history";
 import { LOCALES } from "../worker/src/core/locale";
+import type { StageCode } from "../worker/src/core/cl-history";
 // @ts-expect-error Node's built-in module is available in the configured test runtime.
 import * as nodeFs from "node:fs";
 const { readFileSync } = nodeFs as unknown as { readFileSync(path: URL, encoding: "utf8"): string };
@@ -10,6 +11,15 @@ const row = { season: "2025-26", played: 2, won: 1, drawn: 0, lost: 1, goals: 3,
 const strings = (locale: "en" | "es"): ChampionsLeagueHistoryStrings => LOCALES[locale].strings.clHistory;
 
 describe("Champions League stage reached view", () => {
+  it.each([
+    ["en", { group_stage: "Group stage", league_phase: "League phase", knockout_playoff: "Knockout play-off", round_of_16: "Round of 16", quarter_final: "Quarter-final", semi_final: "Semi-final", final: "Final", winner: "Winner" }],
+    ["es", { group_stage: "Fase de grupos", league_phase: "Fase liga", knockout_playoff: "Eliminatoria previa", round_of_16: "Octavos de final", quarter_final: "Cuartos de final", semi_final: "Semifinal", final: "Final", winner: "Campeón" }],
+  ] as const)("matches the contract stage labels in %s", (locale, expected) => {
+    const actual = strings(locale).stages;
+    expect(actual).toEqual(expected satisfies Record<StageCode, string>);
+    expect(Object.keys(actual)).toHaveLength(8);
+  });
+
   it.each([["en", "Stage reached", "Group stage"], ["es", "Fase alcanzada", "Fase de grupos"]] as const)(
     "renders localized stage labels after season in %s",
     (locale, header, group) => {
@@ -43,8 +53,21 @@ describe("Champions League stage reached view", () => {
       expect(body).toContain(`<td>${labels.winner}</td><td>2</td>`);
       expect(body).toContain(`<td colspan="7"><span aria-label="${text.gap}">—</span> <span>${text.gap}</span></td>`);
       expect(body).toContain("<tfoot>");
+      expect(body).toContain(`<tfoot><tr><th scope="row">${text.observedSeasons.replace("{n}", "2")} <span>${text.seasonsExcluded.replace("{n}", "1")}</span></th><td></td><td>4</td><td>2</td><td>0</td><td>2</td><td>6</td><td>0</td></tr></tfoot>`);
     },
   );
+
+  it.each(["toString", "__proto__", "<img src=x onerror=alert(1)>"])("treats unknown stage code %s as unavailable", (code) => {
+    for (const locale of ["en", "es"] as const) {
+      const text = strings(locale);
+      const body = championsLeagueHistoryBody({
+        entries: [{ state: "observed", row: { ...row, stage_reached: code } }],
+        credits: { [lineage]: "OpenFootball" },
+      }, text, locale);
+      expect(body).toContain(`<td><span aria-label="${text.attributionUnavailable}">—</span> <span>${text.attributionUnavailable}</span></td>`);
+      expect(body).not.toContain(code);
+    }
+  });
 
   it("keeps the wide table inside the existing scroll region at 320 px", () => {
     const css = readFileSync(new URL("../worker/public/style.css", import.meta.url), "utf8");

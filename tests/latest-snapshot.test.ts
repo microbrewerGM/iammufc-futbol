@@ -59,6 +59,11 @@ describe("latest snapshot reads", () => {
     expect(body).toContain("<th scope=\"col\">Stage reached</th>");
     expect(body).toMatch(/<tfoot>.*?<\/tfoot>/);
     expect(body).toContain("<th scope=\"col\">Season</th><th scope=\"col\">Stage reached</th><th scope=\"col\">Played</th>");
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body.replace(/<tfoot>.*?<\/tfoot>/, "")));
+    expect([...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("")).toBe("ef1be613bb5a3303f982f00b871f1c794658d1a58414ba7ef655fe91d0cd3c9e");
+    const plainLabels = body.replace(/<tfoot>.*?<\/tfoot>/, "").replace(/<a href=\"\/(?:en|es)\/season\/\d{4}-\d{2}\">([^<]+)<\/a>/g, "$1");
+    const oldDigest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(plainLabels));
+    expect([...new Uint8Array(oldDigest)].map((b) => b.toString(16).padStart(2, "0")).join("")).toBe("e70d1610d7615eceb272b65831cbc55ecba884c9af33aac2ba3253d4b1269a32");
   });
 
   it("reads the latest snapshot exactly once for /es and renders the Spanish page", async () => {

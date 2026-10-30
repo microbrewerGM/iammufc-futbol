@@ -3,6 +3,7 @@ import { championsLeagueHistoryBody, type ChampionsLeagueHistoryStrings } from "
 
 const strings: ChampionsLeagueHistoryStrings = {
   heading: "Champions League history", caption: "Recorded matches; records may be incomplete", season: "Season",
+  stage: "Stage reached", stages: { group_stage: "Group stage", league_phase: "League phase", knockout_playoff: "Knockout play-off", round_of_16: "Round of 16", quarter_final: "Quarter-final", semi_final: "Semi-final", final: "Final", winner: "Winner" },
   played: "Played", won: "Won", drawn: "Drawn", lost: "Lost", goalsFor: "Goals for", goalsAgainst: "Goals against",
   gap: "No recorded matches", partial: "partial", outsideCoverage: "Outside coverage", noResults: "No results",
   unavailable: "Temporarily unavailable", snapshotDate: "Data snapshot", sources: "Sources and snapshot",
@@ -11,7 +12,7 @@ const strings: ChampionsLeagueHistoryStrings = {
 };
 const spanish: ChampionsLeagueHistoryStrings = {
   ...strings, heading: "Historial de la Liga de Campeones", caption: "Partidos registrados; datos incompletos",
-  season: "Temporada", played: "Jugados", won: "Ganados", drawn: "Empatados", lost: "Perdidos",
+  season: "Temporada", stage: "Fase alcanzada", stages: { group_stage: "Fase de grupos", league_phase: "Fase liga", knockout_playoff: "Eliminatoria previa", round_of_16: "Octavos de final", quarter_final: "Cuartos de final", semi_final: "Semifinal", final: "Final", winner: "Campeón" }, played: "Jugados", won: "Ganados", drawn: "Empatados", lost: "Perdidos",
   goalsFor: "Goles a favor", goalsAgainst: "Goles en contra", gap: "Sin partidos registrados", partial: "parcial",
   outsideCoverage: "Fuera de cobertura", noResults: "Sin resultados", unavailable: "No disponible",
   snapshotDate: "Fecha de datos", sources: "Fuentes y versión de datos",

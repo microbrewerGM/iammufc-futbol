@@ -9,7 +9,7 @@ const credits = { "s:2025-26": "C1", "s:2024-25": "C2", "s:2023-24": "C3" };
 const a = mk("2025-26", 5, 3, 1, 1, 9, 4);
 const b = mk("2024-25", 4, 2, 2, 0, 6, 3);
 const c = mk("2023-24", 3, 0, 1, 2, 2, 6);
-const cells = "<td>12</td><td>5</td><td>4</td><td>3</td><td>17</td><td>13</td></tr></tfoot>";
+const cells = "<td></td><td>12</td><td>5</td><td>4</td><td>3</td><td>17</td><td>13</td></tr></tfoot>";
 
 describe("Champions League totals row", () => {
   it.each(["en", "es"] as const)("totals every row with valid lineage and counts the rest in %s", (code) => {
@@ -33,7 +33,7 @@ describe("Champions League totals row", () => {
   it.each(["en", "es"] as const)("omits the partial label and excluded span when nothing is excluded in %s", (code) => {
     const strings = LOCALES[code].strings.clHistory;
     const body = championsLeagueHistoryBody({ entries: [{ state: "observed", row: a }, { state: "observed", row: b }], credits }, strings, code);
-    expect(body).toContain(`<tfoot><tr><th scope="row">${strings.observedSeasons.replace("{n}", "2")}</th><td>9</td><td>5</td><td>3</td><td>1</td><td>15</td><td>7</td></tr></tfoot>`);
+    expect(body).toContain(`<tfoot><tr><th scope="row">${strings.observedSeasons.replace("{n}", "2")}</th><td></td><td>9</td><td>5</td><td>3</td><td>1</td><td>15</td><td>7</td></tr></tfoot>`);
   });
 
   it.each(["en", "es"] as const)("omits totals for all-gap in %s", (code) => {

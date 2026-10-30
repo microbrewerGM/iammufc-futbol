@@ -8,6 +8,7 @@ const css = readFileSync(new URL("../worker/public/style.css", import.meta.url),
 
 const copy: ChampionsLeagueHistoryStrings = {
   heading: "Champions League history", caption: "Recorded matches", season: "Season", played: "Played",
+  stage: "Stage reached", stages: { group_stage: "Group stage", league_phase: "League phase", knockout_playoff: "Knockout play-off", round_of_16: "Round of 16", quarter_final: "Quarter-final", semi_final: "Semi-final", final: "Final", winner: "Winner" },
   won: "Won", drawn: "Drawn", lost: "Lost", goalsFor: "Goals for", goalsAgainst: "Goals against",
   gap: "No recorded matches", partial: "Partial", outsideCoverage: "Outside coverage", noResults: "No results",
   unavailable: "Temporarily unavailable", snapshotDate: "Data snapshot", sources: "Sources and snapshot",
@@ -34,13 +35,13 @@ describe("Champions League history visible row sources", () => {
     expect(html).toContain(locale === "en" ? 'aria-label="Sources"' : 'aria-label="Fuentes"');
     expect(html).toContain("First &amp; &lt;source&gt;");
     expect(html).not.toContain('href="#cl-history-source-3"');
-    const unavailableRow = '<tr><th scope="row"><a href="/en/season/2022-23">2022-23</a></th><td colspan="6"><span aria-label="Source attribution unavailable">—</span> <span>Source attribution unavailable</span></td></tr>';
+    const unavailableRow = '<tr><th scope="row"><a href="/en/season/2022-23">2022-23</a></th><td colspan="7"><span aria-label="Source attribution unavailable">—</span> <span>Source attribution unavailable</span></td></tr>';
     const expectedUnavailableRow = locale === "en"
       ? unavailableRow
-      : '<tr><th scope="row"><a href="/es/season/2022-23">2022-23</a></th><td colspan="6"><span aria-label="Atribución de fuente no disponible">—</span> <span>Atribución de fuente no disponible</span></td></tr>';
+      : '<tr><th scope="row"><a href="/es/season/2022-23">2022-23</a></th><td colspan="7"><span aria-label="Atribución de fuente no disponible">—</span> <span>Atribución de fuente no disponible</span></td></tr>';
     expect(html).toContain(expectedUnavailableRow);
     expect(expectedUnavailableRow).not.toContain('href="#cl-history-source-');
-    expect(html).toContain('<tr><th scope="row">2023-24</th><td colspan="6"><span aria-label="No recorded matches">—</span> <span>No recorded matches</span></td></tr>');
+    expect(html).toContain('<tr><th scope="row">2023-24</th><td colspan="7"><span aria-label="No recorded matches">—</span> <span>No recorded matches</span></td></tr>');
   });
 
   it("keeps source markers compact at narrow viewport widths", () => {
