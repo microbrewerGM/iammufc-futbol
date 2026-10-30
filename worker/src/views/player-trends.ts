@@ -29,6 +29,7 @@ export function playerTrendsBody(model: PlayerTrendsView, strings: Readonly<Reco
     : t("total", "total");
   const axisDescription = `${t("Horizontal axis: season", "Eje horizontal: temporada")}. ${t("Vertical axis", "Eje vertical")}: ${metric} ${axisUnits}.`;
   const heading = tr("heading", t("Player trends", "Evolución de jugadores"));
+  const selectedPlayer = model.request.person_ids.map(name).join(", ");
   const seasons = model.request.seasons;
   const allCells = model.series.flatMap(s => s.cells);
   const gapReasons = new Set(["missing_row", "missing_numerator", "missing_minutes", "zero_minutes"]);
@@ -84,7 +85,7 @@ export function playerTrendsBody(model: PlayerTrendsView, strings: Readonly<Reco
     const total = cell.reason === "missing_row" ? esc(reason) : n(cell.total);
     return `<tr><th scope="row">${safeName(series.person_id)}</th><td>${esc(cell.season)}</td><td>${total}</td><td>${n(cell.minutes)}</td><td>${model.request.normalization === "per90" ? n(cell.rate, 2) : esc(reason)}</td><td>${esc(reason)}</td></tr>`;
   })).join("");
-  const tableLabel = tr("table", t("Season by season values and availability", "Valores y disponibilidad por temporada"));
+  const tableLabel = `${tr("table", t("Season by season values and availability", "Valores y disponibilidad por temporada"))} · ${selectedPlayer}`;
   const table = `<div class="player-trend-season-table" role="region" tabindex="0" aria-label="${esc(tableLabel)}"><table><caption>${esc(tableLabel)}</caption><thead><tr>${columns.map(c => `<th scope="col">${esc(c)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>`;
   const sufficientSeries = model.series.filter(s => s.cells.filter(c => c.reason === "supported").length >= 2);
   const insufficientMessage = seasons.length === 1
@@ -110,5 +111,5 @@ export function playerTrendsBody(model: PlayerTrendsView, strings: Readonly<Reco
     const excludedRows = l.excluded.map(p => `<tr><th scope="row">${safeName(p.person_id)}</th><td>${esc(reasonLabel(p.reason))}</td></tr>`).join("");
     leaderboard = `<section aria-label="${esc(tr("leaderboard", t("Per-90 leaderboard", "Clasificación por 90 minutos")))}"><h2>${esc(tr("leaderboard", t("Per-90 leaderboard", "Clasificación por 90 minutos")))} · ${esc(l.season)}</h2><p>${esc(tr("threshold", t("Minimum minutes", "Minutos mínimos")))}: ${n(l.min_minutes)}. ${esc(t("Players below the threshold are excluded and listed.", "Los jugadores por debajo del mínimo se excluyen y se indican."))}</p>${leaderRows ? `<div role="region" tabindex="0" aria-label="${esc(tr("leaderboard", t("Per-90 leaderboard", "Clasificación por 90 minutos")))}"><table><caption>${esc(tr("leaderboard", t("Per-90 leaderboard", "Clasificación por 90 minutos")))}</caption><thead><tr>${[t("Rank", "Posición"), t("Player", "Jugador"), metric, t("Minutes played", "Minutos jugados"), t("Per 90", "Por 90")].map(x => `<th scope="col">${esc(x)}</th>`).join("")}</tr></thead><tbody>${leaderRows}</tbody></table></div>` : `<p role="status">${esc(t("No players have enough minutes to be ranked.", "Ningún jugador tiene minutos suficientes para clasificarse."))}</p>`}${excludedRows ? `<h3>${esc(t("Excluded players", "Jugadores excluidos"))}</h3><div role="region" tabindex="0" aria-label="${esc(t("Excluded players", "Jugadores excluidos"))}"><table><caption>${esc(t("Excluded players", "Jugadores excluidos"))}</caption><thead><tr><th scope="col">${esc(t("Player", "Jugador"))}</th><th scope="col">${esc(t("Reason", "Motivo"))}</th></tr></thead><tbody>${excludedRows}</tbody></table></div>` : ""}</section>`;
   }
-  return `<h1>${esc(heading)}</h1><p>${esc(metric)} · ${esc(range)}</p>${threshold}${eligibility}${chart}${table}${leaderboard}${definition}${attribution}`;
+  return `<h1>${esc(heading)} · ${esc(selectedPlayer)}</h1><p>${esc(metric)} · ${esc(range)}</p>${threshold}${eligibility}${chart}${table}${leaderboard}${definition}${attribution}`;
 }

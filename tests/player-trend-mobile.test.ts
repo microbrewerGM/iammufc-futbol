@@ -37,8 +37,8 @@ const readStylesheet = () => readFileSync(new URL("../worker/public/style.css", 
 
 describe("player trend mobile table", () => {
   it.each([
-    ["English", LOCALES.en, "Season by season values and availability"],
-    ["Spanish", LOCALES.es, "Valores y disponibilidad por temporada"],
+    ["English", LOCALES.en, "Season by season values and availability · Alex"],
+    ["Spanish", LOCALES.es, "Valores y disponibilidad por temporada · Alex"],
   ])("keeps the season table labelled and keyboard-focusable in %s", (_name, locale, label) => {
     const html = render(locale);
     expect(html).toContain(`<div class="player-trend-season-table" role="region" tabindex="0" aria-label="${label}"><table><caption>${label}</caption>`);
