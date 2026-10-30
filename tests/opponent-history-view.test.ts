@@ -31,7 +31,7 @@ describe("opponent history view", () => {
     expect(html).toContain("League data credit"); expect(html).toContain(snapshot);
     expect(html).toContain(locale === "en" ? "3.00" : "3,00"); expect(html).toContain(locale === "en" ? "1.00" : "1,00");
     expect(html).toMatch(/<th scope="col">(?:Status|Estado)<\/th>/);
-    expect(html).toContain('aria-describedby="h2h-summary"');
+    expect(html).toContain('aria-describedby="h2h-summary h2h-record"');
     expect(html).toContain("Arsenal");
     expect(html).toContain(locale === "en" ? "All venues" : "Todas las localías");
     expect(html).toContain("2023-24, 2024-25, 2025-26");

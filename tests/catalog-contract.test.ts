@@ -41,6 +41,106 @@ describe("committed public catalog contract", () => {
     expect(() => decodeCompiledCatalog(badEnum)).toThrow(/unsupported value/);
   });
 
+  it("accepts optional closed source records and rejects source schema drift", () => {
+    const withoutSources = candidate();
+    expect(decodeCompiledCatalog(withoutSources).sources).toEqual([]);
+
+    const withSources = candidate();
+    const matchingCell = first(withSources.coverage);
+    withSources.sources = [{
+      source_id: matchingCell.source_id,
+      source_name: matchingCell.source_name,
+      attribution_asset: matchingCell.attribution_asset,
+      attribution_text: matchingCell.attribution_text,
+      attribution_text_es: matchingCell.attribution_text_es,
+    }];
+    expect(decodeCompiledCatalog(withSources).sources).toEqual(withSources.sources);
+
+    const extraKey = candidate();
+    extraKey.sources = [{
+      source_id: "example_source",
+      source_name: "Example source",
+      attribution_asset: null,
+      attribution_text: null,
+      attribution_text_es: null,
+      private_notes: "forbidden",
+    }];
+    expect(() => decodeCompiledCatalog(extraKey)).toThrow(/must contain exactly/);
+
+    const missingKey = candidate();
+    missingKey.sources = [{
+      source_id: "example_source",
+      source_name: "Example source",
+      attribution_asset: null,
+      attribution_text: null,
+    }];
+    expect(() => decodeCompiledCatalog(missingKey)).toThrow(/must contain exactly/);
+
+    const nonStringId = candidate();
+    nonStringId.sources = [{
+      source_id: 7,
+      source_name: "Example source",
+      attribution_asset: null,
+      attribution_text: null,
+      attribution_text_es: null,
+    }];
+    expect(() => decodeCompiledCatalog(nonStringId)).toThrow(/sources\[0\]\.source_id.*must be a string/);
+
+    const unknownRoot = candidate();
+    unknownRoot.other = true;
+    expect(() => decodeCompiledCatalog(unknownRoot)).toThrow(/must contain exactly/);
+  });
+
+  it("rejects source ids outside the public pattern", () => {
+    const catalog = candidate();
+    catalog.sources = [{
+      source_id: "Bad-Source",
+      source_name: "Example source",
+      attribution_asset: null,
+      attribution_text: null,
+      attribution_text_es: null,
+    }];
+    expect(() => decodeCompiledCatalog(catalog)).toThrow(/sources\[0\]\.source_id.*public contract/);
+  });
+
+  it("rejects source names that are empty after trimming", () => {
+    const catalog = candidate();
+    catalog.sources = [{
+      source_id: "example_source",
+      source_name: "  ",
+      attribution_asset: null,
+      attribution_text: null,
+      attribution_text_es: null,
+    }];
+    expect(() => decodeCompiledCatalog(catalog)).toThrow(/sources\[0\]\.source_name.*non-empty string/);
+  });
+
+  it("rejects duplicate source ids", () => {
+    const catalog = candidate();
+    const source = {
+      source_id: "example_source",
+      source_name: "Example source",
+      attribution_asset: null,
+      attribution_text: null,
+      attribution_text_es: null,
+    };
+    catalog.sources = [source, structuredClone(source)];
+    expect(() => decodeCompiledCatalog(catalog)).toThrow(/duplicate source_id: example_source/);
+  });
+
+  it("rejects source attribution that disagrees with matching coverage", () => {
+    const catalog = candidate();
+    const cell = first(catalog.coverage);
+    catalog.sources = [{
+      source_id: cell.source_id,
+      source_name: "Different source name",
+      attribution_asset: cell.attribution_asset,
+      attribution_text: cell.attribution_text,
+      attribution_text_es: cell.attribution_text_es,
+    }];
+    expect(() => decodeCompiledCatalog(catalog)).toThrow(/source display disagrees/);
+  });
+
   it("rejects duplicate metric ids and coverage cells", () => {
     const duplicateMetric = candidate();
     duplicateMetric.metrics.push(structuredClone(first(duplicateMetric.metrics)));
