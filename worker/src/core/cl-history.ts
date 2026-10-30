@@ -10,7 +10,16 @@ export interface CLHistoryRecord {
   goals: number;
   goals_against: number;
   snapshot_id: string;
+  stage_reached: StageCode | null;
 }
+
+export type StageCode = "group_stage" | "league_phase" | "knockout_playoff" | "round_of_16" |
+  "quarter_final" | "semi_final" | "final" | "winner";
+
+const STAGE_CODES = new Set<StageCode>([
+  "group_stage", "league_phase", "knockout_playoff", "round_of_16",
+  "quarter_final", "semi_final", "final", "winner",
+]);
 
 export type CLHistoryEntry =
   | { status: "observed"; row: CLHistoryRecord }
@@ -57,13 +66,20 @@ function validateRows(rows: unknown[], seasons: readonly string[], snapshotId: s
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid CL history row");
     const row = value as Record<string, unknown>;
     const keys = ["season", "played", "won", "drawn", "lost", "goals", "goals_against", "snapshot_id"];
-    if (Object.keys(row).length !== keys.length || keys.some((key) => !Object.hasOwn(row, key)) ||
+    const hasStage = Object.hasOwn(row, "stage_reached") || Object.hasOwn(row, "stage_snapshot_id");
+    if (Object.keys(row).length !== keys.length + (hasStage ? 2 : 0) || keys.some((key) => !Object.hasOwn(row, key)) ||
         !validSeason(row.season) || !allowed.has(row.season) || seen.has(row.season) ||
         !safeCount(row.played, true) || !safeCount(row.won) || !safeCount(row.drawn) || !safeCount(row.lost) ||
         !safeCount(row.goals) || !safeCount(row.goals_against) || row.won + row.drawn + row.lost !== row.played ||
-        row.snapshot_id !== snapshotId) throw new Error("invalid CL history row");
+        row.snapshot_id !== snapshotId || (hasStage && !(
+          row.stage_reached === null && row.stage_snapshot_id === null ||
+          typeof row.stage_reached === "string" && STAGE_CODES.has(row.stage_reached as StageCode) && row.stage_snapshot_id === snapshotId
+        ))) {
+      throw new Error("invalid CL history row");
+    }
     seen.add(row.season);
-    return row as unknown as CLHistoryRecord;
+    const { stage_snapshot_id: _stageSnapshotId, ...record } = row;
+    return { ...record, stage_reached: hasStage ? row.stage_reached as StageCode : null } as unknown as CLHistoryRecord;
   });
 }
 
@@ -75,10 +91,15 @@ export async function clHistoryRead(env: Env, catalog: CompiledCatalog): Promise
   if (seasons.length > 0) {
     const placeholders = seasons.map(() => "?").join(", ");
     statements.push(env.DB.prepare(
-      `SELECT season, played, won, drawn, lost, goals, goals_against, snapshot_id
-       FROM season_stats
-      WHERE competition = ? AND season IN (${placeholders})
-      ORDER BY season DESC LIMIT ${seasons.length + 1}`,
+      `SELECT s.season, s.played, s.won, s.drawn, s.lost, s.goals, s.goals_against, s.snapshot_id,
+              st.stage_reached, st.snapshot_id AS stage_snapshot_id
+       FROM season_stats s
+       LEFT JOIN cl_season_stage st
+         ON st.season = s.season
+        AND st.snapshot_id = (SELECT snapshot_id FROM
+          snapshots AS current_snapshot ORDER BY created_at DESC LIMIT 1)
+      WHERE s.competition = ? AND s.season IN (${placeholders})
+      ORDER BY s.season DESC LIMIT ${seasons.length + 1}`,
     ).bind("CL", ...seasons));
   }
   const [latest, rowsResult] = await env.DB.batch(statements);
@@ -88,7 +109,7 @@ export async function clHistoryRead(env: Env, catalog: CompiledCatalog): Promise
     return { result: { snapshot_id: null, entries: [] }, sourcesJson: undefined };
   }
   if (seasons.length === 0) return { result: { snapshot_id: snapshotId, entries: [] }, sourcesJson: meta?.sources_json };
-  const results = (rowsResult?.results ?? []) as CLHistoryRecord[];
+  const results = (rowsResult?.results ?? []) as unknown[];
   if (results.length > seasons.length) throw new Error("invalid CL history row");
   const rows = validateRows(results, seasons, snapshotId);
   const observed = new Map(rows.map((row) => [row.season, row]));

@@ -45,15 +45,20 @@ describe("Champions League history query", () => {
     const store = fakeDb([row("2024-25"), row("2016-17")]);
     const result = await clHistoryRows(store.env, catalog(["2024-25", "2016-17", "2017-18"]));
     expect(result.entries).toEqual([
-      { status: "observed", row: row("2024-25") },
+      { status: "observed", row: { ...row("2024-25"), stage_reached: null } },
       { status: "gap", season: "2017-18" },
-      { status: "observed", row: row("2016-17") },
+      { status: "observed", row: { ...row("2016-17"), stage_reached: null } },
     ]);
     expect(store.calls[1]).toEqual({
-      sql: `SELECT season, played, won, drawn, lost, goals, goals_against, snapshot_id
-       FROM season_stats
-      WHERE competition = ? AND season IN (?, ?, ?)
-      ORDER BY season DESC LIMIT 4`,
+      sql: `SELECT s.season, s.played, s.won, s.drawn, s.lost, s.goals, s.goals_against, s.snapshot_id,
+              st.stage_reached, st.snapshot_id AS stage_snapshot_id
+       FROM season_stats s
+       LEFT JOIN cl_season_stage st
+         ON st.season = s.season
+        AND st.snapshot_id = (SELECT snapshot_id FROM
+          snapshots AS current_snapshot ORDER BY created_at DESC LIMIT 1)
+      WHERE s.competition = ? AND s.season IN (?, ?, ?)
+      ORDER BY s.season DESC LIMIT 4`,
       bindings: ["CL", "2024-25", "2017-18", "2016-17"],
     });
   });
