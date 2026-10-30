@@ -38,8 +38,8 @@ const labels = { en: "Per-90 leaderboard", es: "Clasificación por 90 minutos" }
 const exclusions = { en: "Excluded players", es: "Jugadores excluidos" };
 const expected = [
   ["1", "Player 1", "4", "1,800", "0.20"],
-  ["2", "Player 2", "1", "450", "0.20"],
-  ["3", "Player 3", "1", "450", "0.20"],
+  ["1 (tied)", "Player 2", "1", "450", "0.20"],
+  ["1 (tied)", "Player 3", "1", "450", "0.20"],
   ["4", "Player 4", "0", "450", "0.00"],
 ];
 
@@ -53,13 +53,13 @@ describe("bilingual per-90 leaderboard parity", () => {
     expect(es[0]![3]).toBe("1800");
     expect(es).toEqual([
       ["1", "Player 1", "4", "1800", "0,20"],
-      ["2", "Player 2", "1", "450", "0,20"],
-      ["3", "Player 3", "1", "450", "0,20"],
+      ["1 (empate)", "Player 2", "1", "450", "0,20"],
+      ["1 (empate)", "Player 3", "1", "450", "0,20"],
       ["4", "Player 4", "0", "450", "0,00"],
     ]);
     const numericCells = (rows: string[][]) => rows.map(cells => cells.map((value, index) =>
       index === 3 ? value.replace(",", "") : index === 4 ? value.replace(",", ".") : value));
-    expect(numericCells(es)).toEqual(numericCells(en));
+    expect(numericCells(es).map(cells => cells.slice(1))).toEqual(numericCells(en).map(cells => cells.slice(1)));
   });
 
   it.each(["en", "es"] as const)("lists the low-minute player outside the ranking in %s", locale => {

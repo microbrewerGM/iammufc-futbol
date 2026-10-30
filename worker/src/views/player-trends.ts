@@ -107,7 +107,14 @@ export function playerTrendsBody(model: PlayerTrendsView, strings: Readonly<Reco
   let leaderboard = "";
   if (model.leaders) {
     const l = model.leaders;
-    const leaderRows = l.leaders.map((p, i) => `<tr><td>${i + 1}</td><th scope="row">${safeName(p.person_id)}</th><td>${n(p.total)}</td><td>${n(p.minutes)}</td><td>${n(p.rate, 2)}</td></tr>`).join("");
+    let previousRank = 0;
+    const leaderRows = l.leaders.map((p, i) => {
+      const tied = i > 0 && p.rate === l.leaders[i - 1]!.rate;
+      const rank = tied ? previousRank : i + 1;
+      previousRank = rank;
+      const rankText = tied ? `${rank} (${t("tied", "empate")})` : `${rank}`;
+      return `<tr><td>${rankText}</td><th scope="row">${safeName(p.person_id)}</th><td>${n(p.total)}</td><td>${n(p.minutes)}</td><td>${n(p.rate, 2)}</td></tr>`;
+    }).join("");
     const excludedRows = l.excluded.map(p => `<tr><th scope="row">${safeName(p.person_id)}</th><td>${esc(reasonLabel(p.reason))}</td></tr>`).join("");
     leaderboard = `<section aria-label="${esc(tr("leaderboard", t("Per-90 leaderboard", "Clasificación por 90 minutos")))}"><h2>${esc(tr("leaderboard", t("Per-90 leaderboard", "Clasificación por 90 minutos")))} · ${esc(l.season)}</h2><p>${esc(tr("threshold", t("Minimum minutes", "Minutos mínimos")))}: ${n(l.min_minutes)}. ${esc(t("Players below the threshold are excluded and listed.", "Los jugadores por debajo del mínimo se excluyen y se indican."))}</p>${leaderRows ? `<div role="region" tabindex="0" aria-label="${esc(tr("leaderboard", t("Per-90 leaderboard", "Clasificación por 90 minutos")))}"><table><caption>${esc(tr("leaderboard", t("Per-90 leaderboard", "Clasificación por 90 minutos")))}</caption><thead><tr>${[t("Rank", "Posición"), t("Player", "Jugador"), metric, t("Minutes played", "Minutos jugados"), t("Per 90", "Por 90")].map(x => `<th scope="col">${esc(x)}</th>`).join("")}</tr></thead><tbody>${leaderRows}</tbody></table></div>` : `<p role="status">${esc(t("No players have enough minutes to be ranked.", "Ningún jugador tiene minutos suficientes para clasificarse."))}</p>`}${excludedRows ? `<h3>${esc(t("Excluded players", "Jugadores excluidos"))}</h3><div role="region" tabindex="0" aria-label="${esc(t("Excluded players", "Jugadores excluidos"))}"><table><caption>${esc(t("Excluded players", "Jugadores excluidos"))}</caption><thead><tr><th scope="col">${esc(t("Player", "Jugador"))}</th><th scope="col">${esc(t("Reason", "Motivo"))}</th></tr></thead><tbody>${excludedRows}</tbody></table></div>` : ""}</section>`;
   }
