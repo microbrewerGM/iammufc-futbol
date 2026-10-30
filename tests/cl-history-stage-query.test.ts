@@ -9,49 +9,69 @@ const catalog = { version: 1, metrics: [], coverage: seasons.map((season) => ({ 
 const totals = (season: string) => ({ season, played: 2, won: 1, drawn: 1, lost: 0, goals: 3, goals_against: 2, snapshot_id: snapshot });
 const stage = (season: string, stage_reached: unknown = "semi_final", snapshot_id: unknown = snapshot) => ({ season, stage_reached, snapshot_id });
 
-function fakeDb(stageRows: unknown[] = [], totalRows: unknown[] = [totals(seasons[0]!)]) {
+function fakeDb(stageRows: unknown[] = [], totalRows: unknown[] = [totals(seasons[0]!)], stageError?: Error) {
   const calls: string[] = [];
   const DB = {
-    prepare(sql: string) { const statement = { sql, bind() { return statement; } }; return statement; },
-    async batch(statements: { sql: string }[]) {
-      return statements.map(({ sql }) => {
+    prepare(sql: string) {
+      const statement = { sql, bind() { return statement; }, async all<T>() {
         calls.push(sql);
-        if (/FROM snapshots/.test(sql)) return { results: [{ snapshot_id: snapshot, sources_json: "{}" }] };
-        return { results: totalRows.map((row) => {
-          const season = (row as { season: string }).season;
-          const match = stageRows.find((candidate) => (candidate as { season: string }).season === season) as { stage_reached: unknown; snapshot_id: unknown } | undefined;
-          return { ...(row as Record<string, unknown>), stage_reached: match?.stage_reached ?? null, stage_snapshot_id: match?.snapshot_id ?? null };
-        }) };
-      });
+        if (sql.includes("cl_season_stage")) {
+          if (stageError) throw stageError;
+          return { results: stageRows as T[] };
+        }
+        return { results: totalRows as T[] };
+      } };
+      return statement;
+    },
+    async batch(statements: { sql: string; all: () => Promise<unknown> }[]) {
+      return Promise.all(statements.map(async ({ sql, all }) => {
+        calls.push(sql);
+        return /FROM snapshots/.test(sql)
+          ? { results: [{ snapshot_id: snapshot, sources_json: "{}" }] }
+          : await all();
+      }));
     },
   };
   return { env: { DB } as unknown as Env, calls };
 }
 
 describe("CL stage history query", () => {
-  it("reads stage rows in the snapshot batch and adds stage to observed records", async () => {
+  it("reads stage rows separately and adds stage to observed records", async () => {
     const db = fakeDb([stage(seasons[0]!, "semi_final")]);
     const result = await clHistoryRows(db.env, catalog);
     expect(result.entries).toEqual([
       { status: "observed", row: { ...totals(seasons[0]!), stage_reached: "semi_final" } },
       { status: "gap", season: seasons[1] },
     ]);
-    expect(db.calls).toHaveLength(2);
-    expect(db.calls[1]).toContain("LEFT JOIN cl_season_stage");
-    expect(db.calls[1]).toContain("snapshot_id = (SELECT snapshot_id FROM\n          snapshots");
+    expect(db.calls).toHaveLength(4);
+    expect(db.calls[2]).not.toContain("cl_season_stage");
+    expect(db.calls[3]).toContain("FROM cl_season_stage");
   });
 
-  it("leaves stage unavailable when the season has no stage row", async () => {
-    const result = await clHistoryRows(fakeDb().env, catalog);
-    expect(result.entries[0]).toMatchObject({ status: "observed", row: { stage_reached: null } });
+  it("serves totals with null stages when the stage table is missing", async () => {
+    const result = await clHistoryRows(fakeDb([], [totals(seasons[0]!)], new Error("no such table: cl_season_stage")).env, catalog);
+    expect(result.entries[0]).toEqual({ status: "observed", row: { ...totals(seasons[0]!), stage_reached: null } });
   });
 
-  it("rejects unknown codes and mismatched stage snapshots", async () => {
-    await expect(clHistoryRows(fakeDb([stage(seasons[0]!, "group")]).env, catalog)).rejects.toThrow("invalid CL history row");
-    await expect(clHistoryRows(fakeDb([stage(seasons[0]!, "semi_final", "b".repeat(64))]).env, catalog)).rejects.toThrow("invalid CL history row");
+  it("nulls only the stage cell with an unknown code", async () => {
+    const db = fakeDb([stage(seasons[0]!, "group"), stage(seasons[1]!, "final")], [totals(seasons[0]!), totals(seasons[1]!)]);
+    const result = await clHistoryRows(db.env, catalog);
+    expect(result.entries).toEqual([
+      { status: "observed", row: { ...totals(seasons[0]!), stage_reached: null } },
+      { status: "observed", row: { ...totals(seasons[1]!), stage_reached: "final" } },
+    ]);
   });
 
-  it("rejects duplicate season rows", async () => {
+  it("nulls only the stage cell with a mismatched snapshot", async () => {
+    const db = fakeDb([stage(seasons[0]!, "semi_final", "b".repeat(64)), stage(seasons[1]!, "final")], [totals(seasons[0]!), totals(seasons[1]!)]);
+    const result = await clHistoryRows(db.env, catalog);
+    expect(result.entries).toEqual([
+      { status: "observed", row: { ...totals(seasons[0]!), stage_reached: null } },
+      { status: "observed", row: { ...totals(seasons[1]!), stage_reached: "final" } },
+    ]);
+  });
+
+  it("rejects duplicate totals season rows", async () => {
     await expect(clHistoryRows(fakeDb([], [totals(seasons[0]!), totals(seasons[0]!)]).env, catalog)).rejects.toThrow("invalid CL history row");
   });
 });

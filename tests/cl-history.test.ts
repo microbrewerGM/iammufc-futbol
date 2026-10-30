@@ -50,17 +50,12 @@ describe("Champions League history query", () => {
       { status: "observed", row: { ...row("2016-17"), stage_reached: null } },
     ]);
     expect(store.calls[1]).toEqual({
-      sql: `SELECT s.season, s.played, s.won, s.drawn, s.lost, s.goals, s.goals_against, s.snapshot_id,
-              st.stage_reached, st.snapshot_id AS stage_snapshot_id
-       FROM season_stats s
-       LEFT JOIN cl_season_stage st
-         ON st.season = s.season
-        AND st.snapshot_id = (SELECT snapshot_id FROM
-          snapshots AS current_snapshot ORDER BY created_at DESC LIMIT 1)
-      WHERE s.competition = ? AND s.season IN (?, ?, ?)
-      ORDER BY s.season DESC LIMIT 4`,
+      sql: `SELECT season, played, won, drawn, lost, goals, goals_against, snapshot_id
+       FROM season_stats WHERE competition = ? AND season IN (?, ?, ?)
+       ORDER BY season DESC LIMIT 4`,
       bindings: ["CL", "2024-25", "2017-18", "2016-17"],
     });
+    expect(store.calls[2]?.sql).toContain("FROM cl_season_stage");
   });
 
   it("rejects coverage larger than the hard cap of 20 seasons", async () => {
