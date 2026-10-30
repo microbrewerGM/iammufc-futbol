@@ -27,7 +27,8 @@ export function isDevRequest(url) {
 }
 export function accessHeadersFor(url, headers, credentials) {
   if (!isDevRequest(url)) return headers;
-  return { ...headers, 'cf-access-client-id': credentials.id, 'cf-access-client-secret': credentials.secret };
+  const kept = Object.fromEntries(Object.entries(headers).filter(([name]) => !['origin', 'sec-fetch-site'].includes(name.toLowerCase())));
+  return { ...kept, origin: `https://${DEV_HOST}`, 'sec-fetch-site': 'same-origin', 'cf-access-client-id': credentials.id, 'cf-access-client-secret': credentials.secret };
 }
 export function isBarUrl(url) {
   try { const parsed = new URL(url); return parsed.protocol === 'https:' && BAR_HOSTS.has(parsed.hostname); } catch { return false; }

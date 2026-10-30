@@ -119,6 +119,35 @@ describe('gauntlet capture guards', () => {
     }
   });
 
+  it('adds Origin and same-origin Sec-Fetch-Site on dev requests only', () => {
+    const credentials = { id: 'id', secret: 'secret' };
+    const dev = accessHeadersFor(devUrl, { accept: 'text/html', Origin: 'null', 'sec-fetch-site': 'none' }, credentials);
+    expect(dev).toEqual({ accept: 'text/html', origin: 'https://iammufc-dev.aaron-cf2.workers.dev', 'sec-fetch-site': 'same-origin', 'cf-access-client-id': 'id', 'cf-access-client-secret': 'secret' });
+    const bar = { accept: 'text/html' };
+    expect(accessHeadersFor('https://fbref.com/one', bar, credentials)).toBe(bar);
+    for (const url of ['https://iammufc-dev.aaron-cf2.workers.dev.evil.com/', 'http://iammufc-dev.aaron-cf2.workers.dev/']) {
+      expect(accessHeadersFor(url, bar, credentials)).toBe(bar);
+    }
+  });
+
+  it('passes Origin headers to route.fetch for dev requests including locale paths', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gauntlet-test-'));
+    const files = await setup(dir);
+    const fake = mockChromium({ routeRequests: [{ url: `${devUrl}` }, { url: 'https://iammufc-dev.aaron-cf2.workers.dev/es/compare' }] });
+    const oldLog = console.log;
+    console.log = () => {};
+    try {
+      await run({ ...files, chromium: fake.chromium, env: valid, randomBytes: seededRandom(1) });
+      expect(fake.observations.fetches).toHaveLength(2);
+      for (const { options } of fake.observations.fetches) {
+        expect(options.headers).toMatchObject({ origin: 'https://iammufc-dev.aaron-cf2.workers.dev', 'sec-fetch-site': 'same-origin' });
+      }
+    } finally {
+      console.log = oldLog;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('keeps bars valid and fails when the question has no bar URLs', () => {
     expect(isDevRequest(devUrl)).toBe(true);
     expect(isDevRequest('https://iammufc-dev.aaron-cf2.workers.dev.evil.test/')).toBe(false);
