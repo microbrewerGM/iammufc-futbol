@@ -89,7 +89,7 @@ export function opponentHistoryBody(model: OpponentHistoryView, locale: LocaleCo
     ? { played: total.played, won: total.won, drawn: total.drawn, lost: total.lost, gf: total.goals_for, ga: total.goals_against } : undefined;
   const headline = headlineNumbers
     ? `<p id="h2h-record">${esc(s.recordHeadline.replace(/\{(\w+)\}/g, (_m, key: string) => new Intl.NumberFormat(locale === "es" ? "es-ES" : "en-GB").format(headlineNumbers[key] ?? 0)))}${partial ? ` · ${esc(s.partial)}` : ""}</p>` : "";
-  const table = `<div class="comparison-table opponent-history-table" role="region" tabindex="0" aria-label="${esc(s.title)}"><table aria-describedby="h2h-summary"><caption>${esc(s.title)}${partial ? ` · ${esc(s.partial)}` : ""}</caption><thead><tr>${headers.map(h => `<th scope="col">${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
+  const table = `<div class="comparison-table opponent-history-table" role="region" tabindex="0" aria-label="${esc(s.title)}"><table aria-describedby="h2h-summary${headline ? " h2h-record" : ""}"><caption>${esc(s.title)}${partial ? ` · ${esc(s.partial)}` : ""}</caption><thead><tr>${headers.map(h => `<th scope="col">${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
   const scaleY = (v: number) => 74 - Math.max(0, Math.min(3, v)) * 20;
   const plot = result.seasons.map((entry, i) => {
     const x = 42 + i * 54;
@@ -112,5 +112,5 @@ export function opponentHistoryBody(model: OpponentHistoryView, locale: LocaleCo
   const sources = `<section aria-label="${esc(s.source)}"><h2>${esc(s.source)}</h2>${credits.map(c => `<p>${esc(c)}</p>`).join("")}${lineage.some(ref => !credit(ref)) ? `<p>${esc(s.attributionUnavailable)}</p>` : ""}<p>${esc(s.snapshot)}: ${esc(result.snapshot_id)}</p></section>`;
   const unavailableNote = unavailableSeasons.length
     ? `<p role="note">${esc(s.unavailableSeasons ?? defaultStrings[locale].unavailableSeasons!)}: ${esc(unavailableSeasons.join(", "))}</p>` : "";
-  return `<h1>${esc(s.title)}</h1><p id="h2h-summary">${summary}</p>${headline}${partial ? `<p role="note">${esc(s.partial)}</p>` : ""}${unavailableNote}${result.status === "missing_capability" ? `<p role="status">${esc(s.missing)}</p>` : ""}${chart}${table}${sources}`;
+  return `<h1>${esc(s.title)}: ${esc(opponent)}</h1><p id="h2h-summary">${summary}</p>${headline}${partial ? `<p role="note">${esc(s.partial)}</p>` : ""}${unavailableNote}${result.status === "missing_capability" ? `<p role="status">${esc(s.missing)}</p>` : ""}${chart}${table}${sources}`;
 }

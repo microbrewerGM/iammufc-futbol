@@ -60,7 +60,17 @@ export interface Locale {
     playerTrendsThroughLabel: string;
     playerTrendsSubmit: string;
     opponentHistoryTitle: string;
+    opponentHistoryChoose: string;
+    opponentHistoryOpponentLabel: string;
+    opponentHistorySeasons: string;
+    opponentHistoryVenue: string;
+    opponentHistoryVenueAll: string;
+    opponentHistoryVenueHome: string;
+    opponentHistoryVenueAway: string;
+    opponentHistorySubmit: string;
+    opponentHistoryChangeSelection: string;
     opponentHistoryInvalid: string;
+    opponentHistoryNoSeasons: string;
     opponentHistoryUnavailable: string;
     opponentHistoryLink: string;
     freshnessHeading: string;
@@ -189,7 +199,17 @@ const EN: Locale = {
     playerTrendsThroughLabel: "Through",
     playerTrendsSubmit: "View trend",
     opponentHistoryTitle: "Opponent history",
+    opponentHistoryChoose: "Choose an opponent and scope",
+    opponentHistoryOpponentLabel: "Opponent",
+    opponentHistorySeasons: "Seasons",
+    opponentHistoryVenue: "Venue",
+    opponentHistoryVenueAll: "All venues",
+    opponentHistoryVenueHome: "Home",
+    opponentHistoryVenueAway: "Away",
+    opponentHistorySubmit: "View history",
+    opponentHistoryChangeSelection: "Change selection",
     opponentHistoryInvalid: "Invalid opponent history selection.",
+    opponentHistoryNoSeasons: "Select at least one season.",
     opponentHistoryUnavailable: "Opponent history is temporarily unavailable.",
     opponentHistoryLink: "Opponent history",
     freshnessHeading: "Data freshness",
@@ -322,7 +342,17 @@ const ES: Locale = {
     playerTrendsThroughLabel: "Hasta",
     playerTrendsSubmit: "Ver evolución",
     opponentHistoryTitle: "Historial contra rivales",
+    opponentHistoryChoose: "Elige un rival y el alcance",
+    opponentHistoryOpponentLabel: "Rival",
+    opponentHistorySeasons: "Temporadas",
+    opponentHistoryVenue: "Localía",
+    opponentHistoryVenueAll: "Todas las localías",
+    opponentHistoryVenueHome: "Local",
+    opponentHistoryVenueAway: "Visitante",
+    opponentHistorySubmit: "Ver historial",
+    opponentHistoryChangeSelection: "Cambiar selección",
     opponentHistoryInvalid: "Selección de historial de rival no válida.",
+    opponentHistoryNoSeasons: "Selecciona al menos una temporada.",
     opponentHistoryUnavailable: "El historial del rival no está disponible temporalmente.",
     opponentHistoryLink: "Historial contra rivales",
     freshnessHeading: "Actualización de los datos",

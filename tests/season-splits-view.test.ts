@@ -15,6 +15,7 @@ const tableRow = (html:string, name:string) => html.match(new RegExp(`<tr><th sc
 describe("season split body", () => {
   it.each(["en","es"] as const)("renders oracle venue totals and rates in %s", code => {
     const body=render(model(),code);
+    expect(body).toContain(code==="en"?"Rows combine the selected seasons.":"Las filas combinan las temporadas seleccionadas.");
     expect(tableRow(body,code==="en"?"Home":"Local")).toContain("<td>1</td><td>1</td><td>0</td><td>0</td><td>2</td><td>0</td><td>2</td><td>3</td>");
     expect(tableRow(body,code==="en"?"Away":"Visitante")).toContain("<td>1</td><td>0</td><td>0</td><td>1</td><td>1</td><td>3</td><td>-2</td><td>0</td>");
     expect(body).toContain(code==="en"?"100.00":"100,00");
@@ -26,6 +27,7 @@ describe("season split body", () => {
     const value=model(); const req={...request,group_by:"opponent" as const};
     value.result=run([row,{...facts[1]!,opponent_id:"club:1"}],req); value.selection=seasonSplitSelection(req);
     const body=render(value,code), r=tableRow(body,"Alpha");
+    expect(body).toContain(code==="en"?"Rows combine the selected seasons.":"Las filas combinan las temporadas seleccionadas.");
     expect(r).toContain("<td>2</td><td>1</td><td>0</td><td>1</td><td>3</td><td>3</td><td>0</td><td>3</td>");
     expect(r).toContain(code==="en"?"1.50":"1,50"); expect(r).toContain(code==="en"?"50.00":"50,00");
     // Uneven seasons: 1 win over three games is 1 point/game, not mean seasonal 1.5.
@@ -91,7 +93,17 @@ describe("season split body", () => {
     expect(body).toContain("<legend>");expect(body).toContain("<caption>");expect(body).toContain('scope="col"');expect(body).toContain('scope="row"');expect(body).toContain('tabindex="0"');expect(body).toContain('method="get"');
     expect(body).not.toMatch(/<script|<style|style=|onclick=/);
   });
-  it("renders initial controls without invented results",()=>{const value=model();delete value.result;expect(render(value)).not.toContain("<table");expect(render(value)).not.toContain("No completed matches");});
+  it.each(["en","es"] as const)("keeps original method definitions and no aggregation disclosure on initial pages in %s",code=>{
+    const value=model();delete value.result;const body=render(value,code);
+    expect(body).toContain(code==="en"?"Manchester United · Premier League. Completed matches only. Points = 3 × wins + draws. Rates divide totals by the same played matches; they are not schedule-adjusted.":"Manchester United · Premier League. Solo partidos finalizados. Puntos = 3 × victorias + empates. Las tasas dividen los totales entre los mismos partidos jugados; no se ajustan al calendario.");
+    expect(body).not.toContain("Rows combine the selected seasons.");expect(body).not.toContain("Las filas combinan las temporadas seleccionadas.");
+    expect(body).not.toContain("<table");expect(body).not.toContain("No completed matches");
+  });
+  it.each(["en","es"] as const)("keeps original method definitions and no aggregation disclosure on validation pages in %s",code=>{
+    const value=model();value.error="Invalid selection";const body=render(value,code);
+    expect(body).toContain(code==="en"?"Manchester United · Premier League. Completed matches only. Points = 3 × wins + draws. Rates divide totals by the same played matches; they are not schedule-adjusted.":"Manchester United · Premier League. Solo partidos finalizados. Puntos = 3 × victorias + empates. Las tasas dividen los totales entre los mismos partidos jugados; no se ajustan al calendario.");
+    expect(body).not.toContain("Rows combine the selected seasons.");expect(body).not.toContain("Las filas combinan las temporadas seleccionadas.");
+  });
   it.each(["en","es"] as const)("groups season choices chronologically with localized labels in %s",code=>{
     const value=model();value.seasons=["1992-93","2000-01","2010-11","2020-21"];value.selection.seasons=["2000-01","2020-21"];
     const body=render(value,code), fieldset=body.slice(body.indexOf("<fieldset>"),body.indexOf('<label for="splits-group_by"'));
