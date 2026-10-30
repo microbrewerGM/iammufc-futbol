@@ -855,12 +855,40 @@ function registerLocaleRoutes(code: LocaleCode) {
     const availableSeasons = [...new Set(catalog.coverage.filter(cell => cell.competition === "PL").map(cell => cell.season))].sort();
     const opponentIds = [...APPROVED_OPPONENT_IDS];
     const venue = venueValue === "home" || venueValue === "away" ? venueValue : null;
-    const renderSelection = (labels: ReadonlyMap<string, string>, selectedOpponent: string | null, selectedSeasons: readonly string[], selectedVenue: "home" | "away" | null) => {
-      const sortedOpponentIds = [...opponentIds].sort((a, b) =>
+    const renderSelection = (
+      labels: ReadonlyMap<string, string>,
+      ids: readonly string[],
+      selectedOpponent: string | null,
+      selectedSeasons: readonly string[],
+      selectedVenue: "home" | "away" | null,
+      message: string | null = null,
+    ) => {
+      const sortedOpponentIds = [...ids].sort((a, b) =>
         (labels.get(a) ?? a).localeCompare(labels.get(b) ?? b) || a.localeCompare(b));
-      const options = sortedOpponentIds.map(id => `<option value="${esc(id)}"${id === selectedOpponent ? " selected" : ""}>${esc(labels.get(id) ?? id)}</option>`).join("");
-      const seasonOptions = availableSeasons.map(season => `<label><input type="checkbox" name="seasons" value="${esc(season)}"${selectedSeasons.includes(season) ? " checked" : ""}>${esc(season)}</label>`).join("");
-      return `<h2>${esc(t.opponentHistoryChoose)}</h2><form method="get" action="/${locale.code}/opponents/history"><input type="hidden" name="schema_version" value="1"><input type="hidden" name="competition" value="PL"><input type="hidden" name="group_by" value="opponent"><label>${esc(t.opponentHistoryOpponentLabel)}<select name="opponent_id" required>${options}</select></label><fieldset><legend>${esc(t.opponentHistorySeasons)}</legend>${seasonOptions}</fieldset><label>${esc(t.opponentHistoryVenue)}<select name="venue"><option value="all"${selectedVenue === null ? " selected" : ""}>${esc(t.opponentHistoryVenueAll)}</option><option value="home"${selectedVenue === "home" ? " selected" : ""}>${esc(t.opponentHistoryVenueHome)}</option><option value="away"${selectedVenue === "away" ? " selected" : ""}>${esc(t.opponentHistoryVenueAway)}</option></select></label><button type="submit">${esc(t.opponentHistorySubmit)}</button></form>`;
+      const options = sortedOpponentIds.map(id =>
+        `<option value="${esc(id)}"${id === selectedOpponent ? " selected" : ""}>${esc(labels.get(id) ?? id)}</option>`).join("");
+      const seasonOptions = availableSeasons.map(season =>
+        `<label><input type="checkbox" name="seasons" value="${esc(season)}"` +
+        `${selectedSeasons.includes(season) ? " checked" : ""}>${esc(season)}</label>`).join("");
+      const venueOption = (value: string, label: string, selected: boolean) =>
+        `<option value="${value}"${selected ? " selected" : ""}>${esc(label)}</option>`;
+      return [
+        `<h2>${esc(t.opponentHistoryChoose)}</h2>`,
+        message ? `<p role="alert">${esc(message)}</p>` : "",
+        `<form method="get" action="/${locale.code}/opponents/history">`,
+        '<input type="hidden" name="schema_version" value="1">',
+        '<input type="hidden" name="competition" value="PL">',
+        '<input type="hidden" name="group_by" value="opponent">',
+        `<label>${esc(t.opponentHistoryOpponentLabel)}<select name="opponent_id" required>${options}</select></label>`,
+        `<fieldset><legend>${esc(t.opponentHistorySeasons)}</legend>${seasonOptions}</fieldset>`,
+        `<label>${esc(t.opponentHistoryVenue)}<select name="venue">`,
+        venueOption("all", t.opponentHistoryVenueAll, selectedVenue === null),
+        venueOption("home", t.opponentHistoryVenueHome, selectedVenue === "home"),
+        venueOption("away", t.opponentHistoryVenueAway, selectedVenue === "away"),
+        "</select></label>",
+        `<button type="submit">${esc(t.opponentHistorySubmit)}</button>`,
+        "</form>",
+      ].join("");
     };
     if (params.size === 0) {
       if (!(await enforceBudget(c.env, { failClosed: true }))) return renderError(unavailable, 503);
@@ -872,13 +900,26 @@ function registerLocaleRoutes(code: LocaleCode) {
         if (await currentSnapshot(c.env) !== snapshot) throw new Error("snapshot changed");
         const defaultOpponent = [...opponentIds].sort((a, b) =>
           (labels.get(a) ?? a).localeCompare(labels.get(b) ?? b) || a.localeCompare(b))[0]!;
-        const body = `<h1>${esc(t.opponentHistoryTitle)}</h1>${renderSelection(labels, defaultOpponent, availableSeasons.slice(-1), null)}`;
+        const body = `<h1>${esc(t.opponentHistoryTitle)}</h1>${renderSelection(labels, opponentIds, defaultOpponent, availableSeasons.slice(-1), null)}`;
         const res = html(page(body, { title: t.opponentHistoryTitle, locale, unprefixedPath: "/opponents/history", snapshotId: snapshot }));
         res.headers.set("Cache-Control", CACHE_CONTROL);
         return res;
       } catch { return renderError(unavailable, 503); }
     }
-    if (!opponent || seasons.length === 0) return renderError(invalid, 400);
+    if (!opponent) return renderError(invalid, 400);
+    if (seasons.length === 0) {
+      if (!(await enforceBudget(c.env, { failClosed: true }))) return renderError(unavailable, 503);
+      try {
+        const publication = await currentPublication(c.env);
+        const snapshot = publication?.snapshotId;
+        if (!snapshot) throw new Error("snapshot unavailable");
+        const labels = await readOpponentLabels(c.env, snapshot, opponentIds);
+        if (await currentSnapshot(c.env) !== snapshot) throw new Error("snapshot changed");
+        const form = renderSelection(labels, opponentIds, opponent, [], venue, t.opponentHistoryNoSeasons);
+        const body = `<h1>${esc(t.opponentHistoryTitle)}</h1>${form}`;
+        return html(page(body, { title: t.opponentHistoryTitle, locale, unprefixedPath: "/opponents/history", snapshotId: snapshot }), 400);
+      } catch { return renderError(unavailable, 503); }
+    }
     const raw = { schema_version: params.has("schema_version") ? Number(params.get("schema_version")) : 1,
       competition: params.get("competition") ?? "PL", seasons, group_by: "opponent", venue, opponent_id: opponent };
     let request;
@@ -897,7 +938,7 @@ function registerLocaleRoutes(code: LocaleCode) {
       if (!snapshot) throw new Error("snapshot unavailable");
       const facts = await seasonSplitFacts(c.env, snapshot, request.seasons, { venue: request.venue, opponent_id: opponent });
       const result = await readOpponentHistory(c.env, request, facts.catalog);
-      const labels = await readOpponentLabels(c.env, snapshot, opponentIds);
+      const labels = await readOpponentLabels(c.env, snapshot, [opponent]);
       if (await currentSnapshot(c.env) !== snapshot) throw new Error("snapshot changed");
       // season_splits lineage_json contains bare catalog source IDs.
       const sourceCredits = new Map<string, Set<string>>();
@@ -908,13 +949,14 @@ function registerLocaleRoutes(code: LocaleCode) {
         sourceCredits.get(cell.source_id)!.add(credit);
       }
       const credits = Object.fromEntries([...sourceCredits].map(([id, texts]) => [id, [...texts].join(" · ")]));
-      const form = renderSelection(labels, opponent, request.seasons, request.venue);
+      const form = renderSelection(labels, [opponent], opponent, request.seasons, request.venue) +
+        `<p><a href="/${locale.code}/opponents/history">${esc(t.opponentHistoryChoose)}</a></p>`;
       const body = `${form}${opponentHistoryBody({ result, opponentLabel: labels.get(opponent) ?? opponent, credits }, locale.code)}`;
       const canonical = new URLSearchParams();
       canonical.set("schema_version", "1");
       canonical.set("competition", "PL");
-      canonical.set("group_by", "opponent");
       request.seasons.forEach(season => canonical.append("seasons", season));
+      canonical.set("group_by", "opponent");
       if (request.venue) canonical.set("venue", request.venue);
       canonical.set("opponent_id", opponent);
       const res = html(page(body, { title: t.opponentHistoryTitle, locale, unprefixedPath: `/opponents/history?${canonical}`, snapshotId: snapshot }));

@@ -84,11 +84,37 @@ describe("opponent history selection form", () => {
     const body = await response.text();
     expect(response.status).toBe(200);
     expect(seasonSplitFacts).toHaveBeenCalledWith(env, snapshot, ["2023-24", "2024-25"], { venue: "away", opponent_id: "club:1014" });
-    expect(body).toContain(`<link rel="canonical" href="/${locale}/opponents/history?schema_version=1&amp;competition=PL&amp;group_by=opponent&amp;seasons=2023-24&amp;seasons=2024-25&amp;venue=away&amp;opponent_id=club%3A1014">`);
+    // Contract order: schema_version, competition, seasons, group_by, venue, opponent_id.
+    expect(body).toContain(
+      `<link rel="canonical" href="/${locale}/opponents/history?schema_version=1&amp;competition=PL` +
+      "&amp;seasons=2023-24&amp;seasons=2024-25&amp;group_by=opponent&amp;venue=away&amp;opponent_id=club%3A1014\">");
+    expect(readOpponentLabels).toHaveBeenCalledTimes(1);
+    expect(readOpponentLabels).toHaveBeenCalledWith(env, snapshot, ["club:1014"]);
     expect(body).toContain('value="club:1014" selected>');
     expect(body).toContain('name="seasons" value="2023-24" checked');
     expect(body).toContain('name="seasons" value="2024-25" checked');
     expect(body).toContain('value="away" selected');
     expect(currentSnapshot).toHaveBeenCalled();
+  });
+
+  it.each(["en", "es"] as const)("re-renders the %s form with a message when no season is checked", async locale => {
+    const response = await app.request(
+      `https://site.invalid/${locale}/opponents/history?schema_version=1&competition=PL&group_by=opponent&venue=home&opponent_id=club%3A1014`,
+      { headers }, env,
+    );
+    const body = await response.text();
+    expect(response.status).toBe(400);
+    expect(body).toContain(locale === "en" ? "Select at least one season." : "Selecciona al menos una temporada.");
+    expect(body).toContain('value="club:1014" selected>');
+    expect(body).toContain('value="home" selected');
+    expect(body).not.toMatch(/name="seasons" value="[^"]+" checked/);
+    expect(seasonSplitFacts).not.toHaveBeenCalled();
+  });
+
+  it("keeps the label read cap at or above the approved set size", async () => {
+    const real = await vi.importActual<typeof import("../worker/src/core/db")>("../worker/src/core/db");
+    const ids = [...APPROVED_OPPONENT_IDS];
+    expect(APPROVED_OPPONENT_IDS.size).toBeLessThanOrEqual(real.MAX_OPPONENT_LABELS);
+    await expect(real.readOpponentLabels(env, snapshot, ids)).resolves.toBeInstanceOf(Map);
   });
 });
