@@ -36,21 +36,23 @@ async function emit(result, summaryPath) {
   if (summaryPath) await appendFile(summaryPath, `${line}\n`);
 }
 
-async function focusCheck(page, locator) {
-  const before = await locator.evaluate((element) => {
+async function focusSnapshot(locator) {
+  return locator.evaluate((element) => {
     const style = getComputedStyle(element);
     return { outline: style.outline, boxShadow: style.boxShadow };
   });
-  await locator.focus();
-  const visible = await locator.evaluate((element, previous) => {
+}
+
+async function focusCheck(locator, before) {
+  return locator.evaluate((element, previous) => {
     if (!element.matches(':focus-visible')) return false;
     const style = getComputedStyle(element);
     return style.outline !== previous.outline || style.boxShadow !== previous.boxShadow;
   }, before);
-  return visible;
 }
 
 async function tabTo(page, target) {
+  if (await target.evaluate((element) => element === document.activeElement).catch(() => false)) return true;
   for (let i = 0; i < 80; i += 1) {
     await page.keyboard.press('Tab');
     if (await target.evaluate((element) => element === document.activeElement)) return true;
@@ -66,6 +68,7 @@ export async function run(deps = {}) {
   const results = [];
   const summaryPath = env.GITHUB_STEP_SUMMARY;
   if (summaryPath) await appendFile(summaryPath, '\n### Hosted keyboard checks\n\n```json\n');
+  let summaryClosed = false;
   try {
     for (const locale of ['en', 'es']) {
       for (const viewport of [{ width: 1280, height: 900 }, { width: 320, height: 800 }, { width: 375, height: 812 }]) {
@@ -85,7 +88,7 @@ export async function run(deps = {}) {
           catch { response = null; }
           const status = response?.status() ?? 0;
           const identity = await page.evaluate(({ host, path, localeCode }) => location.hostname === host && location.pathname === path && document.documentElement.lang.toLowerCase().startsWith(localeCode), { host: DEV_HOST, path: `/${locale}${input.route}`, localeCode: locale }).catch(() => false);
-          const overflow = await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth).catch(() => false);
+          const overflow = await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth).catch(() => false);
           const nav = page.locator('nav a, nav button').first();
           const formControls = page.locator('form :is(input,select,textarea,button):not([type="hidden"]):not([disabled])');
           const allControlCount = await formControls.count().catch(() => 0);
@@ -107,20 +110,28 @@ export async function run(deps = {}) {
           let tabNav = false;
           let tabControls = false;
           let tabSubmit = false;
-          let focusVisible = false;
+          let focusVisible = true;
           if (identity && await nav.count()) {
+            const navBefore = await focusSnapshot(nav).catch(() => null);
             await page.keyboard.press('Tab').catch(() => {});
             tabNav = await nav.evaluate((element) => element === document.activeElement).catch(() => false);
+            const focusResults = [];
+            if (tabNav && navBefore) focusResults.push(await focusCheck(nav, navBefore).catch(() => false));
+            else focusResults.push(false);
             if (tabNav && controlsCount > 0) {
               tabControls = true;
+              const submitBefore = await focusSnapshot(submit).catch(() => null);
               for (let i = 0; i < controlsCount; i += 1) {
                 const control = controls[i];
+                const before = await focusSnapshot(control).catch(() => null);
                 const reached = await tabTo(page, control);
-                if (!reached) { tabControls = false; break; }
+                if (!reached) { tabControls = false; focusResults.push(false); break; }
+                focusResults.push(before ? await focusCheck(control, before).catch(() => false) : false);
               }
               tabSubmit = await tabTo(page, submit).catch(() => false);
-              focusVisible = tabSubmit && await focusCheck(page, submit).catch(() => false);
+              focusResults.push(tabSubmit && submitBefore ? await focusCheck(submit, submitBefore).catch(() => false) : false);
             }
+            focusVisible = focusResults.length > 0 && focusResults.every(Boolean);
           }
           const values = {
             http_status: status === 200,
@@ -132,15 +143,20 @@ export async function run(deps = {}) {
             focus_visible: input.requireForm ? focusVisible : (tabNav && await focusCheck(page, nav).catch(() => false)),
           };
           for (const check of CHECKS) {
-            const result = { route: input.route, locale, viewport: `${viewport.width}x${viewport.height}`, check, pass: values[check] };
+            const result = { revision: input.revision, route: input.route, locale, viewport: `${viewport.width}x${viewport.height}`, check, pass: values[check] };
             results.push(result);
             await emit(result, summaryPath);
           }
         } finally { await context.close(); }
       }
     }
-  } finally { await browser.close(); }
-  if (summaryPath) await appendFile(summaryPath, '```\n');
+  } finally {
+    await browser.close();
+    if (summaryPath && !summaryClosed) {
+      await appendFile(summaryPath, '```\n');
+      summaryClosed = true;
+    }
+  }
   if (results.some((result) => !result.pass)) throw new Error('hosted check failed');
   return results;
 }

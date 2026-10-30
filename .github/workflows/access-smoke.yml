@@ -49,7 +49,6 @@ jobs:
           REQUIRE_FORM: ${{ inputs.require_form }}
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
-          GITHUB_STEP_SUMMARY: ${{ env.GITHUB_STEP_SUMMARY }}
         run: node tools/hosted-check.mjs
       - name: Test protected dev site
         env:

@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const DEV_HOST = 'iammufc-dev.aaron-cf2.workers.dev';
+const nodeModuleName: string = 'node:module';
+const fsPromisesName: string = 'node:fs/promises';
+const vm: any = (globalThis as any).process.mainModule?.require('node:vm') ?? (await import(nodeModuleName) as any).createRequire(`${process.cwd()}/package.json`)('node:vm');
 const validEnv = {
   HOSTED_ROUTE: '/opponents/history',
   HOSTED_REVISION: 'a'.repeat(40),
@@ -9,61 +12,57 @@ const validEnv = {
   CF_ACCESS_CLIENT_SECRET: 'client-secret-sentinel',
 };
 
-function mockBrowser(options: { status?: number; identity?: boolean; overflow?: boolean } = {}) {
-  const results: Array<{ route: string; locale: string; viewport: string; check: string; pass: boolean }> = [];
-  let focused = false;
-  let active: unknown = null;
-  const element = (kind: string) => ({ kind });
-  const nav = element('nav');
-  const controls = [element('control'), element('radio'), element('submit')];
+function mockBrowser(options: { status?: number; identity?: boolean; abortNavigation?: boolean } = {}) {
+  const elements = [{ kind: 'nav' }, { kind: 'control' }, { kind: 'radio' }, { kind: 'submit' }];
+  let active: any = null;
+  let keyboardModality = false;
+  const styleFor = (item: any) => active === item
+    ? { outline: '2px solid blue', boxShadow: 'none' }
+    : { outline: 'none', boxShadow: 'none' };
   const locator = (selector: string) => {
-    if (selector === 'nav a, nav button') return makeLocator([nav]);
-    if (selector === 'form :is(input,select,textarea,button):not([type="hidden"]):not([disabled])') return makeLocator(controls);
-    if (selector.includes('input[type="radio"]')) return makeLocator([controls[1]]);
-    if (selector === 'form button[type="submit"], form input[type="submit"]') return makeLocator([controls[2]]);
+    if (selector === 'nav a, nav button') return makeLocator([elements[0]]);
+    if (selector === 'form :is(input,select,textarea,button):not([type="hidden"]):not([disabled])') return makeLocator([elements[1], elements[2], elements[3]]);
+    if (selector.includes('input[type="radio"]')) return makeLocator([elements[2]]);
+    if (selector === 'form button[type="submit"], form input[type="submit"]') return makeLocator([elements[3]]);
     return makeLocator([]);
   };
-  function makeLocator(items: unknown[]) {
+  function makeLocator(items: any[]) {
     return {
       first() { return makeLocator(items.slice(0, 1)); },
       last() { return makeLocator(items.slice(-1)); },
       nth(index: number) { return makeLocator(items.slice(index, index + 1)); },
       async count() { return items.length; },
-      async evaluate(fn: (el: any, arg?: any) => unknown) {
-        const item: any = items[0];
+      async evaluate(fn: (el: any, arg?: any) => unknown, arg?: any) {
+        const item = items[0];
         if (!item) throw new Error('missing element');
-        if (String(fn).includes('element === document.activeElement')) return item === active;
-        if (String(fn).includes('element.getAttribute')) return item.kind === 'radio' ? { type: 'radio', name: 'group', checked: true } : { type: item.kind === 'submit' ? 'submit' : 'text', name: item.kind, checked: false };
-        if (String(fn).includes('style.outline')) return focused && item === active ? true : false;
-        if (String(fn).includes('getComputedStyle')) return { outline: focused && item === active ? '2px solid blue' : 'none', boxShadow: 'none' };
-        if (String(fn).includes('matches')) return focused && item === active;
-        return false;
+        if (fn.toString().includes('element.getAttribute')) return item.kind === 'radio' ? { type: 'radio', name: 'group', checked: true } : { type: item.kind === 'submit' ? 'submit' : 'text', name: item.kind, checked: false };
+        return vm.runInNewContext(`element.matches = (selector) => selector === ':focus-visible' && element === document.activeElement && keyboardModality; (${fn.toString()})(element, argument)`, { element: item, argument: arg, document: { get activeElement() { return active; } }, get keyboardModality() { return keyboardModality; }, getComputedStyle: styleFor });
       },
-      async focus() { active = items[0]; focused = true; },
     };
   }
   const page = {
     locator,
-    keyboard: { async press() { active = active === null ? nav : (active === nav ? controls[0] : (active === controls[0] ? controls[1] : controls[2])); } },
-    async goto() { return { status: () => options.status ?? 200 }; },
-    async evaluate() { return options.identity === false ? false : true; },
+    keyboard: { async press() { keyboardModality = true; active = active === null ? elements[0] : elements[Math.min(elements.indexOf(active) + 1, elements.length - 1)]; } },
+    async goto() { if (options.abortNavigation) throw new Error('navigation aborted'); return { status: () => options.status ?? 200 }; },
+    async evaluate(fn: (arg?: any) => unknown, arg?: any) {
+      const location = { hostname: DEV_HOST, pathname: '/en/opponents/history' };
+      const document = { documentElement: { lang: 'en', scrollWidth: 320, clientWidth: 320 } };
+      const window = { innerWidth: 320 };
+      const code = String(arg?.localeCode ?? 'en');
+      location.pathname = `/${options.identity === false ? 'wrong' : code}/opponents/history`;
+      document.documentElement.lang = options.identity === false ? 'wrong' : code;
+      return vm.runInNewContext(`(${fn.toString()})(argument)`, { argument: arg, location, document, window });
+    },
   };
   const context = {
     async route(_pattern: string, handler: (route: any) => Promise<void>) {
-      await handler({
-        request: () => ({ url: () => `https://${DEV_HOST}/en/opponents/history`, headers: () => ({ origin: 'null', 'sec-fetch-site': 'cross-site' }) }),
-        async fulfill() {}, async fetch() { return {}; }, async abort() {},
-      });
+      await handler({ request: () => ({ url: () => `https://${DEV_HOST}/en/opponents/history`, headers: () => ({ origin: 'null' }) }), async fulfill() {}, async fetch() { return {}; }, async abort() {} });
     },
     async newPage() { return page; },
     async close() {},
   };
-  const browser = {
-    async newContext() { focused = false; active = null; return context; },
-    async close() {},
-  };
-  const chromium = { async launch() { return browser; } };
-  return { chromium, results, page };
+  const browser = { async newContext() { active = null; keyboardModality = false; return context; }, async close() {} };
+  return { chromium: { async launch() { return browser; } } };
 }
 
 afterEach(() => vi.resetModules());
@@ -84,25 +83,38 @@ describe('hosted-check', () => {
     expect(mod.accessHeadersFor('https://example.com', { accept: 'text/html' }, { id: 'id', secret: 'secret' })).toEqual({ accept: 'text/html' });
   });
 
-  it('logs every locale and viewport check as JSON and passes the hosted journey', async () => {
+  it('logs revision-tagged JSON and checks focus-visible on every Tab target', async () => {
     const mod = await import('../tools/hosted-check.mjs');
-    const { chromium } = mockBrowser();
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const results = await mod.run({ chromium, env: validEnv });
+    let results: any[];
+    try { results = await mod.run({ chromium: mockBrowser().chromium, env: validEnv }); }
+    catch (error) { throw new Error(`${String(error)} | ${log.mock.calls.map(([line]) => line).filter((line: any) => line && !JSON.parse(line).pass).join(' ')}`); }
     expect(results).toHaveLength(42);
+    expect(results.every((item) => item.pass && item.revision === validEnv.HOSTED_REVISION)).toBe(true);
     expect(log).toHaveBeenCalledTimes(42);
-    for (const [locale, width] of [['en', '1280'], ['en', '320'], ['en', '375'], ['es', '1280'], ['es', '320'], ['es', '375']]) {
-      expect(results.some((item) => item.locale === locale && item.viewport.startsWith(`${width}x`) && item.check === 'focus_visible' && item.pass)).toBe(true);
-    }
-    expect(results.every((item) => item.pass)).toBe(true);
     log.mockRestore();
   });
 
-  it('fails closed on non-200 status and an Access login page identity', async () => {
+  it('fails closed on status, identity, and aborted navigation without exposing credentials', async () => {
     const mod = await import('../tools/hosted-check.mjs');
-    const status = mockBrowser({ status: 302 });
-    await expect(mod.run({ chromium: status.chromium, env: validEnv })).rejects.toThrow('hosted check failed');
-    const identity = mockBrowser({ identity: false });
-    await expect(mod.run({ chromium: identity.chromium, env: validEnv })).rejects.toThrow('hosted check failed');
+    await expect(mod.run({ chromium: mockBrowser({ status: 302 }).chromium, env: validEnv })).rejects.toThrow('hosted check failed');
+    await expect(mod.run({ chromium: mockBrowser({ identity: false }).chromium, env: validEnv })).rejects.toThrow('hosted check failed');
+    const summary = `${process.cwd()}/.hosted-check-summary-test.md`;
+    const fs: any = await import(fsPromisesName);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(mod.run({ chromium: mockBrowser({ abortNavigation: true }).chromium, env: { ...validEnv, GITHUB_STEP_SUMMARY: summary } })).rejects.toThrow('hosted check failed');
+      const output = [...log.mock.calls, ...error.mock.calls].flat().join('\n');
+      const summaryText = await fs.readFile(summary, 'utf8');
+      expect(output).not.toContain(validEnv.CF_ACCESS_CLIENT_ID);
+      expect(output).not.toContain(validEnv.CF_ACCESS_CLIENT_SECRET);
+      expect(summaryText).not.toContain(validEnv.CF_ACCESS_CLIENT_ID);
+      expect(summaryText).not.toContain(validEnv.CF_ACCESS_CLIENT_SECRET);
+    } finally {
+      log.mockRestore();
+      error.mockRestore();
+      await fs.rm(summary, { force: true });
+    }
   });
 });
