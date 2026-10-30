@@ -66,8 +66,8 @@ describe("Champions League history view", () => {
   it("renders season states with the caption carrying the completeness qualifier", () => {
     const body = championsLeagueHistoryBody(model(), en, "en");
     expect(body).toContain('<caption>Recorded matches; records may be incomplete</caption>');
-    expect(body).toContain('<a href="/en/season/2025-26">2025-26</a></th>');
-    expect(body).toContain('<a href="/en/season/2023-24">2023-24</a></th><td>2</td>');
+    expect(body).toContain('<a href="/en/season/2025-26">2025-26</a> <span class="cl-history-row-sources">');
+    expect(body).toContain('<a href="/en/season/2023-24">2023-24</a> <span class="cl-history-row-sources"><a class="cl-history-row-source" href="#cl-history-source-0"');
     expect(body).not.toContain("(partial)");
     expect(body).toContain(en.gap);
     expect(body).not.toContain("2026-27");

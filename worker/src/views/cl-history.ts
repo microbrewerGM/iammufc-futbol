@@ -96,8 +96,9 @@ export function championsLeagueHistoryBody(
     const rowCreditIds = [...new Set(row.lineage!.map(creditFor).filter((credit): credit is string => credit !== undefined))]
       .map((credit) => `cl-history-source-${credits.indexOf(credit)}`);
     const describedBy = rowCreditIds.length ? ` aria-describedby="${rowCreditIds.join(" ")}"` : "";
+    const sourceLinks = rowCreditIds.map((id) => `<a class="cl-history-row-source" href="#${id}" aria-label="${esc(strings.sources)}">§</a>`).join(" ");
     const values = [row.played, row.won, row.drawn, row.lost, row.goals, row.goals_against];
-    return `<tr${describedBy}><th scope="row">${seasonLabel}</th>${values.map((value) => `<td>${value}</td>`).join("")}</tr>`;
+    return `<tr${describedBy}><th scope="row">${seasonLabel}${sourceLinks ? ` <span class="cl-history-row-sources">${sourceLinks}</span>` : ""}</th>${values.map((value) => `<td>${value}</td>`).join("")}</tr>`;
   }).join("");
   const table = `<div class="comparison-table" role="region" tabindex="0" aria-label="${esc(strings.heading)}"><table><caption>${esc(strings.caption)}</caption><thead><tr>${headers.map((header) => `<th scope="col">${esc(header)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody>${totalsRow}</table></div>`;
   const sourceSection = lineage.length
