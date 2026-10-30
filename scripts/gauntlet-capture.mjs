@@ -21,12 +21,15 @@ export function validateInputs(env) {
   return { question, route, revision, override };
 }
 export function isDevRequest(url) {
-  try { const parsed = new URL(url); return parsed.protocol === 'https:' && parsed.hostname === DEV_HOST; } catch { return false; }
+  try { const parsed = new URL(url); return parsed.protocol === 'https:' && parsed.host === DEV_HOST && !parsed.username && !parsed.password; } catch { return false; }
 }
-export function accessHeadersFor(url, headers, credentials) {
+export function accessHeadersFor(url, headers, credentials, includeOrigin = true) {
   if (!isDevRequest(url)) return headers;
-  const kept = Object.fromEntries(Object.entries(headers).filter(([name]) => !['origin', 'sec-fetch-site'].includes(name.toLowerCase())));
-  return { ...kept, origin: `https://${DEV_HOST}`, 'sec-fetch-site': 'same-origin', 'cf-access-client-id': credentials.id, 'cf-access-client-secret': credentials.secret };
+  const overrides = includeOrigin ? { origin: `https://${DEV_HOST}`, 'sec-fetch-site': 'same-origin' } : {};
+  const baseHeaders = includeOrigin
+    ? Object.fromEntries(Object.entries(headers).filter(([name]) => !['origin', 'sec-fetch-site'].includes(name.toLowerCase())))
+    : headers;
+  return { ...baseHeaders, ...overrides, 'cf-access-client-id': credentials.id, 'cf-access-client-secret': credentials.secret };
 }
 export function cropBox(width, height) {
   const chrome = Math.min(96, Math.floor(height * 0.12));
@@ -75,9 +78,21 @@ export async function run(deps = {}) {
     logStep('dev-navigation');
     await devContext.route('**/*', async (route) => {
       try {
-        const requestUrl = route.request().url();
-        const headers = accessHeadersFor(requestUrl, route.request().headers(), { id: env.CF_ACCESS_CLIENT_ID, secret: env.CF_ACCESS_CLIENT_SECRET });
-        if (isDevRequest(requestUrl)) return await route.fulfill({ response: await route.fetch({ headers, maxRedirects: 0 }) });
+        const request = route.request();
+        const requestUrl = request.url();
+        if (isDevRequest(requestUrl)) {
+          let isDevFrame = false;
+          if (!request.isNavigationRequest()) {
+            try { isDevFrame = isDevRequest(request.frame().url()); } catch { isDevFrame = false; }
+          }
+          const headers = accessHeadersFor(
+            requestUrl,
+            request.headers(),
+            { id: env.CF_ACCESS_CLIENT_ID, secret: env.CF_ACCESS_CLIENT_SECRET },
+            request.isNavigationRequest() || isDevFrame,
+          );
+          return await route.fulfill({ response: await route.fetch({ headers, maxRedirects: 0 }) });
+        }
         await route.abort('blockedbyclient');
         logStep('blocked-non-dev');
         return;
