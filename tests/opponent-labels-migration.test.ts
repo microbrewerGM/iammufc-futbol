@@ -81,12 +81,13 @@ describe("opponent_labels migration (0011)", () => {
     expect(migrationSteps).toHaveLength(2);
   });
 
-  it("includes 0011 in the local d1:seed sequence after 0010 and before the seed data", () => {
+  it("includes 0011 before the CL stage migration and seed data in the local d1:seed sequence", () => {
     const packageJson = JSON.parse(readFileSync("package.json", "utf8")) as { scripts: { "d1:seed": string } };
     const seed = packageJson.scripts["d1:seed"];
     const segment0010 = "wrangler d1 execute iammufc-dev --config infra/wrangler.jsonc --env dev --local --file infra/migrations/0010_question_requests.sql";
     const segment0011 = "wrangler d1 execute iammufc-dev --config infra/wrangler.jsonc --env dev --local --file infra/migrations/0011_opponent_labels.sql";
+    const segment0012 = "wrangler d1 execute iammufc-dev --config infra/wrangler.jsonc --env dev --local --file infra/migrations/0012_cl_season_stage.sql";
     const segment0002 = "wrangler d1 execute iammufc-dev --config infra/wrangler.jsonc --env dev --local --file infra/migrations/0002_seed.sql";
-    expect(seed).toContain(`${segment0010} && ${segment0011} && ${segment0002}`);
+    expect(seed).toContain(`${segment0010} && ${segment0011} && ${segment0012} && ${segment0002}`);
   });
 });
