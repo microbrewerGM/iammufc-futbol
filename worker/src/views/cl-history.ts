@@ -93,12 +93,15 @@ export function championsLeagueHistoryBody(
     if (!validLineage(row)) {
       return `<tr><th scope="row">${seasonLabel}</th><td colspan="6"><span aria-label="${esc(strings.attributionUnavailable)}">—</span> <span>${esc(strings.attributionUnavailable)}</span></td></tr>`;
     }
+    const rowCreditIds = [...new Set(row.lineage!.map(creditFor).filter((credit): credit is string => credit !== undefined))]
+      .map((credit) => `cl-history-source-${credits.indexOf(credit)}`);
+    const describedBy = rowCreditIds.length ? ` aria-describedby="${rowCreditIds.join(" ")}"` : "";
     const values = [row.played, row.won, row.drawn, row.lost, row.goals, row.goals_against];
-    return `<tr><th scope="row">${seasonLabel}</th>${values.map((value) => `<td>${value}</td>`).join("")}</tr>`;
+    return `<tr${describedBy}><th scope="row">${seasonLabel}</th>${values.map((value) => `<td>${value}</td>`).join("")}</tr>`;
   }).join("");
   const table = `<div class="comparison-table" role="region" tabindex="0" aria-label="${esc(strings.heading)}"><table><caption>${esc(strings.caption)}</caption><thead><tr>${headers.map((header) => `<th scope="col">${esc(header)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody>${totalsRow}</table></div>`;
   const sourceSection = lineage.length
-    ? `<section aria-label="${esc(strings.sources)}"><h2>${esc(strings.sources)}</h2>${credits.map((credit) => `<p>${esc(credit)}</p>`).join("")}${lineage.some((ref) => creditFor(ref) === undefined) ? `<p>${esc(strings.attributionUnavailable)}</p>` : ""}${model.snapshotDate ? `<p>${esc(strings.snapshotDate)}: ${esc(model.snapshotDate)}</p>` : ""}</section>`
+    ? `<section aria-label="${esc(strings.sources)}"><h2>${esc(strings.sources)}</h2>${credits.map((credit, index) => `<p id="cl-history-source-${index}">${esc(credit)}</p>`).join("")}${lineage.some((ref) => creditFor(ref) === undefined) ? `<p>${esc(strings.attributionUnavailable)}</p>` : ""}${model.snapshotDate ? `<p>${esc(strings.snapshotDate)}: ${esc(model.snapshotDate)}</p>` : ""}</section>`
     : "";
   return `<h1>${esc(strings.heading)}</h1>${eligible.every((entry) => entry.state === "gap") ? `<p role="status">${esc(strings.noResults)}</p>` : ""}${table}${sourceSection}`;
 }
