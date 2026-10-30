@@ -46,8 +46,7 @@ function mockChromium({ routeRequests = [], failGoto = false, gotoStatus = 200, 
   const chromium = { launch: async () => { observations.launches += 1; return { newContext: async () => context(), close: async () => {} }; } };
   return { chromium, observations };
 }
-function fakeRoute(url, observations, { fetchError, fetchStatus = 200 } = {}) {
-  const headers = { accept: 'text/html' };
+function fakeRoute(url, observations, { fetchError, fetchStatus = 200, headers = { accept: 'text/html' } } = {}) {
   return {
     request: () => ({ url: () => url, headers: () => headers }),
     fetch: async (options) => {
@@ -168,7 +167,12 @@ describe('gauntlet capture guards', () => {
     expect(dev).toEqual({ accept: 'text/html', origin: 'https://iammufc-dev.aaron-cf2.workers.dev', 'sec-fetch-site': 'same-origin', 'cf-access-client-id': 'id', 'cf-access-client-secret': 'secret' });
     const bar = { accept: 'text/html' };
     expect(accessHeadersFor('https://fbref.com/one', bar, credentials)).toBe(bar);
-    for (const url of ['https://iammufc-dev.aaron-cf2.workers.dev.evil.com/', 'http://iammufc-dev.aaron-cf2.workers.dev/']) {
+    for (const url of [
+      'https://iammufc-dev.aaron-cf2.workers.dev.evil.com/',
+      'http://iammufc-dev.aaron-cf2.workers.dev/',
+      'https://iammufc-dev.aaron-cf2.workers.dev@evil.test/',
+      'https://user@iammufc-dev.aaron-cf2.workers.dev/',
+    ]) {
       expect(accessHeadersFor(url, bar, credentials)).toBe(bar);
     }
   });
@@ -191,10 +195,31 @@ describe('gauntlet capture guards', () => {
     }
   });
 
-  it('recognises only the exact dev host', () => {
+  it('recognises the exact dev host without a port and rejects userinfo', () => {
     expect(isDevRequest(devUrl)).toBe(true);
+    expect(isDevRequest('https://iammufc-dev.aaron-cf2.workers.dev:8443/')).toBe(true);
     expect(isDevRequest('https://iammufc-dev.aaron-cf2.workers.dev.evil.test/')).toBe(false);
+    expect(isDevRequest('https://iammufc-dev.aaron-cf2.workers.dev@evil.test/')).toBe(false);
+    expect(isDevRequest('https://user@iammufc-dev.aaron-cf2.workers.dev/')).toBe(false);
     expect(isDevRequest('https://fbref.com/')).toBe(false);
+  });
+
+  it('blocks dev-host URLs with userinfo without passing mutated headers', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gauntlet-test-'));
+    const files = await setup(dir);
+    const userinfoUrl = 'https://user@iammufc-dev.aaron-cf2.workers.dev/one';
+    const fake = mockChromium({ routeRequests: [{ url: userinfoUrl }] });
+    const oldLog = console.log;
+    console.log = () => {};
+    try {
+      await run({ ...files, chromium: fake.chromium, env: valid });
+      expect(fake.observations.aborted).toEqual([userinfoUrl]);
+      expect(fake.observations.fetches).toEqual([]);
+      expect(fake.observations.continues).toEqual([]);
+    } finally {
+      console.log = oldLog;
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it('shoots only dev pages: one browser, one context, no non-dev navigation, ours-0..2.age only', async () => {

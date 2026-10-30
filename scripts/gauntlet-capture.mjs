@@ -21,7 +21,7 @@ export function validateInputs(env) {
   return { question, route, revision, override };
 }
 export function isDevRequest(url) {
-  try { const parsed = new URL(url); return parsed.protocol === 'https:' && parsed.hostname === DEV_HOST; } catch { return false; }
+  try { const parsed = new URL(url); return parsed.protocol === 'https:' && parsed.hostname === DEV_HOST && !parsed.username && !parsed.password; } catch { return false; }
 }
 export function accessHeadersFor(url, headers, credentials) {
   if (!isDevRequest(url)) return headers;
@@ -76,8 +76,10 @@ export async function run(deps = {}) {
     await devContext.route('**/*', async (route) => {
       try {
         const requestUrl = route.request().url();
-        const headers = accessHeadersFor(requestUrl, route.request().headers(), { id: env.CF_ACCESS_CLIENT_ID, secret: env.CF_ACCESS_CLIENT_SECRET });
-        if (isDevRequest(requestUrl)) return await route.fulfill({ response: await route.fetch({ headers, maxRedirects: 0 }) });
+        if (isDevRequest(requestUrl)) {
+          const headers = accessHeadersFor(requestUrl, route.request().headers(), { id: env.CF_ACCESS_CLIENT_ID, secret: env.CF_ACCESS_CLIENT_SECRET });
+          return await route.fulfill({ response: await route.fetch({ headers, maxRedirects: 0 }) });
+        }
         await route.abort('blockedbyclient');
         logStep('blocked-non-dev');
         return;
