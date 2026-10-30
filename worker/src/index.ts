@@ -847,7 +847,7 @@ function registerLocaleRoutes(code: LocaleCode) {
         (params.has("competition") && params.get("competition") !== "PL")) return renderError(invalid, 400);
     const opponent = params.get("opponent_id");
     const seasons = params.getAll("seasons");
-    if ((opponent && !APPROVED_OPPONENT_IDS.has(opponent)) || seasons.length !== seasonCount) return renderError(invalid, 400);
+    if ((params.has("opponent_id") && (!opponent || !APPROVED_OPPONENT_IDS.has(opponent))) || seasons.length !== seasonCount) return renderError(invalid, 400);
     if (params.has("group_by") && params.get("group_by") !== "opponent") return renderError(invalid, 400);
     const venueValue = params.get("venue");
     if (venueValue !== null && venueValue !== "all" && venueValue !== "home" && venueValue !== "away") return renderError(invalid, 400);
@@ -875,7 +875,7 @@ function registerLocaleRoutes(code: LocaleCode) {
       const venueOption = (value: string, label: string, selected: boolean) =>
         `<option value="${value}"${selected ? " selected" : ""}>${esc(label)}</option>`;
       const opponentField = ids.length === 1 && selectedOpponent
-        ? `<label>${esc(t.opponentHistoryOpponentLabel)}<span>${esc(labels.get(selectedOpponent) ?? selectedOpponent)}</span></label><input type="hidden" name="opponent_id" value="${esc(selectedOpponent)}">`
+        ? `<p>${esc(t.opponentHistoryOpponentLabel)}: ${esc(labels.get(selectedOpponent) ?? selectedOpponent)}</p><input type="hidden" name="opponent_id" value="${esc(selectedOpponent)}">`
         : `<label>${esc(t.opponentHistoryOpponentLabel)}<select name="opponent_id" required>${options}</select></label>`;
       return [
         `<h2>${esc(t.opponentHistoryChoose)}</h2>`,
@@ -910,6 +910,34 @@ function registerLocaleRoutes(code: LocaleCode) {
           (labels.get(a) ?? a).localeCompare(labels.get(b) ?? b) || a.localeCompare(b))[0]!;
         const body = `<h1>${esc(t.opponentHistoryTitle)}</h1>${renderSelection(labels, opponentIds, defaultOpponent, availableSeasons.slice(-1), null)}`;
         const res = html(page(body, { title: t.opponentHistoryTitle, locale, unprefixedPath: "/opponents/history", snapshotId: snapshot }));
+        res.headers.set("Cache-Control", CACHE_CONTROL);
+        return res;
+      } catch { return renderError(unavailable, 503); }
+    }
+    if (!opponent && seasons.length > 0) {
+      const raw = { schema_version: params.has("schema_version") ? Number(params.get("schema_version")) : 1,
+        competition: params.get("competition") ?? "PL", seasons, group_by: "opponent", venue, opponent_id: null };
+      let request;
+      try { request = parseSeasonSplitRequest(raw, availableSeasons); }
+      catch { return renderError(invalid, 400); }
+      if (catalog.outputCapability("season_splits") !== "clear") {
+        const res = html(page(opponentHistoryUnpublishedBody(locale.code), { title: t.opponentHistoryTitle, locale, unprefixedPath: "/opponents/history" }));
+        res.headers.set("Cache-Control", CACHE_CONTROL);
+        return res;
+      }
+      if (!(await enforceBudget(c.env, { failClosed: true }))) return renderError(unavailable, 503);
+      try {
+        const publication = await currentPublication(c.env);
+        const snapshot = publication?.snapshotId;
+        if (!snapshot) throw new Error("snapshot unavailable");
+        const labels = await readOpponentLabels(c.env, snapshot, opponentIds);
+        if (await currentSnapshot(c.env) !== snapshot) throw new Error("snapshot changed");
+        const selection = new URLSearchParams();
+        request.seasons.forEach(season => selection.append("seasons", season));
+        selection.set("venue", venueValue ?? "all");
+        const form = renderSelection(labels, opponentIds, null, request.seasons, request.venue);
+        const body = `<h1>${esc(t.opponentHistoryTitle)}</h1>${form}`;
+        const res = html(page(body, { title: t.opponentHistoryTitle, locale, unprefixedPath: `/opponents/history?${selection}`, snapshotId: snapshot }));
         res.headers.set("Cache-Control", CACHE_CONTROL);
         return res;
       } catch { return renderError(unavailable, 503); }
@@ -960,8 +988,11 @@ function registerLocaleRoutes(code: LocaleCode) {
         sourceCredits.get(cell.source_id)!.add(credit);
       }
       const credits = Object.fromEntries([...sourceCredits].map(([id, texts]) => [id, [...texts].join(" · ")]));
+      const selection = new URLSearchParams();
+      request.seasons.forEach(season => selection.append("seasons", season));
+      selection.set("venue", request.venue ?? "all");
       const form = renderSelection(labels, [opponent], opponent, request.seasons, request.venue) +
-        `<p><a href="#opponent-history-form">${esc(t.opponentHistoryChangeSelection)}</a></p>`;
+        `<p><a href="${esc(`/${locale.code}/opponents/history?${selection}`)}">${esc(t.opponentHistoryChangeSelection)}</a></p>`;
       const body = `${form}${opponentHistoryBody({ result, opponentLabel: labels.get(opponent) ?? opponent, credits }, locale.code)}`;
       const canonical = new URLSearchParams();
       canonical.set("schema_version", "1");
