@@ -23,10 +23,16 @@ export function validateInputs(env) {
 export function isDevRequest(url) {
   try { const parsed = new URL(url); return parsed.protocol === 'https:' && parsed.host === DEV_HOST && !parsed.username && !parsed.password; } catch { return false; }
 }
-export function accessHeadersFor(url, headers, credentials) {
+export function accessHeadersFor(url, headers, credentials, includeOrigin = true) {
   if (!isDevRequest(url)) return headers;
+  const overrides = includeOrigin ? { origin: `https://${DEV_HOST}`, 'sec-fetch-site': 'same-origin' } : {};
   const kept = Object.fromEntries(Object.entries(headers).filter(([name]) => !['origin', 'sec-fetch-site'].includes(name.toLowerCase())));
-  return { ...kept, origin: `https://${DEV_HOST}`, 'sec-fetch-site': 'same-origin', 'cf-access-client-id': credentials.id, 'cf-access-client-secret': credentials.secret };
+  if (!includeOrigin) {
+    for (const [name, value] of Object.entries(headers)) {
+      if (name.toLowerCase() === 'origin') kept.origin = value;
+    }
+  }
+  return { ...kept, ...overrides, 'cf-access-client-id': credentials.id, 'cf-access-client-secret': credentials.secret };
 }
 export function cropBox(width, height) {
   const chrome = Math.min(96, Math.floor(height * 0.12));
@@ -82,9 +88,12 @@ export async function run(deps = {}) {
           if (!request.isNavigationRequest()) {
             try { isDevFrame = isDevRequest(request.frame().url()); } catch { isDevFrame = false; }
           }
-          const headers = request.isNavigationRequest() || isDevFrame
-            ? accessHeadersFor(requestUrl, request.headers(), { id: env.CF_ACCESS_CLIENT_ID, secret: env.CF_ACCESS_CLIENT_SECRET })
-            : request.headers();
+          const headers = accessHeadersFor(
+            requestUrl,
+            request.headers(),
+            { id: env.CF_ACCESS_CLIENT_ID, secret: env.CF_ACCESS_CLIENT_SECRET },
+            request.isNavigationRequest() || isDevFrame,
+          );
           return await route.fulfill({ response: await route.fetch({ headers, maxRedirects: 0 }) });
         }
         await route.abort('blockedbyclient');

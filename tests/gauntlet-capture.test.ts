@@ -163,7 +163,7 @@ describe('gauntlet capture guards', () => {
 
   it('adds Origin and same-origin Sec-Fetch-Site on dev requests only', () => {
     const credentials = { id: 'id', secret: 'secret' };
-    const dev = accessHeadersFor(devUrl, { accept: 'text/html', Origin: 'null', 'sec-fetch-site': 'none' }, credentials);
+    const dev = accessHeadersFor(devUrl, { accept: 'text/html', 'sec-fetch-site': 'none' }, credentials);
     expect(dev).toEqual({ accept: 'text/html', origin: 'https://iammufc-dev.aaron-cf2.workers.dev', 'sec-fetch-site': 'same-origin', 'cf-access-client-id': 'id', 'cf-access-client-secret': 'secret' });
     const bar = { accept: 'text/html' };
     expect(accessHeadersFor('https://fbref.com/one', bar, credentials)).toBe(bar);
@@ -201,19 +201,23 @@ describe('gauntlet capture guards', () => {
     const fake = mockChromium({ routeRequests: [
       { url: devUrl, navigation: true },
       { url: `${devUrl}/asset.js`, navigation: false, frameUrl: devUrl },
-      { url: `${devUrl}/from-blank.js`, navigation: false, frameUrl: 'about:blank' },
+      { url: `${devUrl}/from-blank.js`, navigation: false, frameUrl: 'about:blank', headers: { accept: 'text/javascript', origin: 'null' } },
+      { url: `${devUrl}/from-frame-error.js`, navigation: false, frameError: true, headers: { accept: 'text/javascript', origin: 'null' } },
     ] });
     const oldLog = console.log;
     console.log = () => {};
     try {
       await run({ ...files, chromium: fake.chromium, env: valid });
-      expect(fake.observations.fetches).toHaveLength(3);
-      expect(fake.observations.fetches.map(({ options }) => options.headers.origin)).toEqual([
+      expect(fake.observations.fetches).toHaveLength(4);
+      expect(fake.observations.fetches.slice(0, 2).map(({ options }) => options.headers.origin)).toEqual([
         'https://iammufc-dev.aaron-cf2.workers.dev',
         'https://iammufc-dev.aaron-cf2.workers.dev',
-        undefined,
       ]);
+      expect(fake.observations.fetches.slice(2).map(({ options }) => options.headers.origin)).toEqual(['null', 'null']);
       expect(fake.observations.fetches[2].options.headers['sec-fetch-site']).toBeUndefined();
+      expect(fake.observations.fetches[2].options.headers).toMatchObject({ accept: 'text/javascript', origin: 'null', 'cf-access-client-id': valid.CF_ACCESS_CLIENT_ID, 'cf-access-client-secret': valid.CF_ACCESS_CLIENT_SECRET });
+      expect(fake.observations.fetches[3].options.headers).toMatchObject({ accept: 'text/javascript', origin: 'null', 'cf-access-client-id': valid.CF_ACCESS_CLIENT_ID, 'cf-access-client-secret': valid.CF_ACCESS_CLIENT_SECRET });
+      expect(fake.observations.fetches[3].options.headers['sec-fetch-site']).toBeUndefined();
       expect(fake.observations.continues).toHaveLength(0);
     } finally {
       console.log = oldLog;
@@ -304,7 +308,7 @@ describe('gauntlet capture guards', () => {
       installFatalHandlers();
       const env = ${JSON.stringify(valid)};
       const fail = new Error('ID_SENTINEL secret=SECRET_SENTINEL');
-      const route = { request: () => ({ url: () => 'https://iammufc-dev.aaron-cf2.workers.dev/x', headers: () => ({ accept: 'text/html' }) }), fetch: async () => { throw fail; }, fulfill: async () => {}, continue: async () => {}, abort: async () => {} };
+      const route = { request: () => ({ url: () => 'https://iammufc-dev.aaron-cf2.workers.dev/x', headers: () => ({ accept: 'text/html' }), isNavigationRequest: () => true, frame: () => ({ url: () => 'https://iammufc-dev.aaron-cf2.workers.dev/' }) }), fetch: async () => { throw fail; }, fulfill: async () => {}, continue: async () => {}, abort: async () => {} };
       const context = () => ({ route: async (_pattern, handler) => handler(route), unrouteAll: async () => {}, newPage: async () => ({ goto: async () => { throw new Error('navigation failed'); }, setViewportSize: async () => {}, screenshot: async () => {} }), close: async () => {} });
       const chromium = { launch: async () => ({ newContext: async () => context(), close: async () => {} }) };
       run({ env, paths: ${JSON.stringify(files.paths)}, ageBinary: ${JSON.stringify(files.ageBinary)}, chromium }).catch(() => { console.error('capture failed'); process.exit(1); });
