@@ -46,12 +46,20 @@ const opponentPage = (locale, path, published = false) => {
   const title = locale === 'es' ? 'Historial contra rivales' : 'Opponent history';
   const message = locale === 'es' ? 'La capacidad de desgloses por temporada no está publicada.' : 'Season splits capability is not published.';
   const canonical = published ? path : `/${locale}/opponents/history`;
-  return `<html lang="${locale}"><link rel="canonical" href="${canonical.replaceAll('&', '&amp;')}">${published ? `<table><caption>${title}</caption></table>` : `<h1>${title}</h1><p>${message}</p>`}</html>`;
+  return `<!doctype html><html lang="${locale}"><head><link rel="canonical" href="${canonical.replaceAll('&', '&amp;')}"></head><body>${published ? `<table><caption>${title}</caption></table>` : `<h1>${title}</h1><p>${message}</p>`}</body></html>`;
+};
+
+const opponentCanonical = (locale, { seasons = ['2024-25', '2025-26'], opponent = 'club:1001' } = {}) => {
+  const params = new URLSearchParams({ schema_version: '1', competition: 'PL' });
+  for (const season of seasons) params.append('seasons', season);
+  params.set('group_by', 'opponent');
+  params.set('opponent_id', opponent);
+  return `/${locale}/opponents/history?${params.toString()}`;
 };
 
 test('opponent classification requires localized canonical and a positive state in both languages', () => {
   for (const locale of ['en', 'es']) {
-    const path = `/${locale}/opponents/history?schema_version=1&competition=PL&seasons=2024-25&seasons=2025-26&opponent_id=club%3A1001`;
+    const path = opponentCanonical(locale);
     const title = locale === 'es' ? 'Historial contra rivales' : 'Opponent history';
     for (const published of [false, true]) {
       const body = opponentPage(locale, path, published);
@@ -65,6 +73,11 @@ test('opponent classification requires localized canonical and a positive state 
       ]) assert.equal(classifyOpponentHistory(invalid, locale, path), 'invalid');
     }
     assert.equal(classifyOpponentHistory(`<html lang="${locale}"><link rel="canonical" href="${path.replaceAll('&', '&amp;')}"><nav>${title}</nav></html>`, locale, path), 'invalid');
+    const rendered = opponentPage(locale, path, true);
+    assert.equal(classifyOpponentHistory(rendered, locale, path), 'published');
+    assert.equal(classifyOpponentHistory(rendered.replace('opponent_id=club%3A1001', ''), locale, path), 'invalid');
+    assert.equal(classifyOpponentHistory(rendered.replace('seasons=2025-26&amp;', ''), locale, path), 'invalid');
+    assert.equal(classifyOpponentHistory(opponentPage(locale, path), locale, path), 'capability_unavailable');
   }
 });
 
@@ -164,8 +177,14 @@ test('fixed dev origin, manual redirects, private response and all checks', asyn
     assert.equal(call.init.method, 'GET');
     assert.deepEqual([...url.searchParams.entries()], [
       ['schema_version', '1'], ['competition', 'PL'], ['seasons', '2024-25'],
-      ['seasons', '2025-26'], ['opponent_id', 'club:1001'],
+      ['seasons', '2025-26'], ['group_by', 'opponent'], ['opponent_id', 'club:1001'],
     ]);
+    const canonicalParams = new URLSearchParams({ schema_version: '1', competition: 'PL' });
+    canonicalParams.append('seasons', '2024-25');
+    canonicalParams.append('seasons', '2025-26');
+    canonicalParams.set('group_by', 'opponent');
+    canonicalParams.set('opponent_id', 'club:1001');
+    assert.equal(call.url, `https://iammufc-dev.aaron-cf2.workers.dev/${locale}/opponents/history?${canonicalParams}`);
     assert.equal(new Headers(call.init.headers).has('CF-Access-Client-Id'), true);
     const row = results.find((result) => result.path === `${url.pathname}${url.search}`);
     assert.equal(row.pass, true);
