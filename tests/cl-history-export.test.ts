@@ -6,12 +6,13 @@ vi.mock("jose", async (original) => ({
   jwtVerify: vi.fn(async () => ({ payload: { sub: "owner", email: "owner@example.invalid" } })),
 }));
 
-const state = vi.hoisted(() => ({ rows: [] as Record<string, unknown>[] }));
+const state = vi.hoisted(() => ({ rows: [] as Record<string, unknown>[], whitespaceCredit: false }));
+const hashes = Object.fromEntries(["2024-25", "2023-24", "2022-23", "2021-22", "2020-21", "2018-19"].map((season) => [`openfootball:CL:${season}`, "c".repeat(64)]));
 vi.mock("../worker/src/core/cl-history", async (original) => ({
   ...await original<typeof import("../worker/src/core/cl-history")>(),
   clHistoryRead: vi.fn(async () => ({
     result: { snapshot_id: "a".repeat(64), entries: state.rows as never },
-    sourcesJson: JSON.stringify({ "openfootball:CL:2024-25": "b".repeat(64) }),
+    sourcesJson: JSON.stringify(hashes),
   })),
 }));
 vi.mock("../worker/src/core/db", async (original) => ({
@@ -19,6 +20,22 @@ vi.mock("../worker/src/core/db", async (original) => ({
   currentSnapshot: vi.fn(async () => "a".repeat(64)),
   currentPublication: vi.fn(async () => ({ snapshotId: "a".repeat(64), preparedAt: "2026-10-23T00:00:00.000Z", loadedAt: "2026-10-23T00:00:00.000Z", sources: [{ id: "openfootball_cl", status: "observed" }] })),
 }));
+vi.mock("../worker/src/core/catalog-contract", async (original) => {
+  const actual = await original<typeof import("../worker/src/core/catalog-contract")>();
+  return {
+    ...actual,
+    decodeCompiledCatalog(value: unknown) {
+      const decoded = actual.decodeCompiledCatalog(value);
+      for (const cell of decoded.coverage.filter((item) => item.competition === "CL" && item.source_id === "openfootball")) {
+        for (const field of ["attribution_text", "attribution_text_es"] as const) {
+          const originalValue = cell[field];
+          Object.defineProperty(cell, field, { configurable: true, get: () => state.whitespaceCredit ? "   " : originalValue });
+        }
+      }
+      return decoded;
+    },
+  };
+});
 
 import app from "../worker/src/index";
 
@@ -64,10 +81,31 @@ describe("Champions League history CSV export", () => {
     const csv = await (await app.request("https://site.invalid/es/seasons/champions-league?format=csv", { headers }, env)).text();
     const enCsv = await (await app.request("https://site.invalid/en/seasons/champions-league?format=csv", { headers }, env)).text();
     expect(csv).toContain('"2024-25","Fase de grupos","1"');
-    expect(csv).toContain('"2023-24","","","","","","","",""');
-    for (const season of ["2022-23", "2021-22", "2020-21", "2019-20", "2018-19"]) expect(csv).toContain(`"${season}","","","","","","","",""`);
+    const emptyStageCreditRows = [
+      '"2023-24","","1","1","0","0","1","0","openfootball"',
+      '"2022-23","","1","1","0","0","1","0","openfootball"',
+      '"2021-22","","1","1","0","0","1","0","openfootball"',
+      '"2020-21","","1","1","0","0","1","0","openfootball"',
+      '"2018-19","","1","1","0","0","1","0","openfootball"',
+    ];
+    for (const row of emptyStageCreditRows) expect(csv).toContain(row);
+    expect(csv).toContain('"2019-20","","","","","","","",""');
     expect(enCsv).toContain('"2024-25","Group stage","1","1","0","0","1","0","openfootball"');
+    for (const row of emptyStageCreditRows) expect(enCsv).toContain(row);
     expect(enCsv).toContain('"2019-20","","","","","","","",""');
+  });
+
+  it("omits whitespace-only CSV credits in English and Spanish", async () => {
+    state.whitespaceCredit = true;
+    try {
+      state.rows = [{ status: "observed", row: { season: "2024-25", played: 1, won: 1, drawn: 0, lost: 0, goals: 1, goals_against: 0, stage_reached: "group_stage", lineage: ["openfootball:CL:2024-25"] } }];
+      for (const locale of ["en", "es"]) {
+        const csv = await (await app.request(`https://site.invalid/${locale}/seasons/champions-league?format=csv`, { headers }, env)).text();
+        expect(csv).toContain('"2024-25","","","","","","","",""');
+      }
+    } finally {
+      state.whitespaceCredit = false;
+    }
   });
 
   it.each(["\t=cmd", "\r=cmd"]) ("prefixes an apostrophe to a season beginning with a tab or carriage return", async (season) => {

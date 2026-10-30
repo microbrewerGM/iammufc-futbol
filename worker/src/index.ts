@@ -1258,10 +1258,10 @@ function registerLocaleRoutes(code: LocaleCode) {
           return { state: "partial" as const, row: { ...entry.row, stage_reached: entry.row.stage_reached ?? null, lineage: [ref] } };
         });
         csvEntries = mapped;
-        csvCredits = Object.fromEntries(cells.map((cell) => [
-          `${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`,
-          (code === "es" ? cell.attribution_text_es ?? cell.attribution_text : cell.attribution_text) ?? cell.source_name,
-        ]));
+        csvCredits = Object.fromEntries(cells.flatMap((cell) => {
+          const credit = (code === "es" ? cell.attribution_text_es ?? cell.attribution_text : cell.attribution_text) ?? cell.source_name;
+          return credit.trim() ? [[`${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`, credit]] : [];
+        }));
         body = championsLeagueHistoryBody({ entries: mapped, credits: csvCredits, snapshotDate: publication.loadedAt.slice(0, 10) }, locale.strings.clHistory, code);
       }
     } catch {
