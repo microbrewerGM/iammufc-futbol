@@ -29,8 +29,8 @@ describe("Champions League history row source associations", () => {
       credits: { "source:a": "First source", "source:b": "Second source", "source:shared": "Shared source" },
     }, copy, locale);
 
-    expect(html).toContain('<tr aria-describedby="cl-history-source-0 cl-history-source-1"><th scope="row"><a href="/' + locale + '/season/2024-25">2024-25</a></th>');
-    expect(html).toContain('<tr aria-describedby="cl-history-source-2 cl-history-source-1"><th scope="row"><a href="/' + locale + '/season/2025-26">2025-26</a>');
+    expect(html).toContain('<tr aria-describedby="cl-history-source-0 cl-history-source-1"><th scope="row"><a href="/' + locale + '/season/2024-25">2024-25</a> <span class="cl-history-row-sources">');
+    expect(html).toContain('<tr aria-describedby="cl-history-source-2 cl-history-source-1"><th scope="row"><a href="/' + locale + '/season/2025-26">2025-26</a> <span class="cl-history-row-sources">');
     expect(html.match(/id="cl-history-source-1"/g)).toHaveLength(1);
     expect(html.match(/>Shared source<\/p>/g)).toHaveLength(1);
   });
