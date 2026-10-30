@@ -5,6 +5,10 @@ const strings = (locale: "en" | "es"): ChampionsLeagueHistoryStrings => ({
   heading: locale === "en" ? "Champions League history" : "Historial de la Liga de Campeones",
   caption: locale === "en" ? "Recorded matches" : "Partidos registrados",
   season: locale === "en" ? "Season" : "Temporada",
+  stage: locale === "en" ? "Stage reached" : "Fase alcanzada",
+  stages: locale === "en"
+    ? { group_stage: "Group stage", league_phase: "League phase", knockout_playoff: "Knockout play-off", round_of_16: "Round of 16", quarter_final: "Quarter-final", semi_final: "Semi-final", final: "Final", winner: "Winner" }
+    : { group_stage: "Fase de grupos", league_phase: "Fase liga", knockout_playoff: "Eliminatoria previa", round_of_16: "Octavos de final", quarter_final: "Cuartos de final", semi_final: "Semifinal", final: "Final", winner: "Campeón" },
   played: "Played", won: "Won", drawn: "Drawn", lost: "Lost", goalsFor: "Goals for", goalsAgainst: "Goals against",
   gap: "No recorded matches", partial: locale === "en" ? "partial" : "parcial",
   outsideCoverage: "Outside coverage", noResults: "No results", unavailable: "Unavailable", snapshotDate: "Snapshot",
