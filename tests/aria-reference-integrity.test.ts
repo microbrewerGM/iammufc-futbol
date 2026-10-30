@@ -74,7 +74,7 @@ for (const locale of ["en", "es"] as const) {
         const html = opponentHistoryBody({ result, opponentLabel: "Synthetic opponent", credits }, locale);
         const audit = referenceErrors(html);
         expect(audit.errors).toEqual([]);
-        expect(audit.references).toEqual(["h2h-chart-title", "h2h-chart-desc", "h2h-summary"]);
+        expect(audit.references).toEqual(["h2h-chart-title", "h2h-chart-desc", "h2h-summary", ...(fixture.rows.length ? ["h2h-record"] : [])]);
       });
     }
   });
