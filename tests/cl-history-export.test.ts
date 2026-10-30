@@ -51,16 +51,23 @@ describe("Champions League history CSV export", () => {
     expect(csv).toContain('"\'@cmd","","","","","","","",""');
   });
 
-  it("localizes known stage codes and leaves unknown or formula-leading codes empty or guarded", async () => {
+  it("localizes known stages and leaves unknown, formula-leading, and unattributed stage cells empty", async () => {
     state.rows = [
       { status: "observed", row: { season: "2024-25", played: 1, won: 1, drawn: 0, lost: 0, goals: 1, goals_against: 0, stage_reached: "group_stage", lineage: ["openfootball:CL:2024-25"] } },
       { status: "observed", row: { season: "2023-24", played: 1, won: 1, drawn: 0, lost: 0, goals: 1, goals_against: 0, stage_reached: "not_a_stage", lineage: ["openfootball:CL:2023-24"] } },
       { status: "observed", row: { season: "2022-23", played: 1, won: 1, drawn: 0, lost: 0, goals: 1, goals_against: 0, stage_reached: "=cmd", lineage: ["openfootball:CL:2022-23"] } },
+      { status: "observed", row: { season: "2021-22", played: 1, won: 1, drawn: 0, lost: 0, goals: 1, goals_against: 0, stage_reached: "-x", lineage: ["openfootball:CL:2021-22"] } },
+      { status: "observed", row: { season: "2020-21", played: 1, won: 1, drawn: 0, lost: 0, goals: 1, goals_against: 0, stage_reached: "@SUM(A1)", lineage: ["openfootball:CL:2020-21"] } },
+      { status: "observed", row: { season: "2019-20", played: 1, won: 1, drawn: 0, lost: 0, goals: 1, goals_against: 0, stage_reached: "group_stage" } },
+      { status: "observed", row: { season: "2018-19", played: 1, won: 1, drawn: 0, lost: 0, goals: 1, goals_against: 0, stage_reached: null, lineage: ["openfootball:CL:2018-19"] } },
     ];
     const csv = await (await app.request("https://site.invalid/es/seasons/champions-league?format=csv", { headers }, env)).text();
+    const enCsv = await (await app.request("https://site.invalid/en/seasons/champions-league?format=csv", { headers }, env)).text();
     expect(csv).toContain('"2024-25","Fase de grupos","1"');
     expect(csv).toContain('"2023-24","","","","","","","",""');
-    expect(csv).toContain(`"2022-23","'=cmd","","","","","","",""`);
+    for (const season of ["2022-23", "2021-22", "2020-21", "2019-20", "2018-19"]) expect(csv).toContain(`"${season}","","","","","","","",""`);
+    expect(enCsv).toContain('"2024-25","Group stage","1","1","0","0","1","0","openfootball"');
+    expect(enCsv).toContain('"2019-20","","","","","","","",""');
   });
 
   it.each(["\t=cmd", "\r=cmd"]) ("prefixes an apostrophe to a season beginning with a tab or carriage return", async (season) => {

@@ -1288,8 +1288,8 @@ function registerLocaleRoutes(code: LocaleCode) {
           const stageCode = row.stage_reached;
           const stage = typeof stageCode === "string" && Object.hasOwn(strings.stages, stageCode)
             ? strings.stages[stageCode as keyof typeof strings.stages]
-            : typeof stageCode === "string" && /^[=+\-@]/.test(stageCode) ? stageCode : "";
-          return [row.season, stage, ...(attribution ? [row.played, row.won, row.drawn, row.lost, row.goals, row.goals_against] : ["", "", "", "", "", ""]), attribution];
+            : "";
+          return [row.season, attribution ? stage : "", ...(attribution ? [row.played, row.won, row.drawn, row.lost, row.goals, row.goals_against] : ["", "", "", "", "", ""]), attribution];
         }),
       ];
       return new Response(`${rows.map((row) => row.map((cell) => csvCell(cell)).join(",")).join("\r\n")}\r\n`, {
