@@ -11,6 +11,13 @@ const COST_CLASSES = new Set(["cheap", "expensive"]);
 const SOURCE_ID = /^[a-z][a-z0-9_]*$/;
 
 const ROOT_KEYS = ["version", "metrics", "coverage"];
+const SOURCE_KEYS = [
+  "source_id",
+  "source_name",
+  "attribution_asset",
+  "attribution_text",
+  "attribution_text_es",
+];
 const OUTPUT_COVERAGE_KEYS = ["output_id", "state"];
 const OUTPUT_IDS = new Set(["shot_map", "season_splits", "arrival_manager_groups", "manager_era_records"]);
 const OUTPUT_STATES = new Set(["clear", "absent", "partial", "unknown"]);
@@ -149,13 +156,43 @@ function decodeOutputCoverage(value: unknown, index: number) {
   };
 }
 
-export function decodeCompiledCatalog(value: unknown): CompiledCatalog {
+interface PublicSource {
+  source_id: string;
+  source_name: string;
+  attribution_asset: string | null;
+  attribution_text: string | null;
+  attribution_text_es: string | null;
+}
+
+function decodeSource(value: unknown, index: number): PublicSource {
+  const path = `$.sources[${index}]`;
+  const item = record(value, path);
+  exactKeys(item, SOURCE_KEYS, path);
+  return {
+    source_id: stringValue(item.source_id, `${path}.source_id`),
+    source_name: stringValue(item.source_name, `${path}.source_name`),
+    attribution_asset: nullableString(item.attribution_asset, `${path}.attribution_asset`),
+    attribution_text: nullableString(item.attribution_text, `${path}.attribution_text`),
+    attribution_text_es: nullableString(item.attribution_text_es, `${path}.attribution_text_es`),
+  };
+}
+
+export function decodeCompiledCatalog(
+  value: unknown,
+): CompiledCatalog & { sources?: PublicSource[] } {
   const root = record(value, "$");
+  const hasSources = Object.hasOwn(root, "sources");
   const hasOutputCoverage = Object.hasOwn(root, "output_coverage");
-  exactKeys(root, hasOutputCoverage ? [...ROOT_KEYS, "output_coverage"] : ROOT_KEYS, "$");
+  const rootKeys = [
+    ...ROOT_KEYS,
+    ...(hasSources ? ["sources"] : []),
+    ...(hasOutputCoverage ? ["output_coverage"] : []),
+  ];
+  exactKeys(root, rootKeys, "$");
   if (root.version !== 1) invalid("$.version", "must be integer 1");
   if (!Array.isArray(root.metrics)) invalid("$.metrics", "must be an array");
   if (!Array.isArray(root.coverage)) invalid("$.coverage", "must be an array");
+  if (hasSources && !Array.isArray(root.sources)) invalid("$.sources", "must be an array");
   if (hasOutputCoverage && !Array.isArray(root.output_coverage)) {
     invalid("$.output_coverage", "must be an array");
   }
@@ -173,6 +210,7 @@ export function decodeCompiledCatalog(value: unknown): CompiledCatalog {
   }
 
   const coverage = root.coverage.map(decodeCoverage);
+  const sources = hasSources ? (root.sources as unknown[]).map(decodeSource) : undefined;
   const seenCells = new Set<string>();
   const sourceDisplay = new Map<string, string>();
   for (const cell of coverage) {
@@ -211,7 +249,13 @@ export function decodeCompiledCatalog(value: unknown): CompiledCatalog {
     seenOutputs.add(output.output_id);
   }
 
-  return { version: 1, metrics, coverage, output_coverage: outputCoverage };
+  return {
+    version: 1,
+    metrics,
+    coverage,
+    ...(sources === undefined ? {} : { sources }),
+    output_coverage: outputCoverage,
+  };
 }
 
 /** Return a capability only from an already validated public artifact. */

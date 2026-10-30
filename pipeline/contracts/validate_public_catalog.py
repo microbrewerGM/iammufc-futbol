@@ -67,6 +67,16 @@ class PublicCoverageCell(BaseModel):
         )
 
 
+class PublicSource(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: StrictStr
+    source_name: StrictStr
+    attribution_asset: StrictStr | None
+    attribution_text: StrictStr | None
+    attribution_text_es: StrictStr | None
+
+
 class PublicOutputCoverage(BaseModel):
     """Allowlisted output coverage; clear means declared scopes are available.
 
@@ -85,6 +95,7 @@ class PublicCatalog(BaseModel):
     version: Literal[1]
     metrics: list[PublicMetric]
     coverage: list[PublicCoverageCell]
+    sources: list[PublicSource] = Field(default_factory=list)
     output_coverage: list[PublicOutputCoverage] = Field(default_factory=list, max_length=3)
 
 

@@ -50,6 +50,42 @@ def test_schema_drift_fails_closed(artifact, mutate, message):
         validate_public_catalog_value(candidate)
 
 
+def test_optional_sources_are_closed_and_strict(artifact):
+    without_sources = deepcopy(artifact)
+    assert validate_public_catalog_value(without_sources).sources == []
+
+    with_sources = deepcopy(artifact)
+    source = {
+        "source_id": "example_source",
+        "source_name": "Example source",
+        "attribution_asset": None,
+        "attribution_text": "Credit",
+        "attribution_text_es": None,
+    }
+    with_sources["sources"] = [source]
+    assert validate_public_catalog_value(with_sources).sources[0].source_id == "example_source"
+
+    extra_key = deepcopy(with_sources)
+    extra_key["sources"][0]["private_notes"] = "forbidden"
+    with pytest.raises(PublicCatalogError, match="extra_forbidden"):
+        validate_public_catalog_value(extra_key)
+
+    missing_key = deepcopy(with_sources)
+    del missing_key["sources"][0]["attribution_text_es"]
+    with pytest.raises(PublicCatalogError, match="Field required"):
+        validate_public_catalog_value(missing_key)
+
+    non_string_id = deepcopy(with_sources)
+    non_string_id["sources"][0]["source_id"] = 7
+    with pytest.raises(PublicCatalogError, match="string_type"):
+        validate_public_catalog_value(non_string_id)
+
+    unknown_root = deepcopy(artifact)
+    unknown_root["other"] = True
+    with pytest.raises(PublicCatalogError, match="extra_forbidden"):
+        validate_public_catalog_value(unknown_root)
+
+
 def test_duplicate_metrics_and_cells_fail_closed(artifact):
     duplicate_metric = deepcopy(artifact)
     duplicate_metric["metrics"].append(deepcopy(duplicate_metric["metrics"][0]))
