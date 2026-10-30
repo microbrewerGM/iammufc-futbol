@@ -209,7 +209,7 @@ describe('gauntlet capture guards', () => {
       expect(fake.observations.launches).toBe(1);
       expect(fake.observations.contexts).toBe(1);
       expect(fake.observations.navigations.length).toBeGreaterThan(0);
-      expect(fake.observations.navigations.every((url) => isDevRequest(url))).toBe(true);
+      expect(fake.observations.navigations.every((url) => /^https:\/\/iammufc-dev\.aaron-cf2\.workers\.dev\/(en|es)\//.test(url))).toBe(true);
       const encrypted = (await readdir(files.paths.outputDir)).filter((name) => name.endsWith('.age')).sort();
       expect(encrypted).toEqual(['ours-0.age', 'ours-1.age', 'ours-2.age']);
       const base = 'https://iammufc-dev.aaron-cf2.workers.dev';
@@ -218,6 +218,24 @@ describe('gauntlet capture guards', () => {
       expect(logs).toContain('capture complete: dev_pages=3');
       expect(logs.join('\n')).not.toContain('PLANTED_SENTINEL_PAGE_TEXT');
       expect(logs.join('\n')).not.toContain(valid.CF_ACCESS_CLIENT_SECRET);
+    } finally {
+      console.log = oldLog;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed on a 404 locale page without writing any capture artifacts', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gauntlet-test-'));
+    const files = await setup(dir);
+    const fake = mockChromium({ gotoStatus: 404 });
+    const oldLog = console.log;
+    console.log = () => {};
+    try {
+      await expect(run({ ...files, chromium: fake.chromium, env: valid })).rejects.toThrow();
+      const names = await readdir(files.paths.outputDir);
+      expect(fake.observations.navigations.every((url) => /^https:\/\/iammufc-dev\.aaron-cf2\.workers\.dev\/(en|es)\//.test(url))).toBe(true);
+      expect(names.filter((name) => name.endsWith('.age'))).toEqual([]);
+      expect(names).not.toContain('summary.txt');
     } finally {
       console.log = oldLog;
       await rm(dir, { recursive: true, force: true });
