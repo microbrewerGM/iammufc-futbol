@@ -62,15 +62,24 @@ export function exampleQuestion(locale: Locale, question: string): string {
 
 /** The parsed intent is shown before anything executes. Ambiguity becomes a
  *  correction opportunity instead of a wrong answer. */
-export function intentPanel(proposal: Proposal, locale: Locale): string {
+export function intentPanel(proposal: Proposal, catalog: Catalog, locale: Locale): string {
   const t = locale.strings;
   const i = proposal.intent;
+  const labels = {
+    en: { metric: "Metric", scope: "Player scope", season: "Season", competition: "Competition", visualization: "Visualization", allPlayers: "All players", player: "Player", dots: "Dot plot", bars: "Bar chart", table: "Table", pl: "Premier League", cl: "Champions League" },
+    es: { metric: "Métrica", scope: "Alcance", season: "Temporada", competition: "Competición", visualization: "Visualización", allPlayers: "Todos los jugadores", player: "Jugador", dots: "Gráfico de puntos", bars: "Barras", table: "Tabla", pl: "Premier League", cl: "Liga de Campeones" },
+  }[locale.code];
+  const scope = i.entity_type === "player"
+    ? `${labels.player}: ${i.entity_id === "all" ? labels.allPlayers : i.entity_id}`
+    : `${ENTITY_LABELS[locale.code][i.entity_type]}: ${i.entity_id}`;
+  const competition = i.competition === "PL" ? labels.pl : i.competition === "CL" ? labels.cl : i.competition;
+  const visualization = i.viz === "dot_plot" ? labels.dots : i.viz === "bar" ? labels.bars : labels.table;
   const lines = [
-    `metric      ${i.metric}`,
-    `entity      ${i.entity_type} = ${i.entity_id}`,
-    `season      ${i.season}`,
-    `competition ${i.competition}`,
-    `viz         ${i.viz}`,
+    `${labels.metric}: ${metricLabel(catalog, i.metric, locale.code)}`,
+    `${labels.scope}: ${scope}`,
+    `${labels.season}: ${i.season}`,
+    `${labels.competition}: ${competition}`,
+    `${labels.visualization}: ${visualization}`,
   ].join("\n");
 
   const notes = proposal.notes.length
