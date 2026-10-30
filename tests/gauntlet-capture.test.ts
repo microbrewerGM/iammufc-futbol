@@ -24,7 +24,7 @@ async function setup(dir) {
   await chmod(fakeAge, 0o755);
   return { paths: { recipientPath, outputDir, tempDir: tmp }, ageBinary: fakeAge };
 }
-function mockChromium({ routeRequests = [], failGoto = false } = {}) {
+function mockChromium({ routeRequests = [], failGoto = false, gotoStatus = 200, throwIfAborted = false } = {}) {
   const observations = { fetches: [], continues: [], fulfills: [], aborted: [], routeHandler: undefined, pageText: '', launches: 0, contexts: 0, navigations: [], shots: [] };
   const context = () => {
     observations.contexts += 1;
@@ -35,10 +35,10 @@ function mockChromium({ routeRequests = [], failGoto = false } = {}) {
       },
       unrouteAll: async (options) => { observations.unrouteOptions = options; },
       newPage: async () => ({
-        goto: async (url) => { observations.navigations.push(url); observations.currentUrl = url; observations.pageText = '<main>PLANTED_SENTINEL_PAGE_TEXT</main>'; if (failGoto) throw new Error('navigation failed'); return { status: () => 200 }; },
+        goto: async (url) => { observations.navigations.push(url); observations.currentUrl = url; observations.pageText = '<main>PLANTED_SENTINEL_PAGE_TEXT</main>'; if (failGoto || (throwIfAborted && observations.aborted.length > 0)) throw new Error('navigation failed'); return { status: () => gotoStatus }; },
         content: async () => observations.pageText,
-        setViewportSize: async () => {},
-        screenshot: async ({ path }) => { observations.shots.push(observations.currentUrl); await writeFile(path, 'fixture-image'); },
+        setViewportSize: async ({ width }) => { observations.width = width; },
+        screenshot: async ({ path }) => { observations.shots.push({ url: observations.currentUrl, width: observations.width }); await writeFile(path, 'fixture-image'); },
       }),
       close: async () => {},
     };
@@ -127,6 +127,41 @@ describe('gauntlet capture guards', () => {
     }
   });
 
+  it('fails closed on a 403 main-frame response: no .age or summary written', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gauntlet-test-'));
+    const files = await setup(dir);
+    const fake = mockChromium({ gotoStatus: 403 });
+    const oldLog = console.log;
+    console.log = () => {};
+    try {
+      await expect(run({ ...files, chromium: fake.chromium, env: valid })).rejects.toThrow();
+      const names = await readdir(files.paths.outputDir);
+      expect(names.filter((name) => name.startsWith('ours-'))).toEqual([]);
+      expect(names).not.toContain('summary.txt');
+    } finally {
+      console.log = oldLog;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed when an off-host redirect aborts the main-frame navigation', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gauntlet-test-'));
+    const files = await setup(dir);
+    const fake = mockChromium({ routeRequests: [{ url: devUrl, fetchStatus: 302 }, { url: 'https://fbref.com/x' }], throwIfAborted: true });
+    const oldLog = console.log;
+    console.log = () => {};
+    try {
+      await expect(run({ ...files, chromium: fake.chromium, env: valid })).rejects.toThrow();
+      expect(fake.observations.aborted).toEqual(['https://fbref.com/x']);
+      const names = await readdir(files.paths.outputDir);
+      expect(names.filter((name) => name.startsWith('ours-'))).toEqual([]);
+      expect(names).not.toContain('summary.txt');
+    } finally {
+      console.log = oldLog;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('adds Origin and same-origin Sec-Fetch-Site on dev requests only', () => {
     const credentials = { id: 'id', secret: 'secret' };
     const dev = accessHeadersFor(devUrl, { accept: 'text/html', Origin: 'null', 'sec-fetch-site': 'none' }, credentials);
@@ -179,7 +214,7 @@ describe('gauntlet capture guards', () => {
       expect(encrypted).toEqual(['ours-0.age', 'ours-1.age', 'ours-2.age']);
       const base = 'https://iammufc-dev.aaron-cf2.workers.dev';
       expect(captureViewports().map(({ locale }) => locale)).toEqual(['en', 'es', 'en']);
-      expect(fake.observations.shots).toEqual([`${base}/en/compare`, `${base}/es/compare`, `${base}/en/compare`]);
+      expect(fake.observations.shots).toEqual([{ url: `${base}/en/compare`, width: 1280 }, { url: `${base}/es/compare`, width: 1280 }, { url: `${base}/en/compare`, width: 320 }]);
       expect(logs).toContain('capture complete: dev_pages=3');
       expect(logs.join('\n')).not.toContain('PLANTED_SENTINEL_PAGE_TEXT');
       expect(logs.join('\n')).not.toContain(valid.CF_ACCESS_CLIENT_SECRET);

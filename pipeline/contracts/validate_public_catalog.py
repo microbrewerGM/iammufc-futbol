@@ -67,6 +67,16 @@ class PublicCoverageCell(BaseModel):
         )
 
 
+class PublicSource(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: StrictStr
+    source_name: StrictStr
+    attribution_asset: StrictStr | None
+    attribution_text: StrictStr | None
+    attribution_text_es: StrictStr | None
+
+
 class PublicOutputCoverage(BaseModel):
     """Allowlisted output coverage; clear means declared scopes are available.
 
@@ -85,6 +95,7 @@ class PublicCatalog(BaseModel):
     version: Literal[1]
     metrics: list[PublicMetric]
     coverage: list[PublicCoverageCell]
+    sources: list[PublicSource] = Field(default_factory=list)
     output_coverage: list[PublicOutputCoverage] = Field(default_factory=list, max_length=3)
 
 
@@ -123,6 +134,7 @@ def validate_public_catalog_value(value: object) -> PublicCatalog:
 
     seen_cells: set[tuple[str, EntityType, Granularity, str, str]] = set()
     source_display: dict[str, tuple[object, ...]] = {}
+    source_attribution: dict[str, tuple[object, ...]] = {}
     for index, cell in enumerate(catalog.coverage):
         for field in ("metric", "season", "competition", "source_id", "source_name"):
             _require_nonempty(getattr(cell, field), f"coverage[{index}].{field}")
@@ -152,10 +164,41 @@ def validate_public_catalog_value(value: object) -> PublicCatalog:
             cell.attribution_text,
             cell.attribution_text_es,
         )
+        attribution = (
+            cell.source_name,
+            cell.attribution_asset,
+            cell.attribution_text,
+            cell.attribution_text_es,
+        )
         prior = source_display.setdefault(cell.source_id, display)
         if prior != display:
             raise PublicCatalogError(
                 f"coverage[{index}] source display disagrees for {cell.source_id}"
+            )
+        source_attribution.setdefault(cell.source_id, attribution)
+
+    seen_sources: set[str] = set()
+    for index, source in enumerate(catalog.sources):
+        _require_nonempty(source.source_id, f"sources[{index}].source_id")
+        _require_nonempty(source.source_name, f"sources[{index}].source_name")
+        if re.fullmatch(r"[a-z][a-z0-9_]*", source.source_id) is None:
+            raise PublicCatalogError(
+                f"sources[{index}].source_id does not match the public contract"
+            )
+        if source.source_id in seen_sources:
+            raise PublicCatalogError(f"duplicate source_id: {source.source_id}")
+        seen_sources.add(source.source_id)
+
+        coverage_display = source_attribution.get(source.source_id)
+        source_display_tuple = (
+            source.source_name,
+            source.attribution_asset,
+            source.attribution_text,
+            source.attribution_text_es,
+        )
+        if coverage_display is not None and source_display_tuple != coverage_display:
+            raise PublicCatalogError(
+                f"sources[{index}] source display disagrees for {source.source_id}"
             )
 
     return catalog
