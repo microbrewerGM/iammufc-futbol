@@ -26,7 +26,10 @@ export function isDevRequest(url) {
 export function accessHeadersFor(url, headers, credentials, includeOrigin = true) {
   if (!isDevRequest(url)) return headers;
   const overrides = includeOrigin ? { origin: `https://${DEV_HOST}`, 'sec-fetch-site': 'same-origin' } : {};
-  return { ...headers, ...overrides, 'cf-access-client-id': credentials.id, 'cf-access-client-secret': credentials.secret };
+  const baseHeaders = includeOrigin
+    ? Object.fromEntries(Object.entries(headers).filter(([name]) => !['origin', 'sec-fetch-site'].includes(name.toLowerCase())))
+    : headers;
+  return { ...baseHeaders, ...overrides, 'cf-access-client-id': credentials.id, 'cf-access-client-secret': credentials.secret };
 }
 export function cropBox(width, height) {
   const chrome = Math.min(96, Math.floor(height * 0.12));

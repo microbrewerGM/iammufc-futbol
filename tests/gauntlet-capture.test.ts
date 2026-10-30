@@ -163,7 +163,7 @@ describe('gauntlet capture guards', () => {
 
   it('adds Origin and same-origin Sec-Fetch-Site on dev requests only', () => {
     const credentials = { id: 'id', secret: 'secret' };
-    const dev = accessHeadersFor(devUrl, { accept: 'text/html', 'sec-fetch-site': 'none' }, credentials);
+    const dev = accessHeadersFor(devUrl, { accept: 'text/html', Origin: 'null', 'sec-fetch-site': 'none' }, credentials);
     expect(dev).toEqual({ accept: 'text/html', origin: 'https://iammufc-dev.aaron-cf2.workers.dev', 'sec-fetch-site': 'same-origin', 'cf-access-client-id': 'id', 'cf-access-client-secret': 'secret' });
     const bar = { accept: 'text/html' };
     expect(accessHeadersFor('https://fbref.com/one', bar, credentials)).toBe(bar);
