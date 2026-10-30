@@ -5,10 +5,10 @@
   "catalog_contract_version": 1,
   "coverage_count": 63,
   "metric_count": 6,
-  "producer_artifact_id": 12661271455,
+  "producer_artifact_id": 12996140748,
   "producer_run_attempt": 1,
-  "producer_run_id": 40345403445,
-  "source_revision": "4a822e11b296ca2adfa5518e9067a8d1e1206367",
+  "producer_run_id": 41094590284,
+  "source_revision": "ed8e927816533c0d5479516501ba70e57fbf2db3",
   "statement_version": 2,
   "validation_passed": true
 }
