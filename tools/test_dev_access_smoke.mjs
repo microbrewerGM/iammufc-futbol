@@ -161,7 +161,9 @@ test('fixed dev origin, manual redirects, private response and all checks', asyn
       : query ? JSON.stringify({ ...validQuery(queryCalls++ === 0 ? 'computable_now_queued' : 'available'),
         rows: [...validQuery().rows].reverse() })
       : ['/en/seasons/explore', '/es/seasons/explore'].includes(pathname) ? `<html lang="${pathname.startsWith('/es/') ? 'es' : 'en'}"><link rel="canonical" href="${pathname}?schema_version=1&amp;competition=PL&amp;seasons=2014-15&amp;group_by=venue">${pathname.startsWith('/es/') ? 'La capacidad de desgloses por temporada no está publicada.' : 'Season splits capability is not published.'}</html>`
-      : trend ? (locale === 'es' ? 'Evolución de jugadores' : 'Player trends')
+      : trend ? (new URL(url).searchParams.get('normalization') === 'per90'
+        ? (locale === 'es' ? 'Clasificación por 90 minutos' : 'Per-90 leaderboard')
+        : (locale === 'es' ? 'Evolución de jugadores' : 'Player trends'))
       : ['/en/opponents/history', '/es/opponents/history'].includes(pathname) ? opponentPage(locale, pathname)
       : ['/en/seasons/champions-league', '/es/seasons/champions-league'].includes(pathname) ? (locale === 'es' ? 'Historial de la Liga de Campeones' : 'Champions League history')
       : path === '/en' || path === '/es' ? (url.includes('/es') ? 'Pregunta sobre el Manchester United Prueba preguntando' : 'Ask about Manchester United Try asking')
@@ -170,7 +172,7 @@ test('fixed dev origin, manual redirects, private response and all checks', asyn
       ...((health || chat || query) ? { 'content-type': 'application/json; charset=UTF-8' } : {}),
       ...(['/en/opponents/history', '/es/opponents/history'].includes(pathname) ? { 'cache-control': 'private, no-store' } : {}) } });
   });
-  assert.equal(calls.length, 29);
+  assert.equal(calls.length, 31);
   for (const locale of ['en', 'es']) {
     const call = calls.find(({ url }) => new URL(url).pathname === `/${locale}/opponents/history`);
     const url = new URL(call.url);
@@ -212,6 +214,19 @@ test('fixed dev origin, manual redirects, private response and all checks', asyn
     assert.equal(call.init.headers['Sec-Fetch-Site'], 'same-origin');
     assert.ok(results.some((result) => result.path === `${url.pathname}${url.search}` && result.pass));
     assert.ok(marker === (locale === 'es' ? 'Evolución de jugadores' : 'Player trends'));
+  }
+  for (const [locale, marker] of [['en', 'Per-90 leaderboard'], ['es', 'Clasificación por 90 minutos']]) {
+    const call = calls.find(({ url }) => new URL(url).pathname === `/${locale}/players/trends` && new URL(url).searchParams.get('normalization') === 'per90');
+    assert.ok(call);
+    const url = new URL(call.url);
+    assert.deepEqual([...url.searchParams.entries()], [
+      ['schema_version', '1'], ['competition', 'PL'], ['person_ids', 'fpl:code:2'],
+      ['seasons', '2024-25'], ['metric', 'goals'], ['normalization', 'per90'], ['viz', 'table'],
+    ]);
+    assert.equal(call.init.method, 'GET');
+    assert.equal(call.init.headers['Sec-Fetch-Site'], 'same-origin');
+    assert.ok(results.some((result) => result.path === `${url.pathname}${url.search}` && result.pass));
+    assert.ok(marker === (locale === 'es' ? 'Clasificación por 90 minutos' : 'Per-90 leaderboard'));
   }
   assert.ok(results.every((result) => result.pass), JSON.stringify(results.filter((result) => !result.pass)));
   assert.deepEqual(results.find((result) => result.path === '/api/chat' && result.status === 200), { path: '/api/chat', status: 200, pass: true,
@@ -524,7 +539,9 @@ test('combined smoke requires authenticated success and denial success', async (
     if (path.includes('/players/trends')) {
       const params = new URL(url).searchParams;
       assert.equal(params.get('person_ids'), 'fpl:code:1');
-      return new Response(path.startsWith('/es/') ? 'Evolución de jugadores' : 'Player trends',
+      return new Response(params.get('normalization') === 'per90'
+        ? (path.startsWith('/es/') ? 'Clasificación por 90 minutos' : 'Per-90 leaderboard')
+        : (path.startsWith('/es/') ? 'Evolución de jugadores' : 'Player trends'),
         { status: 200, headers: { 'cache-control': 'private, no-store' } });
     }
     if (path.includes('/players/compare')) {
@@ -551,6 +568,6 @@ test('combined smoke requires authenticated success and denial success', async (
     { status: rejected ? 422 : 200, headers: { 'cache-control': 'private, no-store',
       ...((health || chat || query) ? { 'content-type': 'application/json' } : {}) } });
   });
-  assert.equal(results.length, 90);
+  assert.equal(results.length, 92);
   assert.ok(results.every((result) => result.pass), JSON.stringify(results.filter((result) => !result.pass)));
 });
