@@ -383,6 +383,7 @@ export async function smoke(env, request = fetch) {
     const params = new URLSearchParams({ schema_version: '1', competition: 'PL' });
     params.append('seasons', '2024-25');
     params.append('seasons', '2025-26');
+    params.set('group_by', 'opponent');
     params.set('opponent_id', 'club:1001');
     const path = `/${locale}/opponents/history?${params.toString()}`;
     try {
