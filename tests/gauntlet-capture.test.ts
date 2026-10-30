@@ -46,10 +46,9 @@ function mockChromium({ routeRequests = [], failGoto = false, gotoStatus = 200, 
   const chromium = { launch: async () => { observations.launches += 1; return { newContext: async () => context(), close: async () => {} }; } };
   return { chromium, observations };
 }
-function fakeRoute(url, observations, { fetchError, fetchStatus = 200 } = {}) {
-  const headers = { accept: 'text/html' };
+function fakeRoute(url, observations, { fetchError, fetchStatus = 200, headers = { accept: 'text/html' }, navigation = true, frameUrl = url, frameError = false } = {}) {
   return {
-    request: () => ({ url: () => url, headers: () => headers }),
+    request: () => ({ url: () => url, headers: () => headers, isNavigationRequest: () => navigation, frame: () => { if (frameError) throw new Error('frame unavailable'); return { url: () => frameUrl }; } }),
     fetch: async (options) => {
       observations.fetches.push({ url, options });
       if (fetchError) throw fetchError;
@@ -168,7 +167,12 @@ describe('gauntlet capture guards', () => {
     expect(dev).toEqual({ accept: 'text/html', origin: 'https://iammufc-dev.aaron-cf2.workers.dev', 'sec-fetch-site': 'same-origin', 'cf-access-client-id': 'id', 'cf-access-client-secret': 'secret' });
     const bar = { accept: 'text/html' };
     expect(accessHeadersFor('https://fbref.com/one', bar, credentials)).toBe(bar);
-    for (const url of ['https://iammufc-dev.aaron-cf2.workers.dev.evil.com/', 'http://iammufc-dev.aaron-cf2.workers.dev/']) {
+    for (const url of [
+      'https://iammufc-dev.aaron-cf2.workers.dev.evil.com/',
+      'http://iammufc-dev.aaron-cf2.workers.dev/',
+      'https://iammufc-dev.aaron-cf2.workers.dev@evil.test/',
+      'https://user@iammufc-dev.aaron-cf2.workers.dev/',
+    ]) {
       expect(accessHeadersFor(url, bar, credentials)).toBe(bar);
     }
   });
@@ -191,10 +195,67 @@ describe('gauntlet capture guards', () => {
     }
   });
 
-  it('recognises only the exact dev host', () => {
+  it('adds origin overrides on dev navigations and dev-frame subresources only', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gauntlet-test-'));
+    const files = await setup(dir);
+    const fake = mockChromium({ routeRequests: [
+      { url: devUrl, navigation: true },
+      { url: `${devUrl}/asset.js`, navigation: false, frameUrl: devUrl },
+      { url: `${devUrl}/from-blank.js`, navigation: false, frameUrl: 'about:blank', headers: { accept: 'text/javascript', origin: 'null', 'sec-fetch-site': 'cross-site' } },
+      { url: `${devUrl}/from-frame-error.js`, navigation: false, frameError: true, headers: { accept: 'text/javascript', origin: 'null', 'sec-fetch-site': 'cross-site' } },
+    ] });
+    const oldLog = console.log;
+    console.log = () => {};
+    try {
+      await run({ ...files, chromium: fake.chromium, env: valid });
+      expect(fake.observations.fetches).toHaveLength(4);
+      expect(fake.observations.fetches.slice(0, 2).map(({ options }) => options.headers.origin)).toEqual([
+        'https://iammufc-dev.aaron-cf2.workers.dev',
+        'https://iammufc-dev.aaron-cf2.workers.dev',
+      ]);
+      expect(fake.observations.fetches.slice(2).map(({ options }) => [options.headers.origin, options.headers['sec-fetch-site']])).toEqual([['null', 'cross-site'], ['null', 'cross-site']]);
+      expect(fake.observations.fetches[2].options.headers['sec-fetch-site']).toBe('cross-site');
+      expect(fake.observations.fetches[2].options.headers).toMatchObject({ accept: 'text/javascript', origin: 'null', 'sec-fetch-site': 'cross-site', 'cf-access-client-id': valid.CF_ACCESS_CLIENT_ID, 'cf-access-client-secret': valid.CF_ACCESS_CLIENT_SECRET });
+      expect(fake.observations.fetches[3].options.headers).toMatchObject({ accept: 'text/javascript', origin: 'null', 'sec-fetch-site': 'cross-site', 'cf-access-client-id': valid.CF_ACCESS_CLIENT_ID, 'cf-access-client-secret': valid.CF_ACCESS_CLIENT_SECRET });
+      expect(fake.observations.fetches[3].options.headers['sec-fetch-site']).toBe('cross-site');
+      expect(fake.observations.continues).toHaveLength(0);
+    } finally {
+      console.log = oldLog;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('recognises the exact dev host without a port and rejects userinfo', () => {
     expect(isDevRequest(devUrl)).toBe(true);
+    expect(isDevRequest('https://iammufc-dev.aaron-cf2.workers.dev:8443/')).toBe(false);
+    expect(isDevRequest('https://iammufc-dev.aaron-cf2.workers.dev:443/')).toBe(true);
     expect(isDevRequest('https://iammufc-dev.aaron-cf2.workers.dev.evil.test/')).toBe(false);
+    expect(isDevRequest('https://iammufc-dev.aaron-cf2.workers.dev@evil.test/')).toBe(false);
+    expect(isDevRequest('https://user@iammufc-dev.aaron-cf2.workers.dev/')).toBe(false);
     expect(isDevRequest('https://fbref.com/')).toBe(false);
+  });
+
+  it('preserves browser headers exactly when origin overrides are disabled', () => {
+    const headers = { accept: 'text/javascript', origin: 'null', 'sec-fetch-site': 'cross-site' };
+    expect(accessHeadersFor(devUrl, headers, { id: 'id', secret: 'secret' }, false)).toEqual({ ...headers, 'cf-access-client-id': 'id', 'cf-access-client-secret': 'secret' });
+  });
+
+  it('blocks dev-host URLs with userinfo without passing mutated headers', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gauntlet-test-'));
+    const files = await setup(dir);
+    const userinfoUrl = 'https://user@iammufc-dev.aaron-cf2.workers.dev/one';
+    const fake = mockChromium({ routeRequests: [{ url: userinfoUrl }] });
+    const oldLog = console.log;
+    console.log = () => {};
+    try {
+      await run({ ...files, chromium: fake.chromium, env: valid });
+      expect(fake.observations.aborted).toEqual([userinfoUrl]);
+      expect(fake.observations.fetches).toEqual([]);
+      expect(fake.observations.continues).toEqual([]);
+    } finally {
+      console.log = oldLog;
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it('shoots only dev pages: one browser, one context, no non-dev navigation, ours-0..2.age only', async () => {
@@ -252,7 +313,7 @@ describe('gauntlet capture guards', () => {
       installFatalHandlers();
       const env = ${JSON.stringify(valid)};
       const fail = new Error('ID_SENTINEL secret=SECRET_SENTINEL');
-      const route = { request: () => ({ url: () => 'https://iammufc-dev.aaron-cf2.workers.dev/x', headers: () => ({ accept: 'text/html' }) }), fetch: async () => { throw fail; }, fulfill: async () => {}, continue: async () => {}, abort: async () => {} };
+      const route = { request: () => ({ url: () => 'https://iammufc-dev.aaron-cf2.workers.dev/x', headers: () => ({ accept: 'text/html' }), isNavigationRequest: () => true, frame: () => ({ url: () => 'https://iammufc-dev.aaron-cf2.workers.dev/' }) }), fetch: async () => { process.stdout.write('ROUTE_FETCH_REACHED\\n'); throw fail; }, fulfill: async () => {}, continue: async () => {}, abort: async () => {} };
       const context = () => ({ route: async (_pattern, handler) => handler(route), unrouteAll: async () => {}, newPage: async () => ({ goto: async () => { throw new Error('navigation failed'); }, setViewportSize: async () => {}, screenshot: async () => {} }), close: async () => {} });
       const chromium = { launch: async () => ({ newContext: async () => context(), close: async () => {} }) };
       run({ env, paths: ${JSON.stringify(files.paths)}, ageBinary: ${JSON.stringify(files.ageBinary)}, chromium }).catch(() => { console.error('capture failed'); process.exit(1); });
@@ -265,6 +326,7 @@ describe('gauntlet capture guards', () => {
       child.on('close', (code) => resolve({ code, stdout, stderr }));
     });
     expect(result.code).not.toBe(0);
+    expect(result.stdout).toContain('ROUTE_FETCH_REACHED');
     expect(result.stdout + result.stderr).not.toContain('ID_SENTINEL');
     expect(result.stdout + result.stderr).not.toContain('SECRET_SENTINEL');
     expect(result.stderr.trim()).toBe('capture failed');
