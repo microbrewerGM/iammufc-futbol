@@ -758,11 +758,18 @@ export function homeBody(
 <p class="tagline">${esc(t.siteTagline)}</p>
 <div class="card">
 ${chatForm(locale)}
-${questionExamples.length ? `<h3>${esc(t.exampleQuestionsHeading)}</h3>` : `<h3>${esc(t.examplesHeading)}</h3>`}
+<section>
+<h3>${esc(t.examplesHeading)}</h3>
 <ul class="examples">
 ${comparisonLinks.join("\n")}
+</ul>
+</section>
+${questionExamples.length ? `<section>
+<h3>${esc(t.exampleQuestionsHeading)}</h3>
+<ul class="examples">
 ${questionExamples.join("\n")}
 </ul>
+</section>` : ""}
 <p><a href="${base(locale)}/history">${esc(t.historyLink)}</a></p>
 </div>
 ${freshnessPanel(freshness, locale)}
