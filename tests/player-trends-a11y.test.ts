@@ -20,7 +20,7 @@ describe("player trends table accessibility", () => {
     ["es", LOCALES.es, "Clasificación por 90 minutos", "Jugadores excluidos"],
   ])("captions leaderboard and excluded tables (%s)", (_n, locale, board, excluded) => {
     const html = render([row(a, 3, 900), row(b, 1, 200)], locale);
-    expect(html).toContain(`<table><caption>${board}</caption>`);
+    expect(html).toContain(`<table aria-describedby="leaders-minutes-description"><caption>${board}</caption>`);
     expect(html).toContain(`<table><caption>${excluded}</caption>`);
   });
 

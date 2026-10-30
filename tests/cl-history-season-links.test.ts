@@ -48,7 +48,7 @@ describe("Champions League history season links", () => {
       entries: [{ state: "observed", row: { ...row, season } }],
       credits: { source: "Source credit" },
     }, strings("en"), "en");
-    expect(body).toContain(`<th scope="row">${season}</th>`);
+    expect(body).toContain(`<th scope="row">${season} <span class="cl-history-row-sources">`);
     expect(body).not.toContain(`<a href="/en/season/${season}">`);
   });
 
