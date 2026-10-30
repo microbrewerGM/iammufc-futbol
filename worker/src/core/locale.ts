@@ -68,6 +68,7 @@ export interface Locale {
     opponentHistoryVenueHome: string;
     opponentHistoryVenueAway: string;
     opponentHistorySubmit: string;
+    opponentHistoryChangeSelection: string;
     opponentHistoryInvalid: string;
     opponentHistoryNoSeasons: string;
     opponentHistoryUnavailable: string;
@@ -206,6 +207,7 @@ const EN: Locale = {
     opponentHistoryVenueHome: "Home",
     opponentHistoryVenueAway: "Away",
     opponentHistorySubmit: "View history",
+    opponentHistoryChangeSelection: "Change selection",
     opponentHistoryInvalid: "Invalid opponent history selection.",
     opponentHistoryNoSeasons: "Select at least one season.",
     opponentHistoryUnavailable: "Opponent history is temporarily unavailable.",
@@ -348,6 +350,7 @@ const ES: Locale = {
     opponentHistoryVenueHome: "Local",
     opponentHistoryVenueAway: "Visitante",
     opponentHistorySubmit: "Ver historial",
+    opponentHistoryChangeSelection: "Cambiar selección",
     opponentHistoryInvalid: "Selección de historial de rival no válida.",
     opponentHistoryNoSeasons: "Selecciona al menos una temporada.",
     opponentHistoryUnavailable: "El historial del rival no está disponible temporalmente.",

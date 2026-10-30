@@ -50,7 +50,38 @@ describe("opponent history selection form", () => {
     expect(body).toMatch(/name="seasons" value="\d{4}-\d{2}" checked/);
     expect(body).toContain('value="all" selected');
     expect(body).toContain(locale === "en" ? "All venues" : "Todas las localías");
+    const form = body.match(/<form id="opponent-history-form"[\s\S]*?<\/form>/)?.[0] ?? "";
+    expect(form).not.toMatch(/(?:width|min-width|max-width)\s*:\s*(?:3(?:2[1-9]|[3-9]\d)|[4-9]\d{2,})px/i);
     expect(seasonSplitFacts).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["schema_version=2", "schema_version=2"],
+    ["competition=XX", "competition=XX"],
+  ])("rejects %s before budget and D1 work, even with no seasons", async (_name, query) => {
+    const response = await app.request(
+      `https://site.invalid/en/opponents/history?${query}&opponent_id=club%3A1001`,
+      { headers }, env,
+    );
+    expect(response.status).toBe(400);
+    expect(enforceBudget).not.toHaveBeenCalled();
+    expect(currentPublication).not.toHaveBeenCalled();
+    expect(readOpponentLabels).not.toHaveBeenCalled();
+    expect(currentSnapshot).not.toHaveBeenCalled();
+    expect(seasonSplitFacts).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["initial", "https://site.invalid/en/opponents/history", 200],
+    ["no-seasons", "https://site.invalid/en/opponents/history?opponent_id=club%3A1001", 400],
+  ] as const)("does not read opponent labels for the %s form when splits are unpublished", async (_path, url, status) => {
+    clear.mockReturnValue("unknown");
+    const response = await app.request(url, { headers }, env);
+    expect(response.status).toBe(status);
+    expect(await response.text()).toContain("Season splits capability is not published.");
+    expect(enforceBudget).not.toHaveBeenCalled();
+    expect(currentPublication).not.toHaveBeenCalled();
+    expect(readOpponentLabels).not.toHaveBeenCalled();
   });
 
   it("checks the budget before empty-query D1 reads and returns the selected path refusal status", async () => {
@@ -90,10 +121,13 @@ describe("opponent history selection form", () => {
       "&amp;seasons=2023-24&amp;seasons=2024-25&amp;group_by=opponent&amp;venue=away&amp;opponent_id=club%3A1014\">");
     expect(readOpponentLabels).toHaveBeenCalledTimes(1);
     expect(readOpponentLabels).toHaveBeenCalledWith(env, snapshot, ["club:1014"]);
-    expect(body).toContain('value="club:1014" selected>');
+    expect(body).toContain('<span>Liverpool</span></label><input type="hidden" name="opponent_id" value="club:1014">');
+    expect(body).not.toContain('<select name="opponent_id"');
     expect(body).toContain('name="seasons" value="2023-24" checked');
     expect(body).toContain('name="seasons" value="2024-25" checked');
     expect(body).toContain('value="away" selected');
+    expect(body).toContain(`<a href="#opponent-history-form">${LOCALES[locale].strings.opponentHistoryChangeSelection}</a>`);
+    expect(LOCALES[locale].strings.opponentHistoryChangeSelection).not.toBe(LOCALES[locale].strings.opponentHistoryChoose);
     expect(currentSnapshot).toHaveBeenCalled();
   });
 
@@ -105,9 +139,24 @@ describe("opponent history selection form", () => {
     const body = await response.text();
     expect(response.status).toBe(400);
     expect(body).toContain(locale === "en" ? "Select at least one season." : "Selecciona al menos una temporada.");
+    expect(body).toContain('role="alert"');
     expect(body).toContain('value="club:1014" selected>');
     expect(body).toContain('value="home" selected');
     expect(body).not.toMatch(/name="seasons" value="[^"]+" checked/);
+    expect(seasonSplitFacts).not.toHaveBeenCalled();
+  });
+
+  it("returns 503 on the no-seasons branch when budget is refused, before D1 reads", async () => {
+    vi.mocked(enforceBudget).mockResolvedValueOnce(false);
+    const response = await app.request(
+      "https://site.invalid/en/opponents/history?schema_version=1&competition=PL&group_by=opponent&opponent_id=club%3A1014",
+      { headers }, env,
+    );
+    expect(response.status).toBe(503);
+    expect(enforceBudget).toHaveBeenCalledWith(env, { failClosed: true });
+    expect(currentPublication).not.toHaveBeenCalled();
+    expect(readOpponentLabels).not.toHaveBeenCalled();
+    expect(currentSnapshot).not.toHaveBeenCalled();
     expect(seasonSplitFacts).not.toHaveBeenCalled();
   });
 

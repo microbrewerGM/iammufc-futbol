@@ -843,6 +843,8 @@ function registerLocaleRoutes(code: LocaleCode) {
     const allowed = new Set(["schema_version", "competition", "group_by", "seasons", "venue", "opponent_id"]);
     if ([...params.keys()].some(key => !allowed.has(key)) ||
         [...params.keys()].some(key => key !== "seasons" && params.getAll(key).length !== 1)) return renderError(invalid, 400);
+    if ((params.has("schema_version") && params.get("schema_version") !== "1") ||
+        (params.has("competition") && params.get("competition") !== "PL")) return renderError(invalid, 400);
     const opponent = params.get("opponent_id");
     const seasons = params.getAll("seasons");
     if ((opponent && !APPROVED_OPPONENT_IDS.has(opponent)) || seasons.length !== seasonCount) return renderError(invalid, 400);
@@ -872,14 +874,17 @@ function registerLocaleRoutes(code: LocaleCode) {
         `${selectedSeasons.includes(season) ? " checked" : ""}>${esc(season)}</label>`).join("");
       const venueOption = (value: string, label: string, selected: boolean) =>
         `<option value="${value}"${selected ? " selected" : ""}>${esc(label)}</option>`;
+      const opponentField = ids.length === 1 && selectedOpponent
+        ? `<label>${esc(t.opponentHistoryOpponentLabel)}<span>${esc(labels.get(selectedOpponent) ?? selectedOpponent)}</span></label><input type="hidden" name="opponent_id" value="${esc(selectedOpponent)}">`
+        : `<label>${esc(t.opponentHistoryOpponentLabel)}<select name="opponent_id" required>${options}</select></label>`;
       return [
         `<h2>${esc(t.opponentHistoryChoose)}</h2>`,
         message ? `<p role="alert">${esc(message)}</p>` : "",
-        `<form method="get" action="/${locale.code}/opponents/history">`,
+        `<form id="opponent-history-form" method="get" action="/${locale.code}/opponents/history">`,
         '<input type="hidden" name="schema_version" value="1">',
         '<input type="hidden" name="competition" value="PL">',
         '<input type="hidden" name="group_by" value="opponent">',
-        `<label>${esc(t.opponentHistoryOpponentLabel)}<select name="opponent_id" required>${options}</select></label>`,
+        opponentField,
         `<fieldset><legend>${esc(t.opponentHistorySeasons)}</legend>${seasonOptions}</fieldset>`,
         `<label>${esc(t.opponentHistoryVenue)}<select name="venue">`,
         venueOption("all", t.opponentHistoryVenueAll, selectedVenue === null),
@@ -891,6 +896,9 @@ function registerLocaleRoutes(code: LocaleCode) {
       ].join("");
     };
     if (params.size === 0) {
+      if (catalog.outputCapability("season_splits") !== "clear") {
+        return html(page(opponentHistoryUnpublishedBody(locale.code), { title: t.opponentHistoryTitle, locale, unprefixedPath: "/opponents/history" }));
+      }
       if (!(await enforceBudget(c.env, { failClosed: true }))) return renderError(unavailable, 503);
       try {
         const publication = await currentPublication(c.env);
@@ -908,6 +916,9 @@ function registerLocaleRoutes(code: LocaleCode) {
     }
     if (!opponent) return renderError(invalid, 400);
     if (seasons.length === 0) {
+      if (catalog.outputCapability("season_splits") !== "clear") {
+        return html(page(opponentHistoryUnpublishedBody(locale.code), { title: t.opponentHistoryTitle, locale, unprefixedPath: "/opponents/history" }), 400);
+      }
       if (!(await enforceBudget(c.env, { failClosed: true }))) return renderError(unavailable, 503);
       try {
         const publication = await currentPublication(c.env);
@@ -950,7 +961,7 @@ function registerLocaleRoutes(code: LocaleCode) {
       }
       const credits = Object.fromEntries([...sourceCredits].map(([id, texts]) => [id, [...texts].join(" · ")]));
       const form = renderSelection(labels, [opponent], opponent, request.seasons, request.venue) +
-        `<p><a href="/${locale.code}/opponents/history">${esc(t.opponentHistoryChoose)}</a></p>`;
+        `<p><a href="#opponent-history-form">${esc(t.opponentHistoryChangeSelection)}</a></p>`;
       const body = `${form}${opponentHistoryBody({ result, opponentLabel: labels.get(opponent) ?? opponent, credits }, locale.code)}`;
       const canonical = new URLSearchParams();
       canonical.set("schema_version", "1");
