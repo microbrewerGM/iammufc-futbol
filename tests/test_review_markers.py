@@ -25,18 +25,17 @@ class GitStub:
     ancestry: dict[tuple[str, str], int] = {}
     diffs: dict[tuple[str, str], str] = {}
     fail_diff = False
+    modes = {}
     calls: list[tuple[str, ...]] = []
 
     @classmethod
     def run(cls, argv, **kwargs):
         args = argv[1:]
         cls.calls.append(tuple(args))
-        if args[0] == "diff" and "--name-only" in args:
+        if args[0] == "diff" and "--raw" in args:
             if cls.fail_diff:
                 return subprocess.CompletedProcess(argv, 2, "", "stubbed diff failure")
-            return subprocess.CompletedProcess(
-                argv, 0, "\0".join(cls.paths) + ("\0" if cls.paths else ""), ""
-            )
+            return subprocess.CompletedProcess(argv, 0, "".join(f":{cls.modes.get(p, ('100644', '100644'))[0]} {cls.modes.get(p, ('100644', '100644'))[1]} {'a'*40} {'b'*40} M\t{p}\n" for p in cls.paths), "")
         if args[0] == "diff":
             left, right = args[-2:]
             return subprocess.CompletedProcess(argv, 0, cls.diffs.get((left, right), "patch"), "")
@@ -55,6 +54,7 @@ def stub_git(monkeypatch):
     GitStub.diffs = {(MERGE, JUDGED): "same", (BASE, HEAD): "same"}
     GitStub.fail_diff = False
     GitStub.calls = []
+    GitStub.modes = {}
     monkeypatch.setattr(review_markers.subprocess, "run", GitStub.run)
 
 
@@ -145,6 +145,14 @@ def test_verdict_cases(description, paths, text, expected):
     assert check(text, head_repo=repo)[0] is expected, description
 
 
+@pytest.mark.parametrize("mode", ["120000", "160000"])
+def test_symlink_and_gitlink_modes_require_red_team(mode):
+    GitStub.paths = ["worker/src/views/link.ts"]
+    GitStub.modes[GitStub.paths[0]] = (mode, mode)
+    assert not check(body())[0]
+    assert check(body(red_team=True))[0]
+
+
 def test_protected_paths_pass_with_red_team():
     GitStub.paths = ["infra/config.toml"]
     assert check(body(red_team=True))[0]
@@ -195,7 +203,15 @@ def test_crlf_byte_check_passes():
         ("worker/src/core/discovery-arrivals.ts", True),
         ("worker/src/views/pages.ts", False),
         ("worker/src/views/x.ts", False),
-        ("worker/src/core/x.ts", False),
+        ("worker/src/core/x.ts", True),
+        ("worker/src/core/question-requests.ts", True),
+        ("worker/src/core/validate-intent.ts", True),
+        ("worker/src/core/feasibility.ts", True),
+        ("worker/src/views/layout.ts", True),
+        ("worker/src/VIEWS/x.ts", True),
+        ("worker/src/viewſ/x.ts", True),
+        ("worker/src/views/pages.ts", False),
+        ("tests/a/b.test.ts", False),
         ("tests/x.test.ts", False),
         ("docs/x.md", False),
         ("README.md", False),
@@ -270,7 +286,7 @@ def test_byte_check_git_argv_is_pinned():
     text = f"{body(JUDGED)}\nLead: BYTE-CHECK {JUDGED} {HEAD}"
     assert check(text)[0]
     assert GitStub.calls == [
-        ("diff", "--name-only", "-z", "--no-renames", f"{BASE}...{HEAD}"),
+        ("diff", "--raw", "--no-renames", f"{BASE}...{HEAD}"),
         ("merge-base", "--is-ancestor", JUDGED, BASE),
         ("merge-base", "--is-ancestor", JUDGED, HEAD),
         ("merge-base", BASE, JUDGED),
@@ -599,66 +615,24 @@ def test_workflow_run_inputs_require_red_team_except_secret_free_vitest_tests():
         assert review_markers.needs_red_team(path), path
 
 
-def test_views_and_core_do_not_import_protected_worker_areas():
-    import posixpath
-
-    listing = stdlib_subprocess.Popen(
-        ["git", "ls-files", "-z"], cwd=ROOT, stdout=stdlib_subprocess.PIPE, text=True
-    )
+def test_views_have_no_value_imports_of_protected_worker_areas():
+    listing = stdlib_subprocess.Popen(["git", "ls-files", "-z"], cwd=ROOT, stdout=stdlib_subprocess.PIPE, text=True)
     stdout, _ = listing.communicate()
     assert listing.returncode == 0
-    tracked = [path for path in stdout.split("\0") if path]
-    source_files = [
-        path for path in tracked
-        if path.startswith(("worker/src/views/", "worker/src/core/"))
-        and path.endswith((".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"))
-    ]
-    import_pattern = re.compile(
-        r"(?:\bfrom\s*|\bimport\s*\(|\brequire\s*\()\s*[\"'](\.[^\"']+)[\"']"
-    )
-    violations = []
-    excluded_importers = set()
-    for relative_path in source_files:
-        source = (ROOT / relative_path).read_text()
-        directory = posixpath.dirname(relative_path)
-        for match in import_pattern.finditer(source):
-            statement_start = source.rfind("\n", 0, match.start()) + 1
-            statement_prefix = source[statement_start:match.start()]
-            if re.match(r"\s*(?:import|export)\s+type\b", statement_prefix):
-                continue
-            specifier = match.group(1)
-            resolved = posixpath.normpath(posixpath.join(directory, specifier))
-            if any(
-                component in {"security", "budget", "generated"}
-                for component in resolved.split("/")
-            ) or resolved == "worker/src/index" or resolved.startswith("worker/src/index/"):
-                if review_markers.needs_red_team(relative_path):
-                    excluded_importers.add(relative_path)
-                else:
-                    violations.append((relative_path, specifier))
-    assert not violations, violations
-    assert excluded_importers == {
-        "worker/src/core/parser.ts",
-        "worker/src/core/question-triage-bridge.ts",
-    }
+    paths = [p for p in stdout.split("\0") if p.startswith("worker/src/views/") and p.endswith(".ts")]
+    import_pattern = re.compile(r"\b(?:from\s*|import\s*\(|import\s*|require\s*\()\s*[\"'`]([^\"'`]+)[\"'`]")
+    for path in paths:
+        source = (ROOT / path).read_text()
+        masked = re.sub(r"\bimport\s+type\b[\s\S]*?\bfrom\s*[\"'][^\"']+[\"']", "", source)
+        for match in import_pattern.finditer(masked):
+            spec = match.group(1)
+            assert not re.search(r"(?:^|/)(?:security|budget|generated)(?:/|$)|(?:^|/)index(?:\.[^/]*)?$", spec), (path, spec)
 
 
-def test_type_only_imports_do_not_gate_but_value_imports_do():
-    source = (ROOT / "worker/src/views/pages.ts").read_text()
-    assert re.search(r"import\s+type\s*\{[^}]*\}\s*from\s*[\"']../security/", source, re.DOTALL)
-    assert not review_markers.needs_red_team("worker/src/views/pages.ts")
-    assert review_markers.needs_red_team("worker/src/core/parser.ts")
-
-
-@pytest.mark.parametrize(
-    ("paths", "protected"),
-    [
-        (["worker/src/security/auth.ts", "worker/src/core/db.ts"], True),
-        (["worker/src/security/askguard.ts", "worker/src/core/discovery-arrivals.ts"], True),
-        (["worker/src/security/askguard.ts", "worker/src/core/validate-intent.ts"], True),
-    ],
-)
-def test_reverse_import_closure_is_red_team_protected(paths, protected):
-    GitStub.paths = paths
-    assert check(body(red_team=protected))[0]
-    assert check(body())[0] is (not protected)
+def test_forward_guard_masks_same_line_and_multiline_type_imports():
+    def mask(source):
+        return re.sub(r"\bimport\s+type\b[\s\S]*?\bfrom\s*[\"'][^\"']+[\"']", "", source)
+    pattern = re.compile(r"\b(?:from\s*|import\s*\(|import\s*|require\s*\()\s*[\"'`]([^\"'`]+)[\"'`]")
+    assert pattern.search(mask('import type { A } from "../security/x"; import { b } from "../security/y"'))
+    assert not pattern.search(mask('import type {\n A\n} from "../security/z"'))
+    assert pattern.search('import "../security/x"')
