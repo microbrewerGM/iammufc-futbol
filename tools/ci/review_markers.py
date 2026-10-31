@@ -7,6 +7,8 @@ the exact Claude Code footer, a Claude session URL, or plain ASCII prose using
 only letters, digits, spaces, and `,.;:()'\"/#?=%+@-`. Prose cannot contain
 verdict-related words. Verdict lines form one contiguous block separated from
 prose by blank lines.
+Stale canonical verdict lines must be replaced; an old verdict alongside a
+current one makes the allow-listed block invalid.
 """
 
 from __future__ import annotations
@@ -87,7 +89,6 @@ def is_protected(path: str) -> bool:
         or basename in PROTECTED_BASENAMES
         or agent_doc
         or basename == ".npmrc"
-        or basename in {"vitest.config.*", "vitest.workspace.*", "vite.config.*"}
         or any(
             basename.startswith(prefix)
             for prefix in ("vitest.config.", "vitest.workspace.", "vite.config.")

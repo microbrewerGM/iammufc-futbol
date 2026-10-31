@@ -239,6 +239,10 @@ def test_verdict_trailing_space_fails():
     assert not check(f"Reviewer: APPROVE {HEAD} \nValidator: PASS {HEAD}")[0]
 
 
+def test_stale_canonical_line_next_to_current_line_fails():
+    assert not check(body() + f"\nReviewer: APPROVE {'e' * 40}")[0]
+
+
 def test_verdict_block_must_be_contiguous_and_separated():
     assert not check(f"Reviewer: APPROVE {HEAD}\nordinary prose\nValidator: PASS {HEAD}")[0]
     assert not check(f"ordinary prose\nReviewer: APPROVE {HEAD}\nValidator: PASS {HEAD}")[0]
@@ -311,23 +315,50 @@ def test_workflow_shape():
 
 
 def test_all_workflow_executed_scripts_and_install_manifests_are_protected():
-    workflows = list((ROOT / ".github/workflows").glob("*.yml"))
-    invoked_scripts = {
-        "package.json", "package-lock.json", "pyproject.toml", "uv.lock",
-        ".gitleaksignore", "ruff.toml", ".ruff.toml", "uv.toml",
-        "pytest.ini", ".pytest.ini", "tox.ini", "setup.cfg",
-    }
-    for workflow in workflows:
-        text = workflow.read_text()
-        for match in __import__("re").finditer(
-            r"\b(?:node|python3?|uv run python)\s+([\w./-]+\.(?:py|mjs|js|cjs))", text
-        ):
-            invoked_scripts.add(match.group(1))
-        if "npm ci" in text or "npm install" in text:
-            invoked_scripts.update(("package.json", "package-lock.json"))
-        if "uv sync" in text:
-            invoked_scripts.update(("pyproject.toml", "uv.lock"))
     repo_files = {p.relative_to(ROOT).as_posix() for p in ROOT.rglob("*") if p.is_file()}
+    workflows = list((ROOT / ".github/workflows").glob("*.yml"))
+    invoked_scripts = set()
+    implicit_inputs = set()
+    for workflow in workflows:
+        parsed = __import__("yaml").safe_load(workflow.read_text())
+        for job in parsed.get("jobs", {}).values():
+            for step in job.get("steps", []):
+                run = step.get("run", "")
+                if not isinstance(run, str):
+                    continue
+                for match in __import__("re").finditer(
+                    r"(?<![\w./-])python\s+-m\s+([\w.]+)|"
+                    r"(?<![\w./-])uv\s+run\s+python\s+-m\s+([\w.]+)|"
+                    r"(?<![\w./-])uv\s+run\s+pytest\s+([^\s\\]+)|"
+                    r"(?<![\w./-])node\s+--test\s+([^\s\\]+)",
+                    run,
+                ):
+                    module = match.group(1) or match.group(2)
+                    if module:
+                        invoked_scripts.add(module.replace(".", "/") + ".py")
+                    else:
+                        invoked_scripts.add(match.group(3) or match.group(4))
+                if "npm ci" in run:
+                    implicit_inputs.update(("package.json", "package-lock.json", ".npmrc"))
+                    implicit_inputs.update(
+                        path for path in repo_files if path.rsplit("/", 1)[-1].startswith(".yarnrc")
+                    )
+                    implicit_inputs.update((".nvmrc", ".node-version"))
+                if "uv run" in run or "uv sync" in run:
+                    implicit_inputs.update(("pyproject.toml", "uv.lock", "uv.toml", ".python-version"))
+                if "pytest" in run:
+                    implicit_inputs.update(("conftest.py", "pytest.ini", "pyproject.toml"))
+                if "vitest" in run:
+                    implicit_inputs.add("vitest.config.*")
+                if "gitleaks" in run or step.get("uses", "").startswith("gitleaks/"):
+                    implicit_inputs.add(".gitleaksignore")
+    for path in implicit_inputs:
+        if path == ".npmrc":
+            assert review_markers.is_protected("nested/.npmrc")
+        elif path == "vitest.config.*":
+            assert review_markers.is_protected("vitest.config.mts")
+        else:
+            assert review_markers.is_protected(path), path
     missing = sorted(
         path
         for path in invoked_scripts
@@ -461,6 +492,7 @@ def test_live_api_url_and_refresh(monkeypatch):
 
 def test_live_api_redirect_fails_without_forwarding_token(monkeypatch):
     requests = []
+    handlers = []
 
     class Opener:
         def open(self, req, timeout):
@@ -469,12 +501,118 @@ def test_live_api_redirect_fails_without_forwarding_token(monkeypatch):
                 req.full_url, 302, "redirect", {"Location": "https://attacker.invalid/"}, None
             )
 
-    monkeypatch.setattr(review_markers.urllib.request, "build_opener", lambda handler: Opener())
+    def build_opener(handler):
+        handlers.append(handler)
+        return Opener()
+
+    monkeypatch.setattr(review_markers.urllib.request, "build_opener", build_opener)
     with pytest.raises(review_markers.urllib.error.HTTPError):
         review_markers._live_pull_request(REPO, "42", "secret-token")
     assert len(requests) == 1
     assert requests[0].get_header("Authorization") == "Bearer secret-token"
     assert "attacker.invalid" not in repr(requests)
+    assert len(handlers) == 1
+    with pytest.raises(review_markers.urllib.error.HTTPError):
+        handlers[0]().redirect_request(
+            requests[0], None, 302, "Found", {}, "https://attacker.invalid/"
+        )
+
+
+def test_live_api_rejects_unexpected_response_url(monkeypatch):
+    import json
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def geturl(self):
+            return "https://attacker.invalid/"
+
+        def read(self):
+            return json.dumps({"body": body(), "head": {"sha": HEAD}}).encode()
+
+    class Opener:
+        def open(self, req, timeout):
+            return Response()
+
+    monkeypatch.setattr(review_markers.urllib.request, "build_opener", lambda handler: Opener())
+    with pytest.raises(RuntimeError, match="redirected"):
+        review_markers._live_pull_request(REPO, "42", "token")
+
+
+def test_main_live_head_mismatch_and_network_error_fail_closed(monkeypatch, capsys):
+    environ = {
+        "GITHUB_REPOSITORY": REPO,
+        "PR_NUMBER": "42",
+        "GITHUB_TOKEN": "never-print-this-token",
+        "HEAD_SHA": HEAD,
+        "BASE_SHA": BASE,
+        "HEAD_REPO": REPO,
+    }
+    monkeypatch.setattr(review_markers.os, "environ", environ)
+    monkeypatch.setattr(
+        review_markers,
+        "_live_pull_request",
+        lambda *args: (body(), "e" * 40),
+    )
+    assert review_markers.main() == 1
+    captured = capsys.readouterr()
+    assert "live head differs" in captured.out
+
+    def fail_network(*args):
+        raise OSError("network unavailable")
+
+    monkeypatch.setattr(review_markers, "_live_pull_request", fail_network)
+    assert review_markers.main() == 1
+    captured = capsys.readouterr()
+    assert "network unavailable" in captured.out
+    assert "never-print-this-token" not in captured.out + captured.err
+
+
+def test_main_request_authorization_and_token_not_logged(monkeypatch, capsys):
+    import json
+
+    token = "main-test-secret-token"
+    monkeypatch.setattr(
+        review_markers.os,
+        "environ",
+        {
+            "GITHUB_REPOSITORY": REPO,
+            "PR_NUMBER": "42",
+            "GITHUB_TOKEN": token,
+            "HEAD_SHA": HEAD,
+            "BASE_SHA": BASE,
+            "HEAD_REPO": REPO,
+        },
+    )
+    requests = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def geturl(self):
+            return f"https://api.github.com/repos/{REPO}/pulls/42"
+
+        def read(self):
+            return json.dumps({"body": body(), "head": {"sha": HEAD}}).encode()
+
+    class Opener:
+        def open(self, req, timeout):
+            requests.append(req)
+            return Response()
+
+    monkeypatch.setattr(review_markers.urllib.request, "build_opener", lambda handler: Opener())
+    assert review_markers.main() == 0
+    captured = capsys.readouterr()
+    assert requests[0].get_header("Authorization") == f"Bearer {token}"
+    assert token not in captured.out + captured.err
 
 
 def test_workflow_body_expression_once():
