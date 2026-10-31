@@ -331,3 +331,6 @@ footer {
   font-size: .8rem; color: var(--muted);
 }
 footer .disclaimer { font-weight: 600; color: var(--fg); }
+
+/* Keep full source snapshot identifiers readable on narrow screens. */
+.season-splits-snapshot { overflow-wrap: anywhere; }
