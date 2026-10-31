@@ -191,12 +191,17 @@ def test_crlf_byte_check_passes():
         ("worker/src/other/x.ts", True),
         ("worker/src/core/parser.ts", True),
         ("worker/src/core/question-triage-bridge.ts", True),
+        ("worker/src/core/db.ts", True),
+        ("worker/src/core/discovery-arrivals.ts", True),
         ("worker/src/views/pages.ts", False),
         ("worker/src/views/x.ts", False),
         ("worker/src/core/x.ts", False),
         ("tests/x.test.ts", False),
         ("docs/x.md", False),
         ("README.md", False),
+        ("README.MD", True),
+        ("Docs/x", True),
+        ("WORKER/SRC/x.ts", True),
     ],
 )
 def test_rework_8_path_allow_list(path, protected):
@@ -314,6 +319,8 @@ def test_workflow_shape():
     )
     assert "HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}" in workflow
     assert "GITHUB_REPOSITORY: ${{ github.repository }}" in workflow
+    assert "PR_NUMBER: ${{ github.event.pull_request.number }}" in workflow
+    assert "GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}" in workflow
     assert "${{ github.event.pull_request.body }}" not in workflow
     parsed = __import__("yaml").safe_load(workflow)
     assert parsed["permissions"] == {"contents": "read", "pull-requests": "read"}
@@ -566,21 +573,25 @@ def test_workflow_run_inputs_require_red_team_except_secret_free_vitest_tests():
         for job in workflow.get("jobs", {}).values():
             secret_free_test_job = job.get("name") == "test"
             for step in job.get("steps", []):
-                for line in step.get("run", "").splitlines():
-                    try:
-                        tokens = shlex.split(line.split("#", 1)[0])
-                    except ValueError:
-                        continue
-                    for index in range(len(tokens)):
-                        command = " ".join(tokens[index:index + 3])
-                        match = module_pattern.match(command)
-                        if match:
-                            collected.add(match.group(1).replace(".", "/") + ".py")
-                        candidate = tokens[index].strip("\"'(){}[],:;")
-                        if candidate in tracked:
-                            if candidate.startswith("tests/") and candidate.endswith(".test.ts") and secret_free_test_job:
-                                continue
-                            collected.add(candidate)
+                command_text = step.get("run", "")
+                command_text = re.sub(r"\\\n\s*", " ", command_text)
+                command_text = "\n".join(
+                    line.split("#", 1)[0] for line in command_text.splitlines()
+                )
+                try:
+                    tokens = shlex.split(command_text)
+                except ValueError as exc:
+                    pytest.fail(f"cannot tokenize {workflow_path}: {command_text!r}: {exc}")
+                for index in range(len(tokens)):
+                    command = " ".join(tokens[index:index + 3])
+                    match = module_pattern.match(command)
+                    if match:
+                        collected.add(match.group(1).replace(".", "/") + ".py")
+                    candidate = tokens[index].strip("\"'(){}[],:;")
+                    if candidate in tracked:
+                        if candidate.startswith("tests/") and candidate.endswith(".test.ts") and secret_free_test_job:
+                            continue
+                        collected.add(candidate)
     assert collected
     assert "tools/ci/review_markers.py" in collected
     assert "pipeline/contracts/validate_public_catalog.py" in collected
@@ -637,3 +648,17 @@ def test_type_only_imports_do_not_gate_but_value_imports_do():
     assert re.search(r"import\s+type\s*\{[^}]*\}\s*from\s*[\"']../security/", source, re.DOTALL)
     assert not review_markers.needs_red_team("worker/src/views/pages.ts")
     assert review_markers.needs_red_team("worker/src/core/parser.ts")
+
+
+@pytest.mark.parametrize(
+    ("paths", "protected"),
+    [
+        (["worker/src/security/auth.ts", "worker/src/core/db.ts"], True),
+        (["worker/src/security/askguard.ts", "worker/src/core/discovery-arrivals.ts"], True),
+        (["worker/src/security/askguard.ts", "worker/src/core/validate-intent.ts"], True),
+    ],
+)
+def test_reverse_import_closure_is_red_team_protected(paths, protected):
+    GitStub.paths = paths
+    assert check(body(red_team=protected))[0]
+    assert check(body())[0] is (not protected)
