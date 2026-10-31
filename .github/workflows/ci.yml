@@ -25,6 +25,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
@@ -43,12 +45,12 @@ jobs:
       - name: Python tests
         run: uv run pytest -q
 
+      - name: Typecheck
+        run: npx tsc --noEmit
+
       - name: TypeScript tests
         # Same fixture as pytest. If the two languages disagree, one fails.
         run: npx vitest run
-
-      - name: Typecheck
-        run: npx tsc --noEmit
 
       - name: Lint
         run: uv run ruff check .
