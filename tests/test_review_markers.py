@@ -72,7 +72,7 @@ def check(text, *, head=HEAD, base=BASE, head_repo=REPO, repository=REPO):
         ("missing marker", ["src/app.ts"], f"Validator: PASS {HEAD}", False),
         ("stale SHA", ["src/app.ts"], body("e" * 40), False),
         ("lowercase hex", ["src/app.ts"], body(HEAD), True),
-        ("uppercase hex", ["src/app.ts"], body(HEAD.upper()), True),
+        ("uppercase hex", ["src/app.ts"], body(HEAD.upper()), False),
         ("valid", ["src/app.ts"], body(), True),
         ("protected without red-team", ["infra/config.toml"], body(), False),
         ("injection-shaped body text", ["src/app.ts"], f"$(injected shell text)\n{body()}", True),
@@ -86,9 +86,9 @@ def check(text, *, head=HEAD, base=BASE, head_repo=REPO, repository=REPO):
         ("conflicting role verdicts", ["src/app.ts"], body() + f"\nReviewer: BLOCK {HEAD}", False),
         ("fork PR", ["src/app.ts"], body(), False),
         (
-            "markers hidden in comments and fences",
+            "comment rejected",
             ["src/app.ts"],
-            f"<!--\n{body()}\n-->\n```\n{body()}\n```",
+            f"<!--\n{body()}",
             False,
         ),
         (
@@ -103,8 +103,18 @@ def check(text, *, head=HEAD, base=BASE, head_repo=REPO, repository=REPO):
             f"{body(JUDGED)}\nLead: BYTE-CHECK {JUDGED} {HEAD}",
             False,
         ),
-        ("marker mid-line", ["src/app.ts"], f"prefix {body()}", False),
+        ("marker mid-line", ["src/app.ts"], f"prefix Reviewer: APPROVE {HEAD}\nValidator: PASS {HEAD}", False),
         ("marker trailing text", ["src/app.ts"], body() + " trailing", False),
+        ("decorated role", ["src/app.ts"], f"- **Reviewer:** APPROVE {HEAD}\nValidator: PASS {HEAD}", False),
+        ("indented role", ["src/app.ts"], f" Reviewer: APPROVE {HEAD}\nValidator: PASS {HEAD}", False),
+        ("four space role", ["src/app.ts"], f"    Reviewer: APPROVE {HEAD}\nValidator: PASS {HEAD}", False),
+        ("lowercase role", ["src/app.ts"], f"reviewer: APPROVE {HEAD}\nValidator: PASS {HEAD}", False),
+        ("failed token", ["src/app.ts"], body() + f"\nValidator: FAILED {HEAD}", False),
+        ("reject token", ["src/app.ts"], body() + f"\nReviewer: REJECT {HEAD}", False),
+        ("lgtm token", ["src/app.ts"], body() + f"\nReviewer: LGTM {HEAD}", False),
+        ("fence opener", ["src/app.ts"], f"```\n{body()}", False),
+        ("unterminated fence", ["src/app.ts"], f"~~~\n{body()}", False),
+        ("tab rejected", ["src/app.ts"], f"\t{body()}", False),
         (
             "wrong role validator approve",
             ["src/app.ts"],
@@ -168,6 +178,11 @@ def test_byte_check_only_accepts_identical_pr_internal_patch(judged_kind, identi
     assert check(text)[0] is expected
 
 
+def test_crlf_byte_check_passes():
+    text = f"{body(JUDGED)}\r\nLead: BYTE-CHECK {JUDGED} {HEAD}"
+    assert check(text)[0]
+
+
 def test_byte_check_git_argv_is_pinned():
     text = f"{body(JUDGED)}\nLead: BYTE-CHECK {JUDGED} {HEAD}"
     assert check(text)[0]
@@ -221,7 +236,7 @@ def test_workflow_shape():
     )
     assert "HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}" in workflow
     assert "GITHUB_REPOSITORY: ${{ github.repository }}" in workflow
-    assert "${{ github.event.pull_request.body }}" in workflow
+    assert "${{ github.event.pull_request.body }}" not in workflow
     parsed = __import__("yaml").safe_load(workflow)
     assert parsed["permissions"] == {"contents": "read", "pull-requests": "read"}
     assert "write" not in workflow and "write-all" not in workflow
@@ -230,11 +245,8 @@ def test_workflow_shape():
         for step in job.get("steps", []):
             run = step.get("run", "")
             assert "${{" not in run
-            for key, value in step.get("env", {}).items():
-                if "${{ github.event.pull_request.body }}" in value:
-                    assert key == "PR_BODY"
-                if key == "PR_BODY":
-                    assert value == "${{ github.event.pull_request.body }}"
+            for value in step.get("env", {}).values():
+                assert "${{ github.event.pull_request.body }}" not in value
 
 
 def test_all_workflow_executed_scripts_and_install_manifests_are_protected():
@@ -282,13 +294,13 @@ def test_rework_3_protected(path):
 def test_reject_and_lgtm_conflict_and_case_markup():
     assert not check(body() + f"\nReviewer: REJECT {HEAD}")[0]
     assert not check(body() + f"\nReviewer: LGTM {HEAD}")[0]
-    assert check(f"- **Reviewer:** APPROVE {HEAD}\n* **Validator:** PASS {HEAD}")[0]
+    assert not check(f"- **Reviewer:** APPROVE {HEAD}\n* **Validator:** PASS {HEAD}")[0]
 
 
 def test_prefix_negatives_and_stale_negative():
     for token in ("REJECTED", "FAILURE", "BLOCKED", "CHANGES_NEEDED", "REQUESTED"):
         assert not check(body() + f"\nReviewer: {token} {HEAD}")[0]
-    assert check(body() + f"\nReviewer: FAIL {'e' * 40}")[0]
+    assert not check(body() + f"\nReviewer: FAIL {'e' * 40}")[0]
 
 
 def test_ancestor_errors_raise_for_both_calls():
@@ -332,7 +344,7 @@ def test_live_api_url_and_refresh(monkeypatch):
 
 def test_workflow_body_expression_once():
     text = (ROOT / ".github/workflows/review-markers.yml").read_text()
-    assert text.count("${{ github.event.pull_request.body }}") == 1
+    assert text.count("${{ github.event.pull_request.body }}") == 0
     assert "PR_NUMBER:" in text and "GITHUB_TOKEN:" in text
 
 
@@ -340,3 +352,6 @@ def test_rights_gate_module_and_pytest_are_protected():
     assert review_markers.is_protected("pipeline/contracts/validate_public_catalog.py")
     assert review_markers.is_protected("tests/test_feasibility.py")
     assert review_markers.is_protected("nested/.npmrc")
+    assert review_markers.is_protected("catalog/schemas/manifest.json")
+    assert review_markers.is_protected("tests/conftest.py")
+    assert review_markers.is_protected("tests/nested/conftest.py")

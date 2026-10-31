@@ -15,8 +15,12 @@ import urllib.request
 SHA = r"[0-9a-fA-F]{40}"
 SHA_RE = re.compile(rf"^{SHA}$")
 ROLES = ("Reviewer", "Validator", "Red-team")
-NEGATIVE_PREFIXES = ("FAIL", "REJECT", "BLOCK", "CHANGES", "REQUEST")
-BYTE_CHECK = re.compile(rf"^Lead: BYTE-CHECK ({SHA}) ({SHA})$", re.MULTILINE)
+CANONICAL_MARKER = re.compile(
+    rf"^(?:(Reviewer): (APPROVE) ({SHA})|"
+    rf"(Validator|Red-team): (PASS) ({SHA})|"
+    rf"Lead: BYTE-CHECK ({SHA}) ({SHA}))$"
+)
+MARKER_SHAPE = re.compile(r"(?i)(reviewer|validator|red-team|lead)\s*\**\s*:")
 PROTECTED_PREFIXES = (
     ".github/",
     ".claude/",
@@ -31,6 +35,7 @@ PROTECTED_PREFIXES = (
     "tools/fleet/",
     "tools/",
     "catalog/rights/",
+    "catalog/schemas/",
     "pipeline/contracts/",
 )
 PROTECTED_FILES = {
@@ -65,6 +70,7 @@ def is_protected(path: str) -> bool:
         or basename in PROTECTED_BASENAMES
         or agent_doc
         or basename == ".npmrc"
+        or (basename == "conftest.py" and normalized.startswith("tests/"))
         or basename.startswith(".yarnrc")
         or normalized.startswith(PROTECTED_PREFIXES)
     )
@@ -86,59 +92,38 @@ def changed_paths(base_sha: str, head_sha: str) -> list[str]:
     return [path for path in output.split("\0") if path]
 
 
-def _visible_body(body: str) -> str:
-    visible, fence, length, comment = [], "", 0, False
-    for line in body.splitlines(keepends=True):
-        parts, i = [], 0
-        while i < len(line):
-            if comment:
-                end = line.find("-->", i)
-                if end < 0:
-                    i = len(line)
-                    break
-                comment, i = False, end + 3
-                continue
-            start = line.find("<!--", i)
-            if start < 0:
-                parts.append(line[i:])
-                break
-            parts.append(line[i:start])
-            comment, i = True, start + 4
-        content = "".join(parts)
-        if fence:
-            if re.match(rf"^ {{0,3}}{re.escape(fence)}{{{length},}}[ \t]*(?:\r?\n)?$", content):
-                fence, length = "", 0
-            visible.append("\n" if content.endswith("\n") else "")
-            continue
-        opener = re.match(r"^ {0,3}(`{3,}|~{3,})(.*?)(?:\r?\n)?$", content)
-        if opener:
-            fence, length = opener.group(1)[0], len(opener.group(1))
-            visible.append("\n" if content.endswith("\n") else "")
-        else:
-            visible.append(content)
-    return "".join(visible)
+def _normalized_body(body: str) -> str:
+    return body.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _ambiguous_body(body: str) -> bool:
+    return "<!--" in body or "\t" in body or any(
+        re.match(r"^\s*(?:`{3,}|~{3,})", line) for line in body.splitlines()
+    )
 
 
 def _verdicts(body: str, sha: str, protected: bool) -> bool:
-    seen = {role: set() for role in ROLES}
-    for line in _visible_body(body).splitlines():
-        line = re.sub(r"^\s*(?:[-*]\s+)?\*{0,2}", "", line).strip()
-        line = re.sub(r"\*{0,2}", "", line).strip()
-        match = re.fullmatch(rf"(Reviewer|Validator|Red-team): (\S+) ({SHA})", line, re.I)
-        if match:
-            role, token, marker = match.groups()
-            if marker.lower() == sha.lower():
-                role = next(r for r in ROLES if r.lower() == role.lower())
-                seen[role].add(token.upper())
-    if any(
-        any(token.startswith(p) for token in values for p in NEGATIVE_PREFIXES) or len(values) > 1
-        for values in seen.values()
-    ):
+    if _ambiguous_body(body):
         return False
-    required = {"Reviewer": {"APPROVE"}, "Validator": {"PASS"}}
-    if protected:
-        required["Red-team"] = {"PASS"}
-    return all(seen[role] == accepted for role, accepted in required.items())
+    seen: dict[str, set[str]] = {role: set() for role in ROLES}
+    for line in _normalized_body(body).splitlines():
+        match = CANONICAL_MARKER.fullmatch(line)
+        if match:
+            reviewer, reviewer_token, reviewer_sha, role, token, marker, _, _ = match.groups()
+            if reviewer:
+                seen[reviewer].add(f"{reviewer_token} {reviewer_sha}")
+            elif role:
+                seen[role].add(f"{token} {marker}")
+        elif MARKER_SHAPE.search(line):
+            return False
+
+    if seen["Reviewer"] != {f"APPROVE {sha}"} or seen["Validator"] != {f"PASS {sha}"}:
+        return False
+    if protected and seen["Red-team"] != {f"PASS {sha}"}:
+        return False
+    if seen["Red-team"] and seen["Red-team"] != {f"PASS {sha}"}:
+        return False
+    return not (seen["Red-team"] - {f"PASS {sha}"})
 
 
 def _byte_identical(base_sha: str, head_sha: str, judged_sha: str) -> bool:
@@ -174,24 +159,21 @@ def check(
         return False, "base and head SHAs must be lowercase"
     if not head_repo or not repository or head_repo != repository:
         return False, "fork pull requests are not accepted"
+    body = _normalized_body(body)
+    if _ambiguous_body(body):
+        return False, "body contains ambiguous markup"
     try:
         paths = changed_paths(base_sha, head_sha)
         if not paths:
             return False, "pull request has no changed files"
         protected = any(is_protected(path) for path in paths)
-        if _verdicts(body, head_sha, False) is False and any(
-            re.search(
-                rf"^(Reviewer|Validator|Red-team): (FAIL|REJECT|BLOCK|CHANGES|REQUEST)\S* {head_sha}$",
-                line,
-                re.I,
-            )
-            for line in _visible_body(body).splitlines()
-        ):
-            return False, "negative verdict for current head"
         if _verdicts(body, head_sha, protected):
             return True, "current-head verdict markers found"
-        for match in BYTE_CHECK.finditer(_visible_body(body)):
-            judged, target = match.groups()
+        for line in body.splitlines():
+            match = CANONICAL_MARKER.fullmatch(line)
+            if not match or not match.group(7):
+                continue
+            judged, target = match.group(7), match.group(8)
             if target.lower() != head_sha.lower() or not SHA_RE.fullmatch(judged):
                 continue
             if not _verdicts(body, judged, protected):
