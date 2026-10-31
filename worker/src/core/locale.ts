@@ -39,6 +39,10 @@ export interface Locale {
   numberLocale: string; // for Intl.NumberFormat -- es-ES gives decimal comma
   strings: {
     seasonSplits: {
+      decadeLabel: (decade: number) => string;
+      seasonSelection: (count: number) => string;
+      coverageSummary: (selected: number, complete: number, partial: number, missing: number) => string;
+      unavailableSeasons: (seasons: string) => string;
       exploreSeasonPerformance: string;
       home: string;
       away: string;
@@ -211,6 +215,10 @@ const EN: Locale = {
   numberLocale: "en-GB",
   strings: {
     seasonSplits: {
+      decadeLabel: (decade) => `${decade}s`,
+      seasonSelection: (count) => `Seasons (${count} selected; choose 1–16)`,
+      coverageSummary: (selected, complete, partial, missing) => `Coverage across ${selected} selected ${selected === 1 ? "season" : "seasons"}: ${complete} complete, ${partial} ${partial === 1 ? "partial schedule" : "partial schedules"}, ${missing} missing split coverage.`,
+      unavailableSeasons: (seasons) => `Split coverage is unavailable for ${seasons}. Revise season selection using the controls above. No zero-match total is implied.`,
       exploreSeasonPerformance: "Explore season performance",
       home: "Home",
       away: "Away",
@@ -399,6 +407,10 @@ const ES: Locale = {
   numberLocale: "es-ES",
   strings: {
     seasonSplits: {
+      decadeLabel: (decade) => `Década de ${decade}`,
+      seasonSelection: (count) => `Temporadas (${count} ${count === 1 ? "seleccionada" : "seleccionadas"}; elige 1–16)`,
+      coverageSummary: (selected, complete, partial, missing) => `Cobertura de ${selected} ${selected === 1 ? "temporada seleccionada" : "temporadas seleccionadas"}: ${complete} ${complete === 1 ? "completa" : "completas"}, ${partial} ${partial === 1 ? "parcial" : "parciales"}, ${missing} sin cobertura.`,
+      unavailableSeasons: (seasons) => `La cobertura de desgloses no está disponible para ${seasons}. Cambie la selección de temporada con los controles anteriores. No se afirma un total de cero partidos.`,
       exploreSeasonPerformance: "Explorar el rendimiento por temporada",
       home: "Local",
       away: "Visitante",

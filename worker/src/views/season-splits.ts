@@ -22,7 +22,6 @@ export function seasonSplitSelection(request: SeasonSplitRequest): SeasonSplitSe
 /** Body fragment only. B14-WIRE owns routes, canonical links and the page shell. */
 export function seasonSplitsBody(model: SeasonSplitView, locale: Locale): string {
   const strings = locale.strings.seasonSplits;
-  const t = (en: string, es: string) => locale.code === "es" ? es : en;
   const title = strings.exploreSeasonPerformance;
   const s = model.selection;
   const result = model.error ? undefined : model.result;
@@ -40,7 +39,7 @@ export function seasonSplitsBody(model: SeasonSplitView, locale: Locale): string
   for (const season of seasons) {
     const year = Number(season.slice(0, 4));
     const decade = Number.isFinite(year) ? Math.floor(year / 10) * 10 : 0;
-    const label = decade ? t(`${decade}s`, `Década de ${decade}`) : strings.otherSeasons;
+    const label = decade ? strings.decadeLabel(decade) : strings.otherSeasons;
     seasonGroups.set(label, [...(seasonGroups.get(label) ?? []), season]);
   }
   let seasonIndex = 0;
@@ -50,7 +49,7 @@ export function seasonSplitsBody(model: SeasonSplitView, locale: Locale): string
   }).join("")}</fieldset>`).join("");
   const form = `<form method="get" action="/${locale.code}/seasons/explore">
     <input type="hidden" name="schema_version" value="1"><input type="hidden" name="competition" value="PL">
-    <fieldset><legend>${t(`Seasons (${seasons.filter(v => s.seasons.includes(v)).length} selected; choose 1–16)`, `Temporadas (${seasons.filter(v => s.seasons.includes(v)).length} ${seasons.filter(v => s.seasons.includes(v)).length === 1 ? "seleccionada" : "seleccionadas"}; elige 1–16)`)}</legend>${seasonChoices}</fieldset>
+    <fieldset><legend>${strings.seasonSelection(seasons.filter(v => s.seasons.includes(v)).length)}</legend>${seasonChoices}</fieldset>
     ${select("group_by", strings.groupBy, [["venue", strings.homeAndAway], ["opponent", strings.opponent]], s.group_by)}
     ${select("venue", strings.venue, [["", strings.allVenues], ["home", venueName("home")], ["away", venueName("away")]], s.venue)}
     ${select("opponent_id", strings.opponent, [["", strings.allOpponents], ...model.opponents.map(o => [o.opponent_id, o.label] as [string, string])], s.opponent_id)}
@@ -68,11 +67,7 @@ export function seasonSplitsBody(model: SeasonSplitView, locale: Locale): string
       total[entry.coverage]++;
       return total;
     }, { complete: 0, partial: 0, missing: 0 });
-    const countLabel = (count: number, singular: string, plural: string) => `${count} ${count === 1 ? singular : plural}`;
-    return `<p id="splits-coverage-summary">${t(
-      `Coverage across ${result.coverage.length} selected ${result.coverage.length === 1 ? "season" : "seasons"}: ${countLabel(counts.complete, "complete", "complete")}, ${countLabel(counts.partial, "partial schedule", "partial schedules")}, ${countLabel(counts.missing, "missing split coverage", "missing split coverage")}.`,
-      `Cobertura de ${result.coverage.length} ${result.coverage.length === 1 ? "temporada seleccionada" : "temporadas seleccionadas"}: ${countLabel(counts.complete, "completa", "completas")}, ${countLabel(counts.partial, "parcial", "parciales")}, ${countLabel(counts.missing, "sin cobertura", "sin cobertura")}.`,
-    )}</p>`;
+    return `<p id="splits-coverage-summary">${strings.coverageSummary(result.coverage.length, counts.complete, counts.partial, counts.missing)}</p>`;
   })() : "";
   const headers = [result.request.group_by === "venue" ? strings.venue : strings.opponent, strings.played, strings.wins, strings.draws, strings.losses, strings.goalsFor, strings.goalsAgainst, strings.goalDifference, strings.points, strings.pointsMatch, strings.goalsForMatch, strings.goalsAgainstMatch, strings.winRate, strings.contributingSeasons];
   const rows = result.groups.map(g => `<tr><th scope="row">${esc(result.request.group_by === "venue" ? venueName(g.key) : opponentName(g.key))}</th>${[g.played, g.won, g.drawn, g.lost, g.goals_for, g.goals_against, g.goal_difference, g.points].map(v => `<td>${num(v)}</td>`).join("")}<td>${num(g.points_per_match, 2)}</td><td>${num(g.goals_for_per_match, 2)}</td><td>${num(g.goals_against_per_match, 2)}</td><td>${num(g.win_rate === null ? null : 100 * g.win_rate, 2)}</td><td>${esc(g.contributing_seasons.join(", "))}</td></tr>`).join("");
@@ -88,7 +83,7 @@ export function seasonSplitsBody(model: SeasonSplitView, locale: Locale): string
   const total = result.request.group_by === "venue" && result.request.venue === null && result.groups.length ? totalRow() : "";
   const unavailableSeasons = result.coverage.filter(c => c.coverage === "missing").map(c => c.season);
   const unavailable = unavailableSeasons.length
-    ? t(`Split coverage is unavailable for ${unavailableSeasons.join(", ")}. Revise season selection using the controls above. No zero-match total is implied.`, `La cobertura de desgloses no está disponible para ${unavailableSeasons.join(", ")}. Cambie la selección de temporada con los controles anteriores. No se afirma un total de cero partidos.`)
+    ? strings.unavailableSeasons(unavailableSeasons.join(", "))
     : strings.splitCoverageIsUnavailableForThis;
   const table = result.groups.length ? `<div class="comparison-table" role="region" tabindex="0" aria-label="${title}"><table aria-describedby="splits-summary splits-method${result.partial ? " splits-warning" : ""}"><caption>${strings.seasonPerformance}${result.partial ? ` · ${strings.partialSubtotals}` : ""}</caption><thead><tr>${headers.map(h => `<th scope="col">${h}</th>`).join("")}</tr></thead><tbody>${rows}${total}</tbody></table></div>` : `<p>${result.status === "no_matches" ? strings.noCompletedMatchesMatchThisSelection : unavailable}</p>`;
   const lineage = [...new Set(result.groups.flatMap(g => g.lineage))];
