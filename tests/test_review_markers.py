@@ -26,6 +26,7 @@ class GitStub:
     diffs: dict[tuple[str, str], str] = {}
     fail_diff = False
     modes = {}
+    statuses = {}
     calls: list[tuple[str, ...]] = []
 
     @classmethod
@@ -35,7 +36,12 @@ class GitStub:
         if args[0] == "diff" and "--raw" in args:
             if cls.fail_diff:
                 return subprocess.CompletedProcess(argv, 2, "", "stubbed diff failure")
-            return subprocess.CompletedProcess(argv, 0, "".join(f":{cls.modes.get(p, ('100644', '100644'))[0]} {cls.modes.get(p, ('100644', '100644'))[1]} {'a'*40} {'b'*40} M\t{p}\n" for p in cls.paths), "")
+            records = []
+            for path in cls.paths:
+                old_mode, new_mode = cls.modes.get(path, ("100644", "100644"))
+                status = cls.statuses.get(path, "M")
+                records.append(f":{old_mode} {new_mode} {'a'*40} {'b'*40} {status}\0{path}\0")
+            return subprocess.CompletedProcess(argv, 0, "".join(records), "")
         if args[0] == "diff":
             left, right = args[-2:]
             return subprocess.CompletedProcess(argv, 0, cls.diffs.get((left, right), "patch"), "")
@@ -55,6 +61,8 @@ def stub_git(monkeypatch):
     GitStub.fail_diff = False
     GitStub.calls = []
     GitStub.modes = {}
+    GitStub.statuses = {}
+    GitStub.paths = ["tests/a.test.ts"]
     monkeypatch.setattr(review_markers.subprocess, "run", GitStub.run)
 
 
@@ -74,9 +82,9 @@ def check(text, *, head=HEAD, base=BASE, head_repo=REPO, repository=REPO):
     [
         ("missing marker", ["worker/src/views/app.ts"], f"Validator: PASS {HEAD}", False),
         ("stale SHA", ["worker/src/views/app.ts"], body("e" * 40), False),
-        ("lowercase hex", ["worker/src/views/app.ts"], body(HEAD), True),
+        ("lowercase hex", ["docs/app.md"], body(HEAD), True),
         ("uppercase hex", ["worker/src/views/app.ts"], body(HEAD.upper()), False),
-        ("valid", ["worker/src/views/app.ts"], body(), True),
+        ("valid", ["docs/app.md"], body(), True),
         ("protected without red-team", ["infra/config.toml"], body(), False),
         ("injection-shaped body text", ["worker/src/views/app.ts"], f"$(injected shell text)\n{body()}", False),
         (
@@ -153,6 +161,71 @@ def test_symlink_and_gitlink_modes_require_red_team(mode):
     assert check(body(red_team=True))[0]
 
 
+@pytest.mark.parametrize(
+    ("old_mode", "new_mode", "status"),
+    [
+        pytest.param("120000", "100644", "M", id="old-symlink"),
+        pytest.param("100644", "120000", "M", id="new-symlink"),
+        pytest.param("160000", "000000", "D", id="old-gitlink-deletion"),
+        pytest.param("000000", "160000", "A", id="new-gitlink-addition"),
+    ],
+)
+def test_mode_changes_on_either_side_need_red_team(old_mode, new_mode, status):
+    GitStub.paths = ["docs/mode.md"]
+    GitStub.modes = {}
+    GitStub.statuses = {}
+    GitStub.modes[GitStub.paths[0]] = (old_mode, new_mode)
+    GitStub.statuses[GitStub.paths[0]] = status
+    assert not check(body())[0]
+    assert check(body(red_team=True))[0]
+
+
+def test_deleted_protected_path_needs_red_team():
+    path = "docs/deleted.md"
+    GitStub.paths = [path]
+    GitStub.modes = {}
+    GitStub.statuses[path] = "D"
+    assert not check(body())[0]
+    assert check(body(red_team=True))[0]
+
+
+def test_rename_from_protected_path_needs_red_team():
+    old_path, new_path = "docs/old.md", "docs/new.md"
+    GitStub.paths = [old_path, new_path]
+    GitStub.modes = {}
+    GitStub.statuses[old_path] = "D"
+    GitStub.statuses[new_path] = "A"
+    assert not check(body())[0]
+    assert check(body(red_team=True))[0]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "docs/Foo.md",
+        "docs/café.md",
+        "docs/é.md",
+        "docs/cafe\u0301.md",
+        "docs/a\u0344.md",
+        "docs/x.txt",
+        "docs/.gitkeep",
+        "worker/src/views/x.js",
+    ],
+)
+def test_normalization_and_extension_paths_need_red_team(path):
+    GitStub.paths = [path]
+    assert not check(body())[0]
+    assert check(body(red_team=True))[0]
+
+def test_nfc_normalization_guard_is_explicit():
+    class AsciiPath(str):
+        def isascii(self):
+            return True
+
+    path = AsciiPath("docs/cafe\u0301.md")
+    assert review_markers.needs_red_team(path)
+
+
 def test_protected_paths_pass_with_red_team():
     GitStub.paths = ["infra/config.toml"]
     assert check(body(red_team=True))[0]
@@ -201,16 +274,16 @@ def test_crlf_byte_check_passes():
         ("worker/src/core/question-triage-bridge.ts", True),
         ("worker/src/core/db.ts", True),
         ("worker/src/core/discovery-arrivals.ts", True),
-        ("worker/src/views/pages.ts", False),
-        ("worker/src/views/x.ts", False),
         ("worker/src/core/x.ts", True),
+        ("worker/src/views/pages.ts", True),
+        ("worker/src/views/x.ts", True),
         ("worker/src/core/question-requests.ts", True),
         ("worker/src/core/validate-intent.ts", True),
         ("worker/src/core/feasibility.ts", True),
         ("worker/src/views/layout.ts", True),
         ("worker/src/VIEWS/x.ts", True),
         ("worker/src/viewſ/x.ts", True),
-        ("worker/src/views/pages.ts", False),
+        ("worker/src/views/pages.ts", True),
         ("tests/a/b.test.ts", False),
         ("tests/x.test.ts", False),
         ("docs/x.md", False),
@@ -286,13 +359,26 @@ def test_byte_check_git_argv_is_pinned():
     text = f"{body(JUDGED)}\nLead: BYTE-CHECK {JUDGED} {HEAD}"
     assert check(text)[0]
     assert GitStub.calls == [
-        ("diff", "--raw", "--no-renames", f"{BASE}...{HEAD}"),
+        ("diff", "--raw", "-z", "--no-renames", f"{BASE}...{HEAD}"),
         ("merge-base", "--is-ancestor", JUDGED, BASE),
         ("merge-base", "--is-ancestor", JUDGED, HEAD),
         ("merge-base", BASE, JUDGED),
         ("diff", "--no-renames", "--full-index", MERGE, JUDGED),
         ("diff", "--no-renames", "--full-index", BASE, HEAD),
     ]
+
+
+def test_raw_z_parser_preserves_quoted_tab_and_newline_path(monkeypatch):
+    path = 'docs/"quoted"\ttab\nline.md'
+
+    def git(*args):
+        if args[:3] == ("diff", "--raw", "-z"):
+            record = f":100644 100644 {'a'*40} {'b'*40} M\0{path}\0"
+            return record
+        raise AssertionError(args)
+
+    monkeypatch.setattr(review_markers, "_git_ok", git)
+    assert review_markers.changed_paths(BASE, HEAD) == [path]
 
 
 def test_merge_base_error_fails_closed():
@@ -613,26 +699,3 @@ def test_workflow_run_inputs_require_red_team_except_secret_free_vitest_tests():
     assert "pipeline/contracts/validate_public_catalog.py" in collected
     for path in collected:
         assert review_markers.needs_red_team(path), path
-
-
-def test_views_have_no_value_imports_of_protected_worker_areas():
-    listing = stdlib_subprocess.Popen(["git", "ls-files", "-z"], cwd=ROOT, stdout=stdlib_subprocess.PIPE, text=True)
-    stdout, _ = listing.communicate()
-    assert listing.returncode == 0
-    paths = [p for p in stdout.split("\0") if p.startswith("worker/src/views/") and p.endswith(".ts")]
-    import_pattern = re.compile(r"\b(?:from\s*|import\s*\(|import\s*|require\s*\()\s*[\"'`]([^\"'`]+)[\"'`]")
-    for path in paths:
-        source = (ROOT / path).read_text()
-        masked = re.sub(r"\bimport\s+type\b[\s\S]*?\bfrom\s*[\"'][^\"']+[\"']", "", source)
-        for match in import_pattern.finditer(masked):
-            spec = match.group(1)
-            assert not re.search(r"(?:^|/)(?:security|budget|generated)(?:/|$)|(?:^|/)index(?:\.[^/]*)?$", spec), (path, spec)
-
-
-def test_forward_guard_masks_same_line_and_multiline_type_imports():
-    def mask(source):
-        return re.sub(r"\bimport\s+type\b[\s\S]*?\bfrom\s*[\"'][^\"']+[\"']", "", source)
-    pattern = re.compile(r"\b(?:from\s*|import\s*\(|import\s*|require\s*\()\s*[\"'`]([^\"'`]+)[\"'`]")
-    assert pattern.search(mask('import type { A } from "../security/x"; import { b } from "../security/y"'))
-    assert not pattern.search(mask('import type {\n A\n} from "../security/z"'))
-    assert pattern.search('import "../security/x"')

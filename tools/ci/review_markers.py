@@ -10,9 +10,8 @@ prose by blank lines.
 Stale canonical verdict lines must be replaced; an old verdict alongside a
 current one makes the allow-listed block invalid.
 
-Only regular .ts files under worker/src/views/ except layout.ts, files under
-tests/ ending in .test.ts, Markdown files under docs/, and root README.md skip
-the red-team verdict. Every other changed path requires
+Only files under tests/ ending in .test.ts, Markdown files under docs/, and
+root README.md skip the red-team verdict. Every other changed path requires
 Red-team: PASS for the head. Prose deny words are not verdicts: a
 human-written FAIL in prose is not machine-read; failed heads have no PASS
 line because the integrator does not write one for them.
@@ -44,16 +43,17 @@ PROSE_FORBIDDEN = re.compile(
 )
 FOOTER = "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
 def needs_red_team(path: str) -> bool:
-    normalized = path.removeprefix("./")
-    if normalized == "README.md":
+    if path == "README.md":
         return False
-    if not path.isascii() or unicodedata.normalize("NFC", path) != path or path.casefold() != path:
+    if not path.isascii():
         return True
-    if normalized.startswith("docs/") and normalized.endswith(".md"):
+    if unicodedata.normalize("NFC", path) != path:
+        return True
+    if path.casefold() != path:
+        return True
+    if path.startswith("docs/") and path.endswith(".md"):
         return False
-    if normalized.startswith("tests/") and normalized.endswith(".test.ts"):
-        return False
-    if normalized.startswith("worker/src/views/") and normalized.endswith(".ts") and normalized != "worker/src/views/layout.ts":
+    if path.startswith("tests/") and path.endswith(".test.ts"):
         return False
     return True
 
@@ -70,16 +70,23 @@ def _git_ok(*args: str) -> str:
 
 
 def changed_paths(base_sha: str, head_sha: str) -> list[str]:
-    output = _git_ok("diff", "--raw", "--no-renames", f"{base_sha}...{head_sha}")
+    output = _git_ok("diff", "--raw", "-z", "--no-renames", f"{base_sha}...{head_sha}")
+    fields = output.split("\0")
+    if fields and fields[-1] == "":
+        fields.pop()
     paths = []
-    for line in output.splitlines():
-        match = re.match(r"^:(\d{6}) (\d{6}) [0-9a-f]+ [0-9a-f]+ [A-Z]\t(.*)$", line)
-        if not match:
+    index = 0
+    while index < len(fields):
+        match = re.fullmatch(r":(\d{6}) (\d{6}) [0-9a-f]+ [0-9a-f]+ ([A-Z])(?:\d+)?", fields[index])
+        if not match or index + 1 >= len(fields):
             raise RuntimeError("cannot parse raw git diff")
-        old_mode, new_mode, path = match.groups()
-        paths.append(path)
+        old_mode, new_mode, status = match.groups()
+        paths.append(fields[index + 1])
+        if status in {"D", "R"}:
+            paths.append("__deleted_or_renamed_path__")
         if old_mode in {"120000", "160000"} or new_mode in {"120000", "160000"}:
             paths.append("__unsupported_file_mode__")
+        index += 2
     return paths
 
 
