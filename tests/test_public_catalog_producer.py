@@ -55,14 +55,15 @@ class PublicCatalogProducerTests(unittest.TestCase):
             "workflow_run": {"id": 1234, "head_branch": "main", "head_sha": "a" * 40},
         }
 
-    def test_outputs_accepts_exact_v2_and_legacy_v1_statements(self):
+    def test_outputs_accepts_exact_v2_and_rejects_legacy_v1_statements(self):
         self.assertEqual(VERIFY.parse_statement_outputs(self.statement)["version"], "2")
         legacy = {
             key: value for key, value in self.statement.items()
             if key not in {"producer_run_id", "producer_run_attempt", "producer_artifact_id"}
         }
         legacy["statement_version"] = legacy["builder_version"] = 1
-        self.assertEqual(VERIFY.parse_statement_outputs(legacy), {"version": "1"})
+        with self.assertRaises(ValueError):
+            VERIFY.parse_statement_outputs(legacy)
 
     def test_outputs_rejects_unknown_or_injectable_values(self):
         for mutation in (
