@@ -31,7 +31,7 @@ describe("answer table and chart row parity", () => {
   function exposedRows(html: string) {
     const table = html.match(/<table>[\s\S]*?<tbody>([\s\S]*?)<\/tbody>[\s\S]*?<\/table>/)?.[1] ?? "";
     const chart = html.match(/<div class="chart-region"[^>]*>([\s\S]*?)<\/svg>/)?.[1] ?? "";
-    const tableRows = [...table.matchAll(/<tr><td><a[^>]*>(Alpha|Beta|Gamma)<\/a><\/td><td>[^<]*<\/td><td class="num">([^<]*)<\/td><\/tr>/g)]
+    const tableRows = [...table.matchAll(/<tr><td class="num">\d+<\/td><td><a[^>]*>(Alpha|Beta|Gamma)<\/a><\/td><td>[^<]*<\/td><td class="num">([^<]*)<\/td><\/tr>/g)]
       .map((match) => [match[1], match[2]]);
     const chartText = [...chart.matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map((match) => match[1]);
     const chartRows = chartText.reduce<string[][]>((rows, text, index) => {

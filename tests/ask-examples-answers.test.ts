@@ -94,11 +94,16 @@ describe.each(["en", "es"] as const)("%s example questions return fixture answer
       expect(html).toContain(`${language === "es" ? "Visualización" : "Visualization"}: ${example.viz === "dot_plot" ? (language === "es" ? "Gráfico de puntos" : "Dot plot") : example.viz === "bar" ? (language === "es" ? "Barras" : "Bar chart") : (language === "es" ? "Tabla" : "Table")}`);
       const table = html.match(/<table[\s\S]*?<\/table>/)?.[0];
       expect(table).toBeDefined();
+      if (example.viz === "table") {
+        expect(table).toContain(`<th class="num">${language === "es" ? "Puesto" : "Rank"}</th>`);
+        expect([...table!.matchAll(/<tbody>([\s\S]*?)<\/tbody>/g)][0]![1])
+          .toContain("<td class=\"num\">1</td>");
+      }
       expect(html.includes('<div class="chart-region"')).toBe(example.viz !== "table");
       const rows = [...table!.matchAll(/<tbody>([\s\S]*?)<\/tbody>/g)][0]![1]!;
       expect([...rows.matchAll(/<tr>([\s\S]*?)<\/tr>/g)].map((match) => {
         const row = match[1]!;
-        return [row.match(/>(Alpha|Beta|Gamma)<\//)?.[1], row.match(/<td class="num">([^<]+)<\/td>/)?.[1]];
+        return [row.match(/>(Alpha|Beta|Gamma)<\//)?.[1], [...row.matchAll(/<td class="num">([^<]+)<\/td>/g)].at(-1)?.[1]];
       })).toEqual(example.order.map((name, index) => [name,
         language === "es" ? (example.metric === "minutes"
           ? example.values[index]!.replace(",", "") : example.values[index]!.replace(".", ",")) : example.values[index],
