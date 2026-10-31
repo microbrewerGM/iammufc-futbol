@@ -23,7 +23,9 @@ export function seasonSplitSelection(request: SeasonSplitRequest): SeasonSplitSe
 export function seasonSplitsBody(model: SeasonSplitView, locale: Locale): string {
   const t = (en: string, es: string) => locale.code === "es" ? es : en;
   const title = t("Explore season performance", "Explorar el rendimiento por temporada");
-  const s = model.selection;
+  const s = model.error
+    ? { ...model.selection, seasons: model.selection.seasons.filter(season => /^\d{4}-\d{2}$/.test(season) || model.seasons.includes(season) || /[<>"'&]/.test(season)) }
+    : model.selection;
   const result = model.error ? undefined : model.result;
   const venueName = (key: string) => key === "home" ? t("Home", "Local") : t("Away", "Visitante");
   const opponentName = (key: string) => {

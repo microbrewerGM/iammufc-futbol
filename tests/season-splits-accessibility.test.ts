@@ -54,7 +54,7 @@ describe.each(["en", "es"] as const)("season-split accessibility structure (%s)"
       }
       expect(control[0]).not.toMatch(/\b(?:disabled|hidden)\b|tabindex="-1"/);
     }
-    expect(body).toContain(`<legend>${code === "en" ? "Seasons (choose 1–16)" : "Temporadas (elige 1–16)"}</legend>`);
+    expect(body).toContain(`<legend>${code === "en" ? "Seasons (2 selected; choose 1–16)" : "Temporadas (2 seleccionadas; elige 1–16)"}</legend>`);
     expect(body).toContain(`<button type="submit">${code === "en" ? "Explore seasons" : "Explorar temporadas"}</button>`);
     expect(body).toContain(`method="get" action="/${code}/seasons/explore"`);
     expect(body).not.toMatch(/tabindex="[1-9]/);
