@@ -371,6 +371,7 @@ ${alternative}
   const vizLabels = locale.code === "es"
     ? { bar: "Barras", dot_plot: "Gráfico de puntos", table: "Tabla", label: "Visualización" }
     : { bar: "Bars", dot_plot: "Dots", table: "Table", label: "Visualization" };
+  const resultCount = t.resultCount(rows.length, intent.limit);
   const choices = (["bar", "dot_plot", "table"] as const).map((viz) => {
     const params = new URLSearchParams({
       metric: intent.metric,
@@ -388,6 +389,7 @@ ${alternative}
 <nav class="viz-choices" aria-label="${esc(vizLabels.label)}">${choices}</nav>
 ${chartRegion}
 ${intent.entity_type === "season" ? seasonDataTable(rows, label, decimals, locale) : dataTable(rows, label, decimals, intent.season, locale)}
+<p class="tagline">${esc(resultCount)}</p>
 <p class="tagline"><a href="${base(locale)}/season/${esc(intent.season)}">${esc(t.fullSquadFor(intent.season))}</a> ·
 <code>${esc(artifactKey.slice(0, 16))}</code> — ${esc(t.artifactNote)}</p>`;
 }
