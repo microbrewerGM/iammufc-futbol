@@ -9,6 +9,12 @@ verdict-related words. Verdict lines form one contiguous block separated from
 prose by blank lines.
 Stale canonical verdict lines must be replaced; an old verdict alongside a
 current one makes the allow-listed block invalid.
+
+Only worker/src/** (except security/ and budget/), tests/*.test.ts, docs/**,
+and the root README.md skip the red-team verdict. Every other changed path
+requires Red-team: PASS for the head. Prose deny words are not verdicts: a
+human-written FAIL in prose is not machine-read; failed heads have no PASS
+line because the integrator does not write one for them.
 """
 
 from __future__ import annotations
@@ -36,67 +42,19 @@ PROSE_FORBIDDEN = re.compile(
     re.IGNORECASE,
 )
 FOOTER = "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
-PROTECTED_PREFIXES = (
-    ".github/",
-    ".claude/",
-    ".codex/",
-    ".agents/",
-    "infra/",
-    "worker/src/security/",
-    "worker/src/budget/",
-    "tools/ci/",
-    "scripts/",
-    "gauntlet/",
-    "tools/fleet/",
-    "tools/",
-    "catalog/rights/",
-    "catalog/schemas/",
-    "pipeline/contracts/",
-    "pipeline/",
-    "catalog/",
-)
-PROTECTED_FILES = {
-    ".mcp.json",
-    ".gitmodules",
-    "package.json",
-    "package-lock.json",
-    "pyproject.toml",
-    "uv.lock",
-    ".gitleaks.toml",
-    ".gitignore",
-    ".nvmrc",
-    ".node-version",
-    "vitest.config.ts",
-    "tsconfig.json",
-    ".gitattributes",
-    "tests/test_feasibility.py",
-}
-PROTECTED_FILES.update({".gitleaksignore", "ruff.toml", ".ruff.toml", "uv.toml", ".python-version"})
-PROTECTED_BASENAMES = {".pre-commit-config.yaml", "gemini.md", "copilot_instructions.md"}
-PROTECTED_BASENAMES.update({"conftest.py", "pytest.ini", ".pytest.ini", "tox.ini", "setup.cfg"})
-
-
 def canonical(path: str) -> str:
     return unicodedata.normalize("NFC", path).casefold().removeprefix("./")
 
 
-def is_protected(path: str) -> bool:
+def needs_red_team(path: str) -> bool:
     normalized = canonical(path)
-    basename = normalized.rsplit("/", 1)[-1]
-    agent_doc = basename.endswith(".md") and basename.startswith(("agents", "claude"))
-    return (
-        normalized in PROTECTED_FILES
-        or basename in PROTECTED_BASENAMES
-        or agent_doc
-        or basename == ".npmrc"
-        or any(
-            basename.startswith(prefix)
-            for prefix in ("vitest.config.", "vitest.workspace.", "vite.config.")
-        )
-        or basename.startswith(".yarnrc")
-        or ("/" not in normalized and basename.endswith(".py"))
-        or normalized.startswith(PROTECTED_PREFIXES)
-    )
+    if normalized == "readme.md" or normalized.startswith("docs/"):
+        return False
+    if normalized.startswith("tests/") and normalized.endswith(".test.ts"):
+        return False
+    if normalized.startswith("worker/src/"):
+        return normalized.startswith(("worker/src/security/", "worker/src/budget/"))
+    return True
 
 
 def _git(*args: str) -> subprocess.CompletedProcess[str]:
@@ -197,7 +155,7 @@ def check(
         paths = changed_paths(base_sha, head_sha)
         if not paths:
             return False, "pull request has no changed files"
-        protected = any(is_protected(path) for path in paths)
+        protected = any(needs_red_team(path) for path in paths)
         if _verdicts(body, head_sha, protected):
             return True, "current-head verdict markers found"
         for line in body.split("\n"):

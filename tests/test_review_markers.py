@@ -18,7 +18,7 @@ REPO = "microbrewerGM/iammufc-futbol"
 
 
 class GitStub:
-    paths = ["src/app.ts"]
+    paths = ["worker/src/views/app.ts"]
     ancestry: dict[tuple[str, str], int] = {}
     diffs: dict[tuple[str, str], str] = {}
     fail_diff = False
@@ -47,7 +47,7 @@ class GitStub:
 
 @pytest.fixture(autouse=True)
 def stub_git(monkeypatch):
-    GitStub.paths = ["src/app.ts"]
+    GitStub.paths = ["worker/src/views/app.ts"]
     GitStub.ancestry = {(JUDGED, HEAD): 0}
     GitStub.diffs = {(MERGE, JUDGED): "same", (BASE, HEAD): "same"}
     GitStub.fail_diff = False
@@ -69,31 +69,31 @@ def check(text, *, head=HEAD, base=BASE, head_repo=REPO, repository=REPO):
 @pytest.mark.parametrize(
     ("description", "paths", "text", "expected"),
     [
-        ("missing marker", ["src/app.ts"], f"Validator: PASS {HEAD}", False),
-        ("stale SHA", ["src/app.ts"], body("e" * 40), False),
-        ("lowercase hex", ["src/app.ts"], body(HEAD), True),
-        ("uppercase hex", ["src/app.ts"], body(HEAD.upper()), False),
-        ("valid", ["src/app.ts"], body(), True),
+        ("missing marker", ["worker/src/views/app.ts"], f"Validator: PASS {HEAD}", False),
+        ("stale SHA", ["worker/src/views/app.ts"], body("e" * 40), False),
+        ("lowercase hex", ["worker/src/views/app.ts"], body(HEAD), True),
+        ("uppercase hex", ["worker/src/views/app.ts"], body(HEAD.upper()), False),
+        ("valid", ["worker/src/views/app.ts"], body(), True),
         ("protected without red-team", ["infra/config.toml"], body(), False),
-        ("injection-shaped body text", ["src/app.ts"], f"$(injected shell text)\n{body()}", False),
+        ("injection-shaped body text", ["worker/src/views/app.ts"], f"$(injected shell text)\n{body()}", False),
         (
             "obsolete CI validator",
-            ["src/app.ts"],
+            ["worker/src/views/app.ts"],
             f"Reviewer: APPROVE {HEAD}\nValidator: CI 123 on {HEAD}",
             False,
         ),
-        ("negative verdict", ["src/app.ts"], body() + f"\nValidator: FAIL {HEAD}", False),
-        ("conflicting role verdicts", ["src/app.ts"], body() + f"\nReviewer: BLOCK {HEAD}", False),
-        ("fork PR", ["src/app.ts"], body(), False),
+        ("negative verdict", ["worker/src/views/app.ts"], body() + f"\nValidator: FAIL {HEAD}", False),
+        ("conflicting role verdicts", ["worker/src/views/app.ts"], body() + f"\nReviewer: BLOCK {HEAD}", False),
+        ("fork PR", ["worker/src/views/app.ts"], body(), False),
         (
             "comment rejected",
-            ["src/app.ts"],
+            ["worker/src/views/app.ts"],
             f"<!--\n{body()}",
             False,
         ),
         (
             "byte check targets another head",
-            ["src/app.ts"],
+            ["worker/src/views/app.ts"],
             f"{body(JUDGED)}\nLead: BYTE-CHECK {JUDGED} {'e' * 40}",
             False,
         ),
@@ -103,34 +103,34 @@ def check(text, *, head=HEAD, base=BASE, head_repo=REPO, repository=REPO):
             f"{body(JUDGED)}\nLead: BYTE-CHECK {JUDGED} {HEAD}",
             False,
         ),
-        ("marker mid-line", ["src/app.ts"], f"prefix Reviewer: APPROVE {HEAD}\nValidator: PASS {HEAD}", False),
-        ("marker trailing text", ["src/app.ts"], body() + " trailing", False),
-        ("decorated role", ["src/app.ts"], f"- **Reviewer:** APPROVE {HEAD}\nValidator: PASS {HEAD}", False),
-        ("indented role", ["src/app.ts"], f" Reviewer: APPROVE {HEAD}\nValidator: PASS {HEAD}", False),
-        ("four space role", ["src/app.ts"], f"    Reviewer: APPROVE {HEAD}\nValidator: PASS {HEAD}", False),
-        ("lowercase role", ["src/app.ts"], f"reviewer: APPROVE {HEAD}\nValidator: PASS {HEAD}", False),
-        ("failed token", ["src/app.ts"], body() + f"\nValidator: FAILED {HEAD}", False),
-        ("reject token", ["src/app.ts"], body() + f"\nReviewer: REJECT {HEAD}", False),
-        ("lgtm token", ["src/app.ts"], body() + f"\nReviewer: LGTM {HEAD}", False),
-        ("fence opener", ["src/app.ts"], f"```\n{body()}", False),
-        ("unterminated fence", ["src/app.ts"], f"~~~\n{body()}", False),
-        ("raw html", ["src/app.ts"], f"{body()}\n<div>text</div>", False),
-        ("link reference", ["src/app.ts"], f"{body()}\n[ref]: https://example.com", False),
-        ("vertical tab", ["src/app.ts"], f"{body()}\v", False),
-        ("form feed", ["src/app.ts"], f"{body()}\f", False),
-        ("next line", ["src/app.ts"], f"{body()}\x85", False),
-        ("unicode line separator", ["src/app.ts"], f"{body()}\u2028", False),
-        ("unicode paragraph separator", ["src/app.ts"], f"{body()}\u2029", False),
-        ("tab rejected", ["src/app.ts"], f"\t{body()}", False),
+        ("marker mid-line", ["worker/src/views/app.ts"], f"prefix Reviewer: APPROVE {HEAD}\nValidator: PASS {HEAD}", False),
+        ("marker trailing text", ["worker/src/views/app.ts"], body() + " trailing", False),
+        ("decorated role", ["worker/src/views/app.ts"], f"- **Reviewer:** APPROVE {HEAD}\nValidator: PASS {HEAD}", False),
+        ("indented role", ["worker/src/views/app.ts"], f" Reviewer: APPROVE {HEAD}\nValidator: PASS {HEAD}", False),
+        ("four space role", ["worker/src/views/app.ts"], f"    Reviewer: APPROVE {HEAD}\nValidator: PASS {HEAD}", False),
+        ("lowercase role", ["worker/src/views/app.ts"], f"reviewer: APPROVE {HEAD}\nValidator: PASS {HEAD}", False),
+        ("failed token", ["worker/src/views/app.ts"], body() + f"\nValidator: FAILED {HEAD}", False),
+        ("reject token", ["worker/src/views/app.ts"], body() + f"\nReviewer: REJECT {HEAD}", False),
+        ("lgtm token", ["worker/src/views/app.ts"], body() + f"\nReviewer: LGTM {HEAD}", False),
+        ("fence opener", ["worker/src/views/app.ts"], f"```\n{body()}", False),
+        ("unterminated fence", ["worker/src/views/app.ts"], f"~~~\n{body()}", False),
+        ("raw html", ["worker/src/views/app.ts"], f"{body()}\n<div>text</div>", False),
+        ("link reference", ["worker/src/views/app.ts"], f"{body()}\n[ref]: https://example.com", False),
+        ("vertical tab", ["worker/src/views/app.ts"], f"{body()}\v", False),
+        ("form feed", ["worker/src/views/app.ts"], f"{body()}\f", False),
+        ("next line", ["worker/src/views/app.ts"], f"{body()}\x85", False),
+        ("unicode line separator", ["worker/src/views/app.ts"], f"{body()}\u2028", False),
+        ("unicode paragraph separator", ["worker/src/views/app.ts"], f"{body()}\u2029", False),
+        ("tab rejected", ["worker/src/views/app.ts"], f"\t{body()}", False),
         (
             "wrong role validator approve",
-            ["src/app.ts"],
+            ["worker/src/views/app.ts"],
             f"Reviewer: APPROVE {HEAD}\nValidator: APPROVE {HEAD}",
             False,
         ),
         (
             "wrong role reviewer pass",
-            ["src/app.ts"],
+            ["worker/src/views/app.ts"],
             f"Reviewer: PASS {HEAD}\nValidator: PASS {HEAD}",
             False,
         ),
@@ -145,32 +145,6 @@ def test_verdict_cases(description, paths, text, expected):
 def test_protected_paths_pass_with_red_team():
     GitStub.paths = ["infra/config.toml"]
     assert check(body(red_team=True))[0]
-
-
-@pytest.mark.parametrize(
-    "path",
-    [
-        "package.json",
-        "package-lock.json",
-        "pyproject.toml",
-        "uv.lock",
-        ".gitleaks.toml",
-        ".gitignore",
-        "catalog/rights/index.json",
-        "worker/src/budget/limits.ts",
-        "scripts/a.mjs",
-        "pipeline/__init__.py",
-        "catalog/schemas/model.json",
-        ".gitleaksignore",
-        "ruff.toml",
-        ".ruff.toml",
-        "uv.toml",
-        ".python-version",
-        "pydantic.py",
-    ],
-)
-def test_rework_paths_are_protected(path):
-    assert review_markers.is_protected(path)
 
 
 @pytest.mark.parametrize(
@@ -198,11 +172,25 @@ def test_crlf_byte_check_passes():
     assert check(text)[0]
 
 
-@pytest.mark.parametrize("path", ["pipeline/__init__.py", "pydantic.py"])
-def test_rework_6_paths_require_red_team(path):
+@pytest.mark.parametrize(
+    ("path", "protected"),
+    [
+        ("tests/__init__.py", True),
+        ("pydantic/__init__.py", True),
+        ("tests/pyproject.toml", True),
+        ("nested/ruff.toml", True),
+        ("new-top-level/file.ts", True),
+        ("worker/src/security/x.ts", True),
+        ("worker/src/views/x.ts", False),
+        ("tests/x.test.ts", False),
+        ("docs/x.md", False),
+        ("README.md", False),
+    ],
+)
+def test_rework_8_path_allow_list(path, protected):
     GitStub.paths = [path]
-    assert not check(body())[0]
-    assert check(body(red_team=True))[0]
+    assert check(body(red_team=protected))[0] is True
+    assert check(body())[0] is (not protected)
 
 
 def test_legitimate_integrator_body_passes():
@@ -291,7 +279,7 @@ def test_workflow_shape():
     workflow = (ROOT / ".github/workflows/review-markers.yml").read_text()
     assert "pull_request_target:" in workflow
     assert "types: [opened, synchronize, reopened, edited]" in workflow
-    assert "ref: ${{ github.event.pull_request.base.sha }}" in workflow
+    assert parsed_ref(workflow) == "main"
     assert "persist-credentials: false" in workflow
     assert "uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" in workflow
     assert "permissions:" in workflow
@@ -314,102 +302,9 @@ def test_workflow_shape():
                 assert "${{ github.event.pull_request.body }}" not in value
 
 
-def test_all_workflow_executed_scripts_and_install_manifests_are_protected():
-    repo_files = {p.relative_to(ROOT).as_posix() for p in ROOT.rglob("*") if p.is_file()}
-    workflows = list((ROOT / ".github/workflows").glob("*.yml"))
-    invoked_scripts = set()
-    implicit_inputs = set()
-    for workflow in workflows:
-        parsed = __import__("yaml").safe_load(workflow.read_text())
-        for job in parsed.get("jobs", {}).values():
-            for step in job.get("steps", []):
-                run = step.get("run", "")
-                if not isinstance(run, str):
-                    continue
-                for match in __import__("re").finditer(
-                    r"(?<![\w./-])python\s+-m\s+([\w.]+)|"
-                    r"(?<![\w./-])uv\s+run\s+python\s+-m\s+([\w.]+)|"
-                    r"(?<![\w./-])uv\s+run\s+pytest\s+([^\s\\]+)|"
-                    r"(?<![\w./-])node\s+--test\s+([^\s\\]+)",
-                    run,
-                ):
-                    module = match.group(1) or match.group(2)
-                    if module:
-                        invoked_scripts.add(module.replace(".", "/") + ".py")
-                    else:
-                        invoked_scripts.add(match.group(3) or match.group(4))
-                if "npm ci" in run:
-                    implicit_inputs.update(("package.json", "package-lock.json", ".npmrc"))
-                    implicit_inputs.update(
-                        path for path in repo_files if path.rsplit("/", 1)[-1].startswith(".yarnrc")
-                    )
-                    implicit_inputs.update((".nvmrc", ".node-version"))
-                if "uv run" in run or "uv sync" in run:
-                    implicit_inputs.update(("pyproject.toml", "uv.lock", "uv.toml", ".python-version"))
-                if "pytest" in run:
-                    implicit_inputs.update(("conftest.py", "pytest.ini", "pyproject.toml"))
-                if "vitest" in run:
-                    implicit_inputs.add("vitest.config.*")
-                if "gitleaks" in run or step.get("uses", "").startswith("gitleaks/"):
-                    implicit_inputs.add(".gitleaksignore")
-    for path in implicit_inputs:
-        if path == ".npmrc":
-            assert review_markers.is_protected("nested/.npmrc")
-        elif path == "vitest.config.*":
-            assert review_markers.is_protected("vitest.config.mts")
-        else:
-            assert review_markers.is_protected(path), path
-    missing = sorted(
-        path
-        for path in invoked_scripts
-        if path in repo_files and not review_markers.is_protected(path)
-    )
-    assert not missing, f"workflow inputs must be protected: {missing}"
-
-
-@pytest.mark.parametrize(
-    "path",
-    [
-        "pipeline/contracts/a.py",
-        "tests/test_feasibility.py",
-        "x/.npmrc",
-        ".yarnrc.yml",
-        ".nvmrc",
-        ".node-version",
-        "vitest.config.ts",
-        "tsconfig.json",
-        ".gitattributes",
-        "GEMINI.md",
-        "copilot_instructions.md",
-    ],
-)
-def test_rework_3_protected(path):
-    assert review_markers.is_protected(path)
-
-
-@pytest.mark.parametrize(
-    "path",
-    [
-        "pytest.ini",
-        "tests/conftest.py",
-        "nested/.pytest.ini",
-        "config/tox.ini",
-        "nested/setup.cfg",
-        "vitest.config.mts",
-        "vitest.workspace.js",
-        "vite.config.ts",
-        "nested/vite.config.mjs",
-    ],
-)
-def test_rework_5_paths_are_protected(path):
-    assert review_markers.is_protected(path)
-
-
-@pytest.mark.parametrize("path", ["pytest.ini", "tests/conftest.py"])
-def test_rework_5_protected_paths_require_red_team(path):
-    GitStub.paths = [path]
-    assert not check(body())[0]
-    assert check(body(red_team=True))[0]
+def parsed_ref(workflow):
+    parsed = __import__("yaml").safe_load(workflow)
+    return parsed["jobs"]["review-markers"]["steps"][0]["with"]["ref"]
 
 
 @pytest.mark.parametrize(
@@ -619,12 +514,3 @@ def test_workflow_body_expression_once():
     text = (ROOT / ".github/workflows/review-markers.yml").read_text()
     assert text.count("${{ github.event.pull_request.body }}") == 0
     assert "PR_NUMBER:" in text and "GITHUB_TOKEN:" in text
-
-
-def test_rights_gate_module_and_pytest_are_protected():
-    assert review_markers.is_protected("pipeline/contracts/validate_public_catalog.py")
-    assert review_markers.is_protected("tests/test_feasibility.py")
-    assert review_markers.is_protected("nested/.npmrc")
-    assert review_markers.is_protected("catalog/schemas/manifest.json")
-    assert review_markers.is_protected("tests/conftest.py")
-    assert review_markers.is_protected("tests/nested/conftest.py")
