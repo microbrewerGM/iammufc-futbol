@@ -15,6 +15,12 @@ root README.md skip the red-team verdict. Every other changed path requires
 Red-team: PASS for the head. Prose deny words are not verdicts: a
 human-written FAIL in prose is not machine-read; failed heads have no PASS
 line because the integrator does not write one for them.
+
+Accepted residuals: tests/**/*.test.ts skip Red-team because the CI test job
+has no secrets; checkout hardening is tracked as CI-TEST-PERSIST-CREDENTIALS.
+Prose negatives are not machine-read; this gate relies on positive evidence.
+docs/pin-registry.md is read by pin-check, which only opens a new PR that is
+checked again.
 """
 
 from __future__ import annotations

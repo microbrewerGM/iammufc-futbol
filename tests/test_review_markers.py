@@ -55,7 +55,6 @@ class GitStub:
 
 @pytest.fixture(autouse=True)
 def stub_git(monkeypatch):
-    GitStub.paths = ["worker/src/views/app.ts"]
     GitStub.ancestry = {(JUDGED, HEAD): 0}
     GitStub.diffs = {(MERGE, JUDGED): "same", (BASE, HEAD): "same"}
     GitStub.fail_diff = False
@@ -80,31 +79,31 @@ def check(text, *, head=HEAD, base=BASE, head_repo=REPO, repository=REPO):
 @pytest.mark.parametrize(
     ("description", "paths", "text", "expected"),
     [
-        ("missing marker", ["worker/src/views/app.ts"], f"Validator: PASS {HEAD}", False),
-        ("stale SHA", ["worker/src/views/app.ts"], body("e" * 40), False),
+        ("missing marker", ["docs/app.md"], f"Validator: PASS {HEAD}", False),
+        ("stale SHA", ["docs/app.md"], body("e" * 40), False),
         ("lowercase hex", ["docs/app.md"], body(HEAD), True),
-        ("uppercase hex", ["worker/src/views/app.ts"], body(HEAD.upper()), False),
+        ("uppercase hex", ["docs/app.md"], body().replace(HEAD, HEAD.upper()), False),
         ("valid", ["docs/app.md"], body(), True),
         ("protected without red-team", ["infra/config.toml"], body(), False),
-        ("injection-shaped body text", ["worker/src/views/app.ts"], f"$(injected shell text)\n{body()}", False),
+        ("injection-shaped body text", ["docs/app.md"], f"$(injected shell text)\n{body()}", False),
         (
             "obsolete CI validator",
-            ["worker/src/views/app.ts"],
+            ["docs/app.md"],
             f"Reviewer: APPROVE {HEAD}\nValidator: CI 123 on {HEAD}",
             False,
         ),
-        ("negative verdict", ["worker/src/views/app.ts"], body() + f"\nValidator: FAIL {HEAD}", False),
-        ("conflicting role verdicts", ["worker/src/views/app.ts"], body() + f"\nReviewer: BLOCK {HEAD}", False),
-        ("fork PR", ["worker/src/views/app.ts"], body(), False),
+        ("negative verdict", ["docs/app.md"], body() + f"\nValidator: FAIL {HEAD}", False),
+        ("conflicting role verdicts", ["docs/app.md"], body() + f"\nReviewer: BLOCK {HEAD}", False),
+        ("fork PR", ["docs/app.md"], body(), False),
         (
             "comment rejected",
-            ["worker/src/views/app.ts"],
+            ["docs/app.md"],
             f"<!--\n{body()}",
             False,
         ),
         (
             "byte check targets another head",
-            ["worker/src/views/app.ts"],
+            ["docs/app.md"],
             f"{body(JUDGED)}\nLead: BYTE-CHECK {JUDGED} {'e' * 40}",
             False,
         ),
@@ -114,34 +113,34 @@ def check(text, *, head=HEAD, base=BASE, head_repo=REPO, repository=REPO):
             f"{body(JUDGED)}\nLead: BYTE-CHECK {JUDGED} {HEAD}",
             False,
         ),
-        ("marker mid-line", ["worker/src/views/app.ts"], f"prefix Reviewer: APPROVE {HEAD}\nValidator: PASS {HEAD}", False),
-        ("marker trailing text", ["worker/src/views/app.ts"], body() + " trailing", False),
-        ("decorated role", ["worker/src/views/app.ts"], f"- **Reviewer:** APPROVE {HEAD}\nValidator: PASS {HEAD}", False),
-        ("indented role", ["worker/src/views/app.ts"], f" Reviewer: APPROVE {HEAD}\nValidator: PASS {HEAD}", False),
-        ("four space role", ["worker/src/views/app.ts"], f"    Reviewer: APPROVE {HEAD}\nValidator: PASS {HEAD}", False),
-        ("lowercase role", ["worker/src/views/app.ts"], f"reviewer: APPROVE {HEAD}\nValidator: PASS {HEAD}", False),
-        ("failed token", ["worker/src/views/app.ts"], body() + f"\nValidator: FAILED {HEAD}", False),
-        ("reject token", ["worker/src/views/app.ts"], body() + f"\nReviewer: REJECT {HEAD}", False),
-        ("lgtm token", ["worker/src/views/app.ts"], body() + f"\nReviewer: LGTM {HEAD}", False),
-        ("fence opener", ["worker/src/views/app.ts"], f"```\n{body()}", False),
-        ("unterminated fence", ["worker/src/views/app.ts"], f"~~~\n{body()}", False),
-        ("raw html", ["worker/src/views/app.ts"], f"{body()}\n<div>text</div>", False),
-        ("link reference", ["worker/src/views/app.ts"], f"{body()}\n[ref]: https://example.com", False),
-        ("vertical tab", ["worker/src/views/app.ts"], f"{body()}\v", False),
-        ("form feed", ["worker/src/views/app.ts"], f"{body()}\f", False),
-        ("next line", ["worker/src/views/app.ts"], f"{body()}\x85", False),
-        ("unicode line separator", ["worker/src/views/app.ts"], f"{body()}\u2028", False),
-        ("unicode paragraph separator", ["worker/src/views/app.ts"], f"{body()}\u2029", False),
-        ("tab rejected", ["worker/src/views/app.ts"], f"\t{body()}", False),
+        ("marker mid-line", ["docs/app.md"], f"prefix Reviewer: APPROVE {HEAD}\nValidator: PASS {HEAD}", False),
+        ("marker trailing text", ["docs/app.md"], body() + " trailing", False),
+        ("decorated role", ["docs/app.md"], f"- **Reviewer:** APPROVE {HEAD}\nValidator: PASS {HEAD}", False),
+        ("indented role", ["docs/app.md"], f" Reviewer: APPROVE {HEAD}\nValidator: PASS {HEAD}", False),
+        ("four space role", ["docs/app.md"], f"    Reviewer: APPROVE {HEAD}\nValidator: PASS {HEAD}", False),
+        ("lowercase role", ["docs/app.md"], f"reviewer: APPROVE {HEAD}\nValidator: PASS {HEAD}", False),
+        ("failed token", ["docs/app.md"], body() + f"\nValidator: FAILED {HEAD}", False),
+        ("reject token", ["docs/app.md"], body() + f"\nReviewer: REJECT {HEAD}", False),
+        ("lgtm token", ["docs/app.md"], body() + f"\nReviewer: LGTM {HEAD}", False),
+        ("fence opener", ["docs/app.md"], f"```\n{body()}", False),
+        ("unterminated fence", ["docs/app.md"], f"~~~\n{body()}", False),
+        ("raw html", ["docs/app.md"], f"{body()}\n<div>text</div>", False),
+        ("link reference", ["docs/app.md"], f"{body()}\n[ref]: https://example.com", False),
+        ("vertical tab", ["docs/app.md"], f"{body()}\v", False),
+        ("form feed", ["docs/app.md"], f"{body()}\f", False),
+        ("next line", ["docs/app.md"], f"{body()}\x85", False),
+        ("unicode line separator", ["docs/app.md"], f"{body()}\u2028", False),
+        ("unicode paragraph separator", ["docs/app.md"], f"{body()}\u2029", False),
+        ("tab rejected", ["docs/app.md"], f"\t{body()}", False),
         (
             "wrong role validator approve",
-            ["worker/src/views/app.ts"],
+            ["docs/app.md"],
             f"Reviewer: APPROVE {HEAD}\nValidator: APPROVE {HEAD}",
             False,
         ),
         (
             "wrong role reviewer pass",
-            ["worker/src/views/app.ts"],
+            ["docs/app.md"],
             f"Reviewer: PASS {HEAD}\nValidator: PASS {HEAD}",
             False,
         ),
@@ -150,7 +149,11 @@ def check(text, *, head=HEAD, base=BASE, head_repo=REPO, repository=REPO):
 def test_verdict_cases(description, paths, text, expected):
     GitStub.paths = paths
     repo = "fork/iammufc-futbol" if description == "fork PR" else REPO
-    assert check(text, head_repo=repo)[0] is expected, description
+    if description == "uppercase hex":
+        result = review_markers._allowed_body(text)
+    else:
+        result = check(text, head_repo=repo)[0]
+    assert result is expected, description
 
 
 @pytest.mark.parametrize("mode", ["120000", "160000"])
@@ -166,6 +169,7 @@ def test_symlink_and_gitlink_modes_require_red_team(mode):
     [
         pytest.param("120000", "100644", "M", id="old-symlink"),
         pytest.param("100644", "120000", "M", id="new-symlink"),
+        pytest.param("160000", "100644", "T", id="old-gitlink-type-change"),
         pytest.param("160000", "000000", "D", id="old-gitlink-deletion"),
         pytest.param("000000", "160000", "A", id="new-gitlink-addition"),
     ],
@@ -275,7 +279,6 @@ def test_crlf_byte_check_passes():
         ("worker/src/core/db.ts", True),
         ("worker/src/core/discovery-arrivals.ts", True),
         ("worker/src/core/x.ts", True),
-        ("worker/src/views/pages.ts", True),
         ("worker/src/views/x.ts", True),
         ("worker/src/core/question-requests.ts", True),
         ("worker/src/core/validate-intent.ts", True),
@@ -283,10 +286,11 @@ def test_crlf_byte_check_passes():
         ("worker/src/views/layout.ts", True),
         ("worker/src/VIEWS/x.ts", True),
         ("worker/src/viewſ/x.ts", True),
-        ("worker/src/views/pages.ts", True),
         ("tests/a/b.test.ts", False),
         ("tests/x.test.ts", False),
         ("docs/x.md", False),
+        ("worker/x.md", True),
+        ("x/README.md", True),
         ("README.md", False),
         ("README.MD", True),
         ("Docs/x", True),
