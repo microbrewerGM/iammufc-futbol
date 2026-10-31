@@ -150,7 +150,9 @@ def test_catalog_provenance_action_verifies_download_before_any_workflow_deploy(
         return bool(re.search(r"\bwrangler\s+(?:deploy|versions)\b", _step_text(step), re.I))
 
     def workflow_is_safe(workflow: dict) -> bool:
-        for job in workflow.get("jobs", {}).values():
+        jobs = workflow.get("jobs", {})
+        deploy_job_indices = []
+        for job_index, (job_id, job) in enumerate(jobs.items()):
             steps = job.get("steps", [])
             verify_indices = [
                 i for i, step in enumerate(steps)
@@ -161,10 +163,25 @@ def test_catalog_provenance_action_verifies_download_before_any_workflow_deploy(
                 for index in verify_indices
             ):
                 return False
-            if any(has_deploy(step) for step in steps):
+            deploy_indices = [i for i, step in enumerate(steps) if has_deploy(step)]
+            if deploy_indices:
+                deploy_job_indices.append(job_index)
                 if not verify_indices or any(
                     has_deploy(step) and not any(verify_index < i for verify_index in verify_indices)
                     for i, step in enumerate(steps)
+                ):
+                    return False
+                if any(
+                    re.search(r"\b(?:always|failure|cancelled)\s*\(\s*\)", str(steps[i].get("if", "")), re.I)
+                    for i in deploy_indices
+                ):
+                    return False
+        for deploy_job_index in deploy_job_indices:
+            for job_index, job in enumerate(jobs.values()):
+                if job_index > deploy_job_index and re.search(
+                    r"\b(?:always|failure|cancelled)\s*\(\s*\)",
+                    str(job.get("if", "")),
+                    re.I,
                 ):
                     return False
         return True
@@ -187,12 +204,42 @@ def test_catalog_provenance_action_verifies_download_before_any_workflow_deploy(
         unsafe_call = {
             "jobs": {
                 "unsafe": {"steps": [
-                    {"uses": f"cloudflare/wrangler-action@sha"},
                     {"uses": "./.github/actions/verify-public-catalog-producer", key: value},
+                    {"uses": "cloudflare/wrangler-action@sha"},
                 ]}
             }
         }
         assert not workflow_is_safe(unsafe_call)
+        safe_call = {
+            "jobs": {
+                "unsafe": {"steps": [
+                    {"uses": "./.github/actions/verify-public-catalog-producer"},
+                    {"uses": "cloudflare/wrangler-action@sha"},
+                ]}
+            }
+        }
+        assert workflow_is_safe(safe_call)
+
+    for condition in ("always()", "failure()", "cancelled()"):
+        conditional_deploy = {
+            "jobs": {
+                "unsafe": {"steps": [
+                    {"uses": "./.github/actions/verify-public-catalog-producer"},
+                    {"uses": "cloudflare/wrangler-action@sha", "if": condition},
+                ]}
+            }
+        }
+        assert not workflow_is_safe(conditional_deploy)
+        conditional_later_job = {
+            "jobs": {
+                "verified": {"steps": [
+                    {"uses": "./.github/actions/verify-public-catalog-producer"},
+                    {"uses": "cloudflare/wrangler-action@sha"},
+                ]},
+                "later": {"if": condition, "steps": []},
+            }
+        }
+        assert not workflow_is_safe(conditional_later_job)
 
     action_negative = [
         {"uses": "actions/download-artifact@sha"},
