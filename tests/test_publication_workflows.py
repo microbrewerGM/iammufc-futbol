@@ -1,6 +1,7 @@
 """The website consumes private data and deploys code without rebuilding data."""
 
 from pathlib import Path
+import re
 
 import yaml
 
@@ -59,10 +60,12 @@ def test_artifact_downloads_are_pinned_and_private_seed_is_verified() -> None:
     download_action = (
         "actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131"
     )
+    actions = list(Path(".github/actions").glob("**/action.yml"))
+    workflow_files = list(Path(".github/workflows").glob("*.yml"))
     downloads = [
         step
-        for job in deploy["jobs"].values()
-        for step in job.get("steps", [])
+        for path in [*actions, *workflow_files]
+        for step in _steps(yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader))
         if step.get("uses", "").startswith("actions/download-artifact@")
     ]
 
@@ -97,6 +100,163 @@ def test_artifact_downloads_are_pinned_and_private_seed_is_verified() -> None:
     assert checksum_step.get("run") == (
         "python3 .github/scripts/verify_private_seed_checksum.py"
     )
+
+
+def _steps(document: dict) -> list[dict]:
+    if "jobs" in document:
+        return [step for job in document["jobs"].values() for step in job.get("steps", [])]
+    return document.get("runs", {}).get("steps", [])
+
+
+def _verify_after_download(steps: list[dict]) -> bool:
+    download = next(
+        (i for i, step in enumerate(steps) if step.get("uses", "").startswith("actions/download-artifact@")),
+        None,
+    )
+    if download is None:
+        return False
+    for index, step in enumerate(steps[download + 1 :], start=download + 1):
+        run = step.get("run", "")
+        if ".github/scripts/verify_public_catalog_producer.py artifact" in run:
+            if "if" in step or "continue-on-error" in step:
+                return False
+            return not any(
+                item.get("uses", "").startswith("cloudflare/wrangler-action")
+                or re.search(r"\bwrangler\s+(?:deploy|versions)\b", _step_text(item), re.I)
+                for item in steps[download + 1 : index]
+            )
+    return False
+
+
+def _step_text(step: dict) -> str:
+    with_block = step.get("with", {})
+    return " ".join([
+        step.get("run", ""),
+        with_block.get("command", ""),
+        with_block.get("preCommands", ""),
+        with_block.get("postCommands", ""),
+    ])
+
+
+def test_catalog_provenance_action_verifies_download_before_any_workflow_deploy() -> None:
+    action_path = Path(".github/actions/verify-public-catalog-producer/action.yml")
+    action = yaml.load(action_path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    action_steps = action["runs"]["steps"]
+    assert _verify_after_download(action_steps)
+
+    def has_deploy(step: dict) -> bool:
+        if step.get("uses", "").startswith("cloudflare/wrangler-action"):
+            return True
+        return bool(re.search(r"\bwrangler\s+(?:deploy|versions)\b", _step_text(step), re.I))
+
+    def workflow_is_safe(workflow: dict) -> bool:
+        jobs = workflow.get("jobs", {})
+        deploy_job_indices = []
+        for job_index, (job_id, job) in enumerate(jobs.items()):
+            steps = job.get("steps", [])
+            verify_indices = [
+                i for i, step in enumerate(steps)
+                if step.get("uses") == "./.github/actions/verify-public-catalog-producer"
+            ]
+            if any(
+                "if" in steps[index] or "continue-on-error" in steps[index]
+                for index in verify_indices
+            ):
+                return False
+            deploy_indices = [i for i, step in enumerate(steps) if has_deploy(step)]
+            if deploy_indices:
+                deploy_job_indices.append(job_index)
+                if not verify_indices or any(
+                    has_deploy(step) and not any(verify_index < i for verify_index in verify_indices)
+                    for i, step in enumerate(steps)
+                ):
+                    return False
+                if any(
+                    re.search(r"\b(?:always|failure|cancelled)\s*\(\s*\)", str(steps[i].get("if", "")), re.I)
+                    for i in deploy_indices
+                ):
+                    return False
+        for deploy_job_index in deploy_job_indices:
+            for job_index, job in enumerate(jobs.values()):
+                if job_index > deploy_job_index and re.search(
+                    r"\b(?:always|failure|cancelled)\s*\(\s*\)",
+                    str(job.get("if", "")),
+                    re.I,
+                ):
+                    return False
+        return True
+
+    for workflow_path in Path(".github/workflows").glob("*.yml"):
+        workflow = yaml.load(workflow_path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+        assert workflow_is_safe(workflow), workflow_path
+
+    negative = {
+        "jobs": {
+            "unsafe": {"steps": [
+                {"uses": "cloudflare/wrangler-action@sha"},
+                {"uses": "./.github/actions/verify-public-catalog-producer"},
+            ]}
+        }
+    }
+    assert not workflow_is_safe(negative)
+
+    for key, value in (("if", "false"), ("continue-on-error", "${{ true }}")):
+        unsafe_call = {
+            "jobs": {
+                "unsafe": {"steps": [
+                    {"uses": "./.github/actions/verify-public-catalog-producer", key: value},
+                    {"uses": "cloudflare/wrangler-action@sha"},
+                ]}
+            }
+        }
+        assert not workflow_is_safe(unsafe_call)
+        safe_call = {
+            "jobs": {
+                "unsafe": {"steps": [
+                    {"uses": "./.github/actions/verify-public-catalog-producer"},
+                    {"uses": "cloudflare/wrangler-action@sha"},
+                ]}
+            }
+        }
+        assert workflow_is_safe(safe_call)
+
+    for condition in ("always()", "failure()", "cancelled()"):
+        conditional_deploy = {
+            "jobs": {
+                "unsafe": {"steps": [
+                    {"uses": "./.github/actions/verify-public-catalog-producer"},
+                    {"uses": "cloudflare/wrangler-action@sha", "if": condition},
+                ]}
+            }
+        }
+        assert not workflow_is_safe(conditional_deploy)
+        conditional_later_job = {
+            "jobs": {
+                "verified": {"steps": [
+                    {"uses": "./.github/actions/verify-public-catalog-producer"},
+                    {"uses": "cloudflare/wrangler-action@sha"},
+                ]},
+                "later": {"if": condition, "steps": []},
+            }
+        }
+        assert not workflow_is_safe(conditional_later_job)
+
+    action_negative = [
+        {"uses": "actions/download-artifact@sha"},
+        {"run": "wrangler deploy"},
+        {"run": "python3 .github/scripts/verify_public_catalog_producer.py artifact"},
+    ]
+    assert not _verify_after_download(action_negative)
+
+    for key, value in (("if", "false"), ("continue-on-error", "${{ true }}")):
+        action_with_unsafe_verify = [
+            {"uses": "actions/download-artifact@sha"},
+            {
+                "run": "python3 .github/scripts/verify_public_catalog_producer.py artifact",
+                key: value,
+            },
+        ]
+        assert not _verify_after_download(action_with_unsafe_verify)
 
 
 def test_private_seed_consumer_applies_schema_and_migration_before_private_seed() -> None:
