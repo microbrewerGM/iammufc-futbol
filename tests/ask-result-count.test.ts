@@ -13,10 +13,16 @@ const rows: ResultRow[] = [
 ];
 const feasible: FeasibilityResult = { state: "computable_now_queued", reason: "fixture", cost_class: "cheap" };
 
-function render(language: "en" | "es", count: number, limit: number): string {
+function render(
+  language: "en" | "es",
+  count: number,
+  limit: number,
+  entityType: "player" | "season" = "player",
+  entityId = "all",
+): string {
   const returnedRows = rows.slice(0, count);
   const intent = {
-    ...withDefaults({ metric: "goals", entity_type: "player", entity_id: "all", season: "2025-26", competition: "PL", limit }),
+    ...withDefaults({ metric: "goals", entity_type: entityType, entity_id: entityId, season: "2025-26", competition: "PL", limit }),
     viz: "table" as const,
   };
   return resultPanel(intent, feasible, returnedRows, catalog, "count-fixture", LOCALES[language]);
@@ -24,16 +30,24 @@ function render(language: "en" | "es", count: number, limit: number): string {
 
 describe("ask result count", () => {
   it.each([
-    [1, 5, "Showing 1 of 5 requested results."],
-    [2, 2, "Showing 2 of 2 requested results."],
+    [1, 5, "Results shown: 1; requested: 5."],
+    [2, 2, "Results shown: 2; requested: 2."],
+    [2, 1, "Results shown: 2; requested: 1."],
   ])("shows returned and requested counts for %i rows with limit %i in English", (count, limit, copy) => {
     expect(render("en", count, limit)).toContain(copy);
   });
 
   it.each([
-    [1, 5, "Se muestran 1 de 5 resultados solicitados."],
-    [2, 2, "Se muestran 2 de 2 resultados solicitados."],
+    [1, 5, "Resultados mostrados: 1; solicitados: 5."],
+    [2, 2, "Resultados mostrados: 2; solicitados: 2."],
+    [2, 1, "Resultados mostrados: 2; solicitados: 1."],
   ])("shows returned and requested counts for %i rows with limit %i in Spanish", (count, limit, copy) => {
     expect(render("es", count, limit)).toContain(copy);
+  });
+
+  it.each(["en", "es"] as const)("omits the ranking count for named-player and season intents in %s", (language) => {
+    const copy = language === "es" ? "Resultados mostrados:" : "Results shown:";
+    expect(render(language, 1, 5, "player", "fpl:code:1")).not.toContain(copy);
+    expect(render(language, 1, 5, "season")).not.toContain(copy);
   });
 });
