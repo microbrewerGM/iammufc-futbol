@@ -25,7 +25,7 @@ function fakeDb(rows: Record<string, unknown>[], current = snapshot) {
   },
     batch: async (statements: { sql: string; all: () => Promise<unknown> }[]) => Promise.all(statements.map(async (item) => {
       const result = await item.all() as { results: unknown[] };
-      return /FROM snapshots/.test(item.sql) ? { results: [{ snapshot_id: current, sources_json: "{}" }] } : result;
+      return /FROM snapshots/.test(item.sql) ? { results: [{ snapshot_id: current, created_at: "2026-10-31T07:50:00.000Z", sources_json: "{}" }] } : result;
     })),
   };
   return { env: { DB } as unknown as Env, calls };
