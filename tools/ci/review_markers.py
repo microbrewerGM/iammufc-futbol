@@ -6,7 +6,6 @@ from __future__ import annotations
 import os
 import re
 import subprocess
-import sys
 import unicodedata
 
 
@@ -100,6 +99,8 @@ def _byte_identical(base_sha: str, head_sha: str, judged_sha: str) -> bool:
 def check(base_sha: str, head_sha: str, body: str, head_repo: str, repository: str) -> tuple[bool, str]:
     if not SHA_RE.fullmatch(base_sha) or not SHA_RE.fullmatch(head_sha):
         return False, "base and head SHAs must each be 40 hex characters"
+    if base_sha != base_sha.lower() or head_sha != head_sha.lower():
+        return False, "base and head SHAs must be lowercase"
     if not head_repo or not repository or head_repo != repository:
         return False, "fork pull requests are not accepted"
     try:

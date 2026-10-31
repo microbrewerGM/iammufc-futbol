@@ -22,10 +22,12 @@ class GitStub:
     ancestry: dict[tuple[str, str], int] = {}
     diffs: dict[tuple[str, str], str] = {}
     fail_diff = False
+    calls: list[tuple[str, ...]] = []
 
     @classmethod
     def run(cls, argv, **kwargs):
         args = argv[1:]
+        cls.calls.append(tuple(args))
         if args[0] == "diff" and "--name-only" in args:
             if cls.fail_diff:
                 return subprocess.CompletedProcess(argv, 2, "", "stubbed diff failure")
@@ -47,6 +49,7 @@ def stub_git(monkeypatch):
     GitStub.ancestry = {(JUDGED, HEAD): 0}
     GitStub.diffs = {(MERGE, JUDGED): "same", (BASE, HEAD): "same"}
     GitStub.fail_diff = False
+    GitStub.calls = []
     monkeypatch.setattr(review_markers.subprocess, "run", GitStub.run)
 
 
@@ -76,6 +79,12 @@ def check(text, *, head=HEAD, base=BASE, head_repo=REPO, repository=REPO):
         ("conflicting role verdicts", ["src/app.ts"], body() + f"\nReviewer: BLOCK {HEAD}", False),
         ("fork PR", ["src/app.ts"], body(), False),
         ("markers hidden in comments and fences", ["src/app.ts"], f"<!--\n{body()}\n-->\n```\n{body()}\n```", False),
+        ("byte check targets another head", ["src/app.ts"], f"{body(JUDGED)}\nLead: BYTE-CHECK {JUDGED} {'e' * 40}", False),
+        ("protected byte check missing judged red-team", ["infra/config.toml"], f"{body(JUDGED)}\nLead: BYTE-CHECK {JUDGED} {HEAD}", False),
+        ("marker mid-line", ["src/app.ts"], f"prefix {body()}", False),
+        ("marker trailing text", ["src/app.ts"], body() + " trailing", False),
+        ("wrong role validator approve", ["src/app.ts"], f"Reviewer: APPROVE {HEAD}\nValidator: APPROVE {HEAD}", False),
+        ("wrong role reviewer pass", ["src/app.ts"], f"Reviewer: PASS {HEAD}\nValidator: PASS {HEAD}", False),
     ],
 )
 def test_verdict_cases(description, paths, text, expected):
@@ -114,6 +123,29 @@ def test_byte_check_only_accepts_identical_pr_internal_patch(judged_kind, identi
     assert check(text)[0] is expected
 
 
+def test_byte_check_git_argv_is_pinned():
+    text = f"{body(JUDGED)}\nLead: BYTE-CHECK {JUDGED} {HEAD}"
+    assert check(text)[0]
+    assert GitStub.calls == [
+        ("diff", "--name-only", "-z", "--no-renames", f"{BASE}...{HEAD}"),
+        ("merge-base", "--is-ancestor", JUDGED, BASE),
+        ("merge-base", "--is-ancestor", JUDGED, HEAD),
+        ("merge-base", BASE, JUDGED),
+        ("diff", "--no-renames", "--full-index", MERGE, JUDGED),
+        ("diff", "--no-renames", "--full-index", BASE, HEAD),
+    ]
+
+
+def test_merge_base_error_fails_closed():
+    GitStub.ancestry[(JUDGED, HEAD)] = 1
+    GitStub.ancestry[(JUDGED, BASE)] = 128
+    assert not check(f"{body(JUDGED)}\nLead: BYTE-CHECK {JUDGED} {HEAD}")[0]
+
+
+def test_uppercase_head_from_environment_is_rejected():
+    assert not check(body(HEAD), head=HEAD.upper())[0]
+
+
 def test_head_negative_verdict_fails_even_when_judged_markers_pass():
     text = f"{body(JUDGED)}\nValidator: CHANGES {HEAD}\nLead: BYTE-CHECK {JUDGED} {HEAD}"
     assert not check(text)[0]
@@ -137,14 +169,24 @@ def test_workflow_shape():
     assert "ref: ${{ github.event.pull_request.base.sha }}" in workflow
     assert "persist-credentials: false" in workflow
     assert "uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" in workflow
-    assert "permissions:\n  contents: read\n  pull-requests: read" in workflow
+    assert "permissions:" in workflow
     assert "concurrency:" in workflow and "review-markers-${{ github.event.pull_request.number }}" in workflow
     assert "HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}" in workflow
     assert "GITHUB_REPOSITORY: ${{ github.repository }}" in workflow
     assert "${{ github.event.pull_request.body }}" in workflow
-    for line in workflow.splitlines():
-        if line.lstrip().startswith("run:"):
-            assert "${{" not in line
+    parsed = __import__("yaml").safe_load(workflow)
+    assert parsed["permissions"] == {"contents": "read", "pull-requests": "read"}
+    assert "write" not in workflow and "write-all" not in workflow
+    for job in parsed["jobs"].values():
+        assert "permissions" not in job
+        for step in job.get("steps", []):
+            run = step.get("run", "")
+            assert "${{" not in run
+            for key, value in step.get("env", {}).items():
+                if "${{ github.event.pull_request.body }}" in value:
+                    assert key == "PR_BODY"
+                if key == "PR_BODY":
+                    assert value == "${{ github.event.pull_request.body }}"
 
 
 def test_all_workflow_executed_scripts_and_install_manifests_are_protected():
