@@ -36,7 +36,7 @@ CANONICAL_MARKER = re.compile(
     rf"Red-team: PASS {SHA}|Lead: BYTE-CHECK {SHA} {SHA})$"
 )
 SESSION_URL = re.compile(r"^https://claude\.ai/code/session_[A-Za-z0-9_-]+$")
-PROSE_LINE = re.compile(r"^[A-Za-z0-9 ,.;:()'/#?=%+@-]*$")
+PROSE_LINE = re.compile(r'^[A-Za-z0-9 ,.;:()\'"/#?=%+@-]*$')
 PROSE_FORBIDDEN = re.compile(
     r"reviewer|validator|red-team|red team|redteam|lead:|approve|fail|reject|block|byte-check",
     re.IGNORECASE,

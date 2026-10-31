@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess as stdlib_subprocess
+import re
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -202,6 +205,19 @@ def test_legitimate_integrator_body_passes():
     )
     GitStub.paths = ["pipeline/__init__.py"]
     assert check(text)[0]
+
+
+def test_quoted_phrase_passes():
+    assert check(f'A quoted phrase "looks fine" here.\n\n{body()}')[0]
+
+
+@pytest.mark.parametrize("character", [
+    "*", "_", "\\", "]", "&", "|", "!", "{", "}", "`", "~", "<", ">", "[",
+    "\u00a0", "\u200b", "\u2011", "：", "é",
+])
+def test_forbidden_prose_character_is_rejected_alone(character):
+    assert not check(f"ordinary{character}prose\n\n{body()}")[0], repr(character)
+    assert check(f"ordinaryprose\n\n{body()}")[0], repr(character)
 
 
 @pytest.mark.parametrize(
@@ -439,6 +455,8 @@ def test_live_api_rejects_unexpected_response_url(monkeypatch):
 
 
 def test_main_live_head_mismatch_and_network_error_fail_closed(monkeypatch, capsys):
+    import json
+
     environ = {
         "GITHUB_REPOSITORY": REPO,
         "PR_NUMBER": "42",
@@ -448,19 +466,33 @@ def test_main_live_head_mismatch_and_network_error_fail_closed(monkeypatch, caps
         "HEAD_REPO": REPO,
     }
     monkeypatch.setattr(review_markers.os, "environ", environ)
-    monkeypatch.setattr(
-        review_markers,
-        "_live_pull_request",
-        lambda *args: (body(), "e" * 40),
-    )
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def geturl(self):
+            return f"https://api.github.com/repos/{REPO}/pulls/42"
+
+        def read(self):
+            return json.dumps({"body": body(), "head": {"sha": "e" * 40}}).encode()
+
+    class Opener:
+        def open(self, req, timeout):
+            return Response()
+
+    monkeypatch.setattr(review_markers.urllib.request, "build_opener", lambda handler: Opener())
     assert review_markers.main() == 1
     captured = capsys.readouterr()
     assert "live head differs" in captured.out
 
-    def fail_network(*args):
-        raise OSError("network unavailable")
+    class FailingOpener:
+        def open(self, req, timeout):
+            raise OSError("network unavailable")
 
-    monkeypatch.setattr(review_markers, "_live_pull_request", fail_network)
+    monkeypatch.setattr(review_markers.urllib.request, "build_opener", lambda handler: FailingOpener())
     assert review_markers.main() == 1
     captured = capsys.readouterr()
     assert "network unavailable" in captured.out
@@ -510,7 +542,38 @@ def test_main_request_authorization_and_token_not_logged(monkeypatch, capsys):
     assert token not in captured.out + captured.err
 
 
-def test_workflow_body_expression_once():
-    text = (ROOT / ".github/workflows/review-markers.yml").read_text()
-    assert text.count("${{ github.event.pull_request.body }}") == 0
-    assert "PR_NUMBER:" in text and "GITHUB_TOKEN:" in text
+def test_workflow_run_inputs_require_red_team_except_secret_free_vitest_tests():
+    listing = stdlib_subprocess.Popen(
+        ["git", "ls-files", "-z"], cwd=ROOT, stdout=stdlib_subprocess.PIPE, text=True
+    )
+    stdout, _ = listing.communicate()
+    assert listing.returncode == 0
+    tracked = stdout.split("\0")
+    tracked = {path for path in tracked if path}
+    collected = set()
+    module_pattern = re.compile(r"^(?:python|python3)\s+-m\s+([A-Za-z_][\w.]*)$")
+    for workflow_path in sorted((ROOT / ".github/workflows").glob("*.yml")):
+        workflow = __import__("yaml").safe_load(workflow_path.read_text())
+        for job in workflow.get("jobs", {}).values():
+            secret_free_test_job = job.get("name") == "test"
+            for step in job.get("steps", []):
+                for line in step.get("run", "").splitlines():
+                    try:
+                        tokens = shlex.split(line.split("#", 1)[0])
+                    except ValueError:
+                        continue
+                    for index in range(len(tokens)):
+                        command = " ".join(tokens[index:index + 3])
+                        match = module_pattern.match(command)
+                        if match:
+                            collected.add(match.group(1).replace(".", "/") + ".py")
+                        candidate = tokens[index].strip("\"'(){}[],:;")
+                        if candidate in tracked:
+                            if candidate.startswith("tests/") and candidate.endswith(".test.ts") and secret_free_test_job:
+                                continue
+                            collected.add(candidate)
+    assert collected
+    assert "tools/ci/review_markers.py" in collected
+    assert "pipeline/contracts/validate_public_catalog.py" in collected
+    for path in collected:
+        assert review_markers.needs_red_team(path), path
