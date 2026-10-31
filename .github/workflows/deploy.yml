@@ -50,7 +50,7 @@ jobs:
           cache: npm
       - run: npm ci
 
-      - name: Read catalog provenance version
+      - name: Read and validate v2 catalog producer statement
         id: catalog-provenance
         shell: bash
         run: python3 .github/scripts/verify_public_catalog_producer.py outputs >> "$GITHUB_OUTPUT"
@@ -65,48 +65,15 @@ jobs:
           repositories: iammufc-platform
           permission-actions: read
 
-      - name: Verify v2 producer run metadata
-        env:
-          GH_TOKEN: ${{ steps.catalog-read.outputs.token }}
-          PRODUCER_RUN_ID: ${{ steps.catalog-provenance.outputs.run_id }}
-          PRODUCER_RUN_ATTEMPT: ${{ steps.catalog-provenance.outputs.run_attempt }}
-          PRODUCER_ARTIFACT_ID: ${{ steps.catalog-provenance.outputs.artifact_id }}
-          PRODUCER_SOURCE_REVISION: ${{ steps.catalog-provenance.outputs.source_revision }}
-          PRODUCER_WORKFLOW: .github/workflows/publish-public-catalog.yml
-        shell: bash
-        run: |
-          set -euo pipefail
-          workflow_id="$(gh api repos/microbrewerGM/iammufc-platform/actions/workflows/publish-public-catalog.yml --jq .id)"
-          export PRODUCER_WORKFLOW_ID="$workflow_id"
-          gh api "repos/microbrewerGM/iammufc-platform/actions/runs/$PRODUCER_RUN_ID" \
-            | python3 .github/scripts/verify_public_catalog_producer.py run
-
-      - name: Verify referenced artifact belongs to the exact producer run attempt
-        env:
-          GH_TOKEN: ${{ steps.catalog-read.outputs.token }}
-          PRODUCER_RUN_ID: ${{ steps.catalog-provenance.outputs.run_id }}
-          PRODUCER_RUN_ATTEMPT: ${{ steps.catalog-provenance.outputs.run_attempt }}
-          PRODUCER_ARTIFACT_ID: ${{ steps.catalog-provenance.outputs.artifact_id }}
-          PRODUCER_SOURCE_REVISION: ${{ steps.catalog-provenance.outputs.source_revision }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          gh api "repos/microbrewerGM/iammufc-platform/actions/artifacts/$PRODUCER_ARTIFACT_ID" \
-            | python3 .github/scripts/verify_public_catalog_producer.py artifact-metadata
-
-      - name: Download exact sanitized catalog artifact
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+      - name: Verify v2 catalog producer run and artifact
+        uses: ./.github/actions/verify-public-catalog-producer
         with:
-          github-token: ${{ steps.catalog-read.outputs.token }}
-          repository: microbrewerGM/iammufc-platform
           run-id: ${{ steps.catalog-provenance.outputs.run_id }}
-          artifact-ids: ${{ steps.catalog-provenance.outputs.artifact_id }}
-          path: verified-public-catalog
-
-      - name: Verify producer artifact matches published catalog
-        env:
-          PRODUCER_ARTIFACT_ID: ${{ steps.catalog-provenance.outputs.artifact_id }}
-        run: python3 .github/scripts/verify_public_catalog_producer.py artifact
+          run-attempt: ${{ steps.catalog-provenance.outputs.run_attempt }}
+          artifact-id: ${{ steps.catalog-provenance.outputs.artifact_id }}
+          source-revision: ${{ steps.catalog-provenance.outputs.source_revision }}
+          token: ${{ steps.catalog-read.outputs.token }}
+          catalog-path: verified-public-catalog
 
       - name: Apply migrations (dev)
         # CF_TOKEN_DEV is scoped to D1/Workers-KV/Workers-Scripts/Cache-Purge
@@ -252,6 +219,21 @@ jobs:
           cache: npm
 
       - run: npm ci
+
+      - name: Read and validate v2 catalog producer statement
+        id: catalog-provenance
+        shell: bash
+        run: python3 .github/scripts/verify_public_catalog_producer.py outputs >> "$GITHUB_OUTPUT"
+
+      - name: Verify v2 catalog producer run and artifact
+        uses: ./.github/actions/verify-public-catalog-producer
+        with:
+          run-id: ${{ steps.catalog-provenance.outputs.run_id }}
+          run-attempt: ${{ steps.catalog-provenance.outputs.run_attempt }}
+          artifact-id: ${{ steps.catalog-provenance.outputs.artifact_id }}
+          source-revision: ${{ steps.catalog-provenance.outputs.source_revision }}
+          token: ${{ steps.private-read.outputs.token }}
+          catalog-path: verified-public-catalog
 
       - name: Apply schema (dev)
         uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0

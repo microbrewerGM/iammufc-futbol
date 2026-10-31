@@ -26,8 +26,8 @@ def parse_statement_outputs(statement: Any) -> dict[str, str]:
     v2_fields = {
         "statement_version", "catalog_contract_version", "source_revision", "builder",
         "builder_version", "artifact_sha256", "metric_count", "coverage_count", "validation_passed",
+        "producer_run_id", "producer_run_attempt", "producer_artifact_id",
     }
-    v2_fields |= {"producer_run_id", "producer_run_attempt", "producer_artifact_id"}
     require(type(statement) is dict, "release statement must be an object")
     version = statement.get("statement_version")
     require(type(version) is int and version == 2, "unsupported release statement version")
