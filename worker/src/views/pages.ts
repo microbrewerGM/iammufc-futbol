@@ -249,14 +249,14 @@ function dataTable(
   const fmt = (v: number | null) => formatNumber(v, decimals, locale.code);
   const body = rows
     .map(
-      (r) =>
-        `<tr><td><a href="${base(locale)}/player/${encodeURIComponent(r.route_key ?? r.label)}/${esc(season)}">${esc(r.label)}</a></td>` +
+      (r, index) =>
+        `<tr><td class="num">${index + 1}</td><td><a href="${base(locale)}/player/${encodeURIComponent(r.route_key ?? r.label)}/${esc(season)}">${esc(r.label)}</a></td>` +
         `<td>${esc(positionLabel(r.secondary ?? "", locale.code))}</td>` +
         `<td class="num">${esc(fmt(r.value))}</td></tr>`,
     )
     .join("");
   return `<h3>${esc(t.dataHeading)}</h3>
-<table><thead><tr><th>${esc(t.playerCol)}</th><th>${esc(t.posCol)}</th><th class="num">${esc(metricLbl)}</th></tr></thead>
+<table><thead><tr><th class="num" scope="col">${esc(t.rankCol)}</th><th>${esc(t.playerCol)}</th><th>${esc(t.posCol)}</th><th class="num">${esc(metricLbl)}</th></tr></thead>
 <tbody>${body}</tbody></table>`;
 }
 
