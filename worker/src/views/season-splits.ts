@@ -49,7 +49,7 @@ export function seasonSplitsBody(model: SeasonSplitView, locale: Locale): string
   }).join("")}</fieldset>`).join("");
   const form = `<form method="get" action="/${locale.code}/seasons/explore">
     <input type="hidden" name="schema_version" value="1"><input type="hidden" name="competition" value="PL">
-    <fieldset><legend>${t("Seasons (choose 1–16)", "Temporadas (elige 1–16)")}</legend>${seasonChoices}</fieldset>
+    <fieldset><legend>${t(`Seasons (${seasons.filter(v => s.seasons.includes(v)).length} selected; choose 1–16)`, `Temporadas (${seasons.filter(v => s.seasons.includes(v)).length} ${seasons.filter(v => s.seasons.includes(v)).length === 1 ? "seleccionada" : "seleccionadas"}; elige 1–16)`)}</legend>${seasonChoices}</fieldset>
     ${select("group_by", t("Group by", "Agrupar por"), [["venue", t("Home and away", "Local y visitante")], ["opponent", t("Opponent", "Rival")]], s.group_by)}
     ${select("venue", t("Venue", "Localía"), [["", t("All venues", "Todas las localías")], ["home", venueName("home")], ["away", venueName("away")]], s.venue)}
     ${select("opponent_id", t("Opponent", "Rival"), [["", t("All opponents", "Todos los rivales")], ...model.opponents.map(o => [o.opponent_id, o.label] as [string, string])], s.opponent_id)}
