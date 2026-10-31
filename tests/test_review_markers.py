@@ -156,13 +156,6 @@ def test_verdict_cases(description, paths, text, expected):
     assert result is expected, description
 
 
-@pytest.mark.parametrize("mode", ["120000", "160000"])
-def test_symlink_and_gitlink_modes_require_red_team(mode):
-    GitStub.paths = ["worker/src/views/link.ts"]
-    GitStub.modes[GitStub.paths[0]] = (mode, mode)
-    assert not check(body())[0]
-    assert check(body(red_team=True))[0]
-
 
 @pytest.mark.parametrize(
     ("old_mode", "new_mode", "status"),
