@@ -55,6 +55,7 @@ PROTECTED_FILES = {
     "tests/test_feasibility.py",
 }
 PROTECTED_BASENAMES = {".pre-commit-config.yaml", "gemini.md", "copilot_instructions.md"}
+PROTECTED_BASENAMES.update({"conftest.py", "pytest.ini", ".pytest.ini", "tox.ini", "setup.cfg"})
 
 
 def canonical(path: str) -> str:
@@ -70,7 +71,11 @@ def is_protected(path: str) -> bool:
         or basename in PROTECTED_BASENAMES
         or agent_doc
         or basename == ".npmrc"
-        or (basename == "conftest.py" and normalized.startswith("tests/"))
+        or basename in {"vitest.config.*", "vitest.workspace.*", "vite.config.*"}
+        or any(
+            basename.startswith(prefix)
+            for prefix in ("vitest.config.", "vitest.workspace.", "vite.config.")
+        )
         or basename.startswith(".yarnrc")
         or normalized.startswith(PROTECTED_PREFIXES)
     )
@@ -97,8 +102,14 @@ def _normalized_body(body: str) -> str:
 
 
 def _ambiguous_body(body: str) -> bool:
-    return "<!--" in body or "\t" in body or any(
-        re.match(r"^\s*(?:`{3,}|~{3,})", line) for line in body.splitlines()
+    forbidden_chars = "\x0b\x0c\x85\u2028\u2029"
+    return (
+        "<!--" in body
+        or "\t" in body
+        or any(char in body for char in forbidden_chars)
+        or any(re.match(r"^\s*(?:`{3,}|~{3,})", line) for line in body.split("\n"))
+        or any(re.match(r"^\s*\[[^\]]+\]:", line) for line in body.split("\n"))
+        or re.search(r"<(?=[A-Za-z/!])", body) is not None
     )
 
 
@@ -106,7 +117,7 @@ def _verdicts(body: str, sha: str, protected: bool) -> bool:
     if _ambiguous_body(body):
         return False
     seen: dict[str, set[str]] = {role: set() for role in ROLES}
-    for line in _normalized_body(body).splitlines():
+    for line in _normalized_body(body).split("\n"):
         match = CANONICAL_MARKER.fullmatch(line)
         if match:
             reviewer, reviewer_token, reviewer_sha, role, token, marker, _, _ = match.groups()
@@ -169,7 +180,7 @@ def check(
         protected = any(is_protected(path) for path in paths)
         if _verdicts(body, head_sha, protected):
             return True, "current-head verdict markers found"
-        for line in body.splitlines():
+        for line in body.split("\n"):
             match = CANONICAL_MARKER.fullmatch(line)
             if not match or not match.group(7):
                 continue
@@ -190,7 +201,14 @@ def _live_pull_request(repository, number, token):
     request = urllib.request.Request(
         url, headers={"Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}"}
     )
-    with urllib.request.urlopen(request, timeout=20) as response:
+    class RejectRedirects(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            raise urllib.error.HTTPError(req.full_url, code, "redirect rejected", headers, fp)
+
+    opener = urllib.request.build_opener(RejectRedirects)
+    with opener.open(request, timeout=20) as response:
+        if response.geturl() != url:
+            raise RuntimeError("live pull request response redirected")
         payload = json.loads(response.read().decode())
     return payload["body"] or "", payload["head"]["sha"]
 

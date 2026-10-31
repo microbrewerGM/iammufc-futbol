@@ -114,6 +114,13 @@ def check(text, *, head=HEAD, base=BASE, head_repo=REPO, repository=REPO):
         ("lgtm token", ["src/app.ts"], body() + f"\nReviewer: LGTM {HEAD}", False),
         ("fence opener", ["src/app.ts"], f"```\n{body()}", False),
         ("unterminated fence", ["src/app.ts"], f"~~~\n{body()}", False),
+        ("raw html", ["src/app.ts"], f"{body()}\n<div>text</div>", False),
+        ("link reference", ["src/app.ts"], f"{body()}\n[ref]: https://example.com", False),
+        ("vertical tab", ["src/app.ts"], f"{body()}\v", False),
+        ("form feed", ["src/app.ts"], f"{body()}\f", False),
+        ("next line", ["src/app.ts"], f"{body()}\x85", False),
+        ("unicode line separator", ["src/app.ts"], f"{body()}\u2028", False),
+        ("unicode paragraph separator", ["src/app.ts"], f"{body()}\u2029", False),
         ("tab rejected", ["src/app.ts"], f"\t{body()}", False),
         (
             "wrong role validator approve",
@@ -291,6 +298,50 @@ def test_rework_3_protected(path):
     assert review_markers.is_protected(path)
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "pytest.ini",
+        "tests/conftest.py",
+        "nested/.pytest.ini",
+        "config/tox.ini",
+        "nested/setup.cfg",
+        "vitest.config.mts",
+        "vitest.workspace.js",
+        "vite.config.ts",
+        "nested/vite.config.mjs",
+    ],
+)
+def test_rework_5_paths_are_protected(path):
+    assert review_markers.is_protected(path)
+
+
+@pytest.mark.parametrize("path", ["pytest.ini", "tests/conftest.py"])
+def test_rework_5_protected_paths_require_red_team(path):
+    GitStub.paths = [path]
+    assert not check(body())[0]
+    assert check(body(red_team=True))[0]
+
+
+@pytest.mark.parametrize(
+    "hostile",
+    [
+        f"Red-team: FAIL {HEAD} token reaches argv",
+        f"Red-team: FAIL on {HEAD}",
+        f"> Red-team: FAIL {HEAD}",
+        f"1. Red-team: FAIL {HEAD}",
+        f"## Red-team: FAIL {HEAD}",
+        f"Red-team:\u00a0FAIL {HEAD}",
+        "<!-->",
+        '<div title="...markers...">',
+        f"[reference]: https://example.com\n  \"multi-line title\"\n{body()}",
+        f"prefix\u2028Red-team: FAIL {HEAD}",
+    ],
+)
+def test_red_team_hostile_inputs_fail(hostile):
+    assert not check(body() + "\n" + hostile)[0]
+
+
 def test_reject_and_lgtm_conflict_and_case_markup():
     assert not check(body() + f"\nReviewer: REJECT {HEAD}")[0]
     assert not check(body() + f"\nReviewer: LGTM {HEAD}")[0]
@@ -331,15 +382,41 @@ def test_live_api_url_and_refresh(monkeypatch):
         def read(self):
             return json.dumps({"body": body(), "head": {"sha": HEAD}}).encode()
 
+        def geturl(self):
+            return f"https://api.github.com/repos/{REPO}/pulls/42"
+
     calls = []
 
-    def urlopen(req, timeout):
-        calls.append(req.full_url)
-        return Response()
+    class Opener:
+        def open(self, req, timeout):
+            calls.append(req.full_url)
+            return Response()
 
-    monkeypatch.setattr(review_markers.urllib.request, "urlopen", urlopen)
+    def build_opener(handler):
+        assert issubclass(handler, review_markers.urllib.request.HTTPRedirectHandler)
+        return Opener()
+
+    monkeypatch.setattr(review_markers.urllib.request, "build_opener", build_opener)
     assert review_markers._live_pull_request(REPO, "42", "token")[1] == HEAD
     assert calls == [f"https://api.github.com/repos/{REPO}/pulls/42"]
+
+
+def test_live_api_redirect_fails_without_forwarding_token(monkeypatch):
+    requests = []
+
+    class Opener:
+        def open(self, req, timeout):
+            requests.append(req)
+            raise review_markers.urllib.error.HTTPError(
+                req.full_url, 302, "redirect", {"Location": "https://attacker.invalid/"}, None
+            )
+
+    monkeypatch.setattr(review_markers.urllib.request, "build_opener", lambda handler: Opener())
+    with pytest.raises(review_markers.urllib.error.HTTPError):
+        review_markers._live_pull_request(REPO, "42", "secret-token")
+    assert len(requests) == 1
+    assert requests[0].get_header("Authorization") == "Bearer secret-token"
+    assert "attacker.invalid" not in repr(requests)
 
 
 def test_workflow_body_expression_once():
