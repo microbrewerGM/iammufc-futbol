@@ -56,7 +56,6 @@ def needs_red_team(path: str) -> bool:
         if normalized in {
             "worker/src/core/parser.ts",
             "worker/src/core/question-triage-bridge.ts",
-            "worker/src/views/pages.ts",
         }:
             return True
         return not normalized.startswith(("worker/src/views/", "worker/src/core/"))

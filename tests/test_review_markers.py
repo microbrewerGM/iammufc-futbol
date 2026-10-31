@@ -191,7 +191,7 @@ def test_crlf_byte_check_passes():
         ("worker/src/other/x.ts", True),
         ("worker/src/core/parser.ts", True),
         ("worker/src/core/question-triage-bridge.ts", True),
-        ("worker/src/views/pages.ts", True),
+        ("worker/src/views/pages.ts", False),
         ("worker/src/views/x.ts", False),
         ("worker/src/core/x.ts", False),
         ("tests/x.test.ts", False),
@@ -610,7 +610,12 @@ def test_views_and_core_do_not_import_protected_worker_areas():
     for relative_path in source_files:
         source = (ROOT / relative_path).read_text()
         directory = posixpath.dirname(relative_path)
-        for specifier in import_pattern.findall(source):
+        for match in import_pattern.finditer(source):
+            statement_start = source.rfind("\n", 0, match.start()) + 1
+            statement_prefix = source[statement_start:match.start()]
+            if re.match(r"\s*(?:import|export)\s+type\b", statement_prefix):
+                continue
+            specifier = match.group(1)
             resolved = posixpath.normpath(posixpath.join(directory, specifier))
             if any(
                 component in {"security", "budget", "generated"}
@@ -624,5 +629,11 @@ def test_views_and_core_do_not_import_protected_worker_areas():
     assert excluded_importers == {
         "worker/src/core/parser.ts",
         "worker/src/core/question-triage-bridge.ts",
-        "worker/src/views/pages.ts",
     }
+
+
+def test_type_only_imports_do_not_gate_but_value_imports_do():
+    source = (ROOT / "worker/src/views/pages.ts").read_text()
+    assert re.search(r"import\s+type\s*\{[^}]*\}\s*from\s*[\"']../security/", source, re.DOTALL)
+    assert not review_markers.needs_red_team("worker/src/views/pages.ts")
+    assert review_markers.needs_red_team("worker/src/core/parser.ts")
