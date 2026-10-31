@@ -1,0 +1,58 @@
+name: Verify public catalog producer provenance
+inputs:
+  run-id:
+    required: true
+  run-attempt:
+    required: true
+  artifact-id:
+    required: true
+  source-revision:
+    required: true
+  token:
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Verify v2 producer run metadata
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        PRODUCER_RUN_ID: ${{ inputs.run-id }}
+        PRODUCER_RUN_ATTEMPT: ${{ inputs.run-attempt }}
+        PRODUCER_ARTIFACT_ID: ${{ inputs.artifact-id }}
+        PRODUCER_SOURCE_REVISION: ${{ inputs.source-revision }}
+        PRODUCER_WORKFLOW: .github/workflows/publish-public-catalog.yml
+      shell: bash
+      run: |
+        set -euo pipefail
+        workflow_id="$(gh api repos/microbrewerGM/iammufc-platform/actions/workflows/publish-public-catalog.yml --jq .id)"
+        export PRODUCER_WORKFLOW_ID="$workflow_id"
+        gh api "repos/microbrewerGM/iammufc-platform/actions/runs/$PRODUCER_RUN_ID" \
+          | python3 .github/scripts/verify_public_catalog_producer.py run
+
+    - name: Verify referenced artifact belongs to the exact producer run attempt
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        PRODUCER_RUN_ID: ${{ inputs.run-id }}
+        PRODUCER_RUN_ATTEMPT: ${{ inputs.run-attempt }}
+        PRODUCER_ARTIFACT_ID: ${{ inputs.artifact-id }}
+        PRODUCER_SOURCE_REVISION: ${{ inputs.source-revision }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        gh api "repos/microbrewerGM/iammufc-platform/actions/artifacts/$PRODUCER_ARTIFACT_ID" \
+          | python3 .github/scripts/verify_public_catalog_producer.py artifact-metadata
+
+    - name: Download exact sanitized catalog artifact
+      uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+      with:
+        github-token: ${{ inputs.token }}
+        repository: microbrewerGM/iammufc-platform
+        run-id: ${{ inputs.run-id }}
+        artifact-ids: ${{ inputs.artifact-id }}
+        path: verified-public-catalog
+
+    - name: Verify producer artifact matches published catalog
+      env:
+        PRODUCER_ARTIFACT_ID: ${{ inputs.artifact-id }}
+      shell: bash
+      run: python3 .github/scripts/verify_public_catalog_producer.py artifact
