@@ -38,6 +38,52 @@ export interface Locale {
   htmlLang: string; // full BCP-47 for <html lang="">
   numberLocale: string; // for Intl.NumberFormat -- es-ES gives decimal comma
   strings: {
+    seasonSplits: {
+      decadeLabel: (decade: number) => string;
+      seasonSelection: (count: number) => string;
+      coverageSummary: (selected: number, complete: number, partial: number, missing: number) => string;
+      unavailableSeasons: (seasons: string) => string;
+      exploreSeasonPerformance: string;
+      home: string;
+      away: string;
+      otherSeasons: string;
+      groupBy: string;
+      homeAndAway: string;
+      opponent: string;
+      venue: string;
+      allVenues: string;
+      allOpponents: string;
+      exploreSeasons: string;
+      rowsCombineTheSelectedSeasons: string;
+      manchesterUnitedPremierLeagueCompletedMatches: string;
+      missingData: string;
+      complete: string;
+      partialSchedule: string;
+      missingSplitCoverage: string;
+      partialScheduleTheseArePartialSubtotals: string;
+      seasonCoverage: string;
+      played: string;
+      wins: string;
+      draws: string;
+      losses: string;
+      goalsFor: string;
+      goalsAgainst: string;
+      goalDifference: string;
+      points: string;
+      pointsMatch: string;
+      goalsForMatch: string;
+      goalsAgainstMatch: string;
+      winRate: string;
+      contributingSeasons: string;
+      allMatches: string;
+      partialSubtotals: string;
+      splitCoverageIsUnavailableForThis: string;
+      seasonPerformance: string;
+      noCompletedMatchesMatchThisSelection: string;
+      sourcesAndSnapshot: string;
+      sourceAttributionUnavailableForSomeData: string;
+      snapshot: string;
+    };
     clHistory: ChampionsLeagueHistoryStrings;
     siteTagline: string;
     askPlaceholder: string;
@@ -168,6 +214,52 @@ const EN: Locale = {
   htmlLang: "en",
   numberLocale: "en-GB",
   strings: {
+    seasonSplits: {
+      decadeLabel: (decade) => `${decade}s`,
+      seasonSelection: (count) => `Seasons (${count} selected; choose 1–16)`,
+      coverageSummary: (selected, complete, partial, missing) => `Coverage across ${selected} selected ${selected === 1 ? "season" : "seasons"}: ${complete} complete, ${partial} ${partial === 1 ? "partial schedule" : "partial schedules"}, ${missing} missing split coverage.`,
+      unavailableSeasons: (seasons) => `Split coverage is unavailable for ${seasons}. Revise season selection using the controls above. No zero-match total is implied.`,
+      exploreSeasonPerformance: "Explore season performance",
+      home: "Home",
+      away: "Away",
+      otherSeasons: "Other seasons",
+      groupBy: "Group by",
+      homeAndAway: "Home and away",
+      opponent: "Opponent",
+      venue: "Venue",
+      allVenues: "All venues",
+      allOpponents: "All opponents",
+      exploreSeasons: "Explore seasons",
+      rowsCombineTheSelectedSeasons: "Rows combine the selected seasons. ",
+      manchesterUnitedPremierLeagueCompletedMatches: "Manchester United · Premier League. Completed matches only. Points = 3 × wins + draws. Rates divide totals by the same played matches; they are not schedule-adjusted.",
+      missingData: "Missing data",
+      complete: "Complete",
+      partialSchedule: "Partial schedule",
+      missingSplitCoverage: "Missing split coverage",
+      partialScheduleTheseArePartialSubtotals: "Partial schedule: these are partial subtotals. Missing matches are not zero; rates describe only the matches available.",
+      seasonCoverage: "Season coverage",
+      played: "Played",
+      wins: "Wins",
+      draws: "Draws",
+      losses: "Losses",
+      goalsFor: "Goals for",
+      goalsAgainst: "Goals against",
+      goalDifference: "Goal difference",
+      points: "Points",
+      pointsMatch: "Points / match",
+      goalsForMatch: "Goals for / match",
+      goalsAgainstMatch: "Goals against / match",
+      winRate: "Win rate (%)",
+      contributingSeasons: "Contributing seasons",
+      allMatches: "All matches",
+      partialSubtotals: "partial subtotals",
+      splitCoverageIsUnavailableForThis: "Split coverage is unavailable for this selection. No zero-match total is implied.",
+      seasonPerformance: "Season performance",
+      noCompletedMatchesMatchThisSelection: "No completed matches match this selection.",
+      sourcesAndSnapshot: "Sources and snapshot",
+      sourceAttributionUnavailableForSomeData: "Source attribution unavailable for some data.",
+      snapshot: "Snapshot",
+    },
     clHistory: {
       heading: "Champions League history", caption: "Recorded matches; records may be incomplete",
       season: "Season", played: "Played", won: "Won", drawn: "Drawn", lost: "Lost",
@@ -314,6 +406,52 @@ const ES: Locale = {
   htmlLang: "es",
   numberLocale: "es-ES",
   strings: {
+    seasonSplits: {
+      decadeLabel: (decade) => `Década de ${decade}`,
+      seasonSelection: (count) => `Temporadas (${count} ${count === 1 ? "seleccionada" : "seleccionadas"}; elige 1–16)`,
+      coverageSummary: (selected, complete, partial, missing) => `Cobertura de ${selected} ${selected === 1 ? "temporada seleccionada" : "temporadas seleccionadas"}: ${complete} ${complete === 1 ? "completa" : "completas"}, ${partial} ${partial === 1 ? "parcial" : "parciales"}, ${missing} sin cobertura.`,
+      unavailableSeasons: (seasons) => `La cobertura de desgloses no está disponible para ${seasons}. Cambie la selección de temporada con los controles anteriores. No se afirma un total de cero partidos.`,
+      exploreSeasonPerformance: "Explorar el rendimiento por temporada",
+      home: "Local",
+      away: "Visitante",
+      otherSeasons: "Otras temporadas",
+      groupBy: "Agrupar por",
+      homeAndAway: "Local y visitante",
+      opponent: "Rival",
+      venue: "Localía",
+      allVenues: "Todas las localías",
+      allOpponents: "Todos los rivales",
+      exploreSeasons: "Explorar temporadas",
+      rowsCombineTheSelectedSeasons: "Las filas combinan las temporadas seleccionadas. ",
+      manchesterUnitedPremierLeagueCompletedMatches: "Manchester United · Premier League. Solo partidos finalizados. Puntos = 3 × victorias + empates. Las tasas dividen los totales entre los mismos partidos jugados; no se ajustan al calendario.",
+      missingData: "Datos ausentes",
+      complete: "Completa",
+      partialSchedule: "Calendario parcial",
+      missingSplitCoverage: "Sin cobertura de desgloses",
+      partialScheduleTheseArePartialSubtotals: "Calendario parcial: son subtotales parciales. Los partidos ausentes no equivalen a cero; las tasas describen solo los partidos disponibles.",
+      seasonCoverage: "Cobertura por temporada",
+      played: "Jugados",
+      wins: "Victorias",
+      draws: "Empates",
+      losses: "Derrotas",
+      goalsFor: "Goles a favor",
+      goalsAgainst: "Goles en contra",
+      goalDifference: "Diferencia de goles",
+      points: "Puntos",
+      pointsMatch: "Puntos / partido",
+      goalsForMatch: "Goles a favor / partido",
+      goalsAgainstMatch: "Goles en contra / partido",
+      winRate: "Victorias (%)",
+      contributingSeasons: "Temporadas con datos",
+      allMatches: "Todos los partidos",
+      partialSubtotals: "subtotales parciales",
+      splitCoverageIsUnavailableForThis: "La cobertura de desgloses no está disponible para esta selección. No se afirma un total de cero partidos.",
+      seasonPerformance: "Rendimiento por temporada",
+      noCompletedMatchesMatchThisSelection: "Ningún partido finalizado coincide con esta selección.",
+      sourcesAndSnapshot: "Fuentes y versión de datos",
+      sourceAttributionUnavailableForSomeData: "Atribución de fuente no disponible para algunos datos.",
+      snapshot: "Versión de datos",
+    },
     clHistory: {
       heading: "Historial de la Liga de Campeones", caption: "Partidos registrados; los datos pueden estar incompletos",
       season: "Temporada", played: "Jugados", won: "Ganados", drawn: "Empatados", lost: "Perdidos",
