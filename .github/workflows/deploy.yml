@@ -73,7 +73,6 @@ jobs:
           artifact-id: ${{ steps.catalog-provenance.outputs.artifact_id }}
           source-revision: ${{ steps.catalog-provenance.outputs.source_revision }}
           token: ${{ steps.catalog-read.outputs.token }}
-          catalog-path: verified-public-catalog
 
       - name: Apply migrations (dev)
         # CF_TOKEN_DEV is scoped to D1/Workers-KV/Workers-Scripts/Cache-Purge
@@ -233,7 +232,6 @@ jobs:
           artifact-id: ${{ steps.catalog-provenance.outputs.artifact_id }}
           source-revision: ${{ steps.catalog-provenance.outputs.source_revision }}
           token: ${{ steps.private-read.outputs.token }}
-          catalog-path: verified-public-catalog
 
       - name: Apply schema (dev)
         uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0

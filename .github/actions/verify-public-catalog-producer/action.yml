@@ -10,8 +10,6 @@ inputs:
     required: true
   token:
     required: true
-  catalog-path:
-    required: true
 runs:
   using: composite
   steps:
@@ -51,7 +49,7 @@ runs:
         repository: microbrewerGM/iammufc-platform
         run-id: ${{ inputs.run-id }}
         artifact-ids: ${{ inputs.artifact-id }}
-        path: ${{ inputs.catalog-path }}
+        path: verified-public-catalog
 
     - name: Verify producer artifact matches published catalog
       env:
