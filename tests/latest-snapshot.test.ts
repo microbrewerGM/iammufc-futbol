@@ -14,7 +14,7 @@ import app from "../worker/src/index";
 
 const SNAPSHOT = "a".repeat(64);
 const LATEST_SQL = /FROM snapshots ORDER BY created_at DESC LIMIT 1/;
-const LATEST_ROW = { snapshot_id: SNAPSHOT, sources_json: JSON.stringify({ "openfootball:CL:2025-26": "b".repeat(64) }) };
+const LATEST_ROW = { snapshot_id: SNAPSHOT, created_at: "2026-10-23T00:00:00.000Z", sources_json: JSON.stringify({ "openfootball:CL:2025-26": "b".repeat(64) }) };
 
 function fakeEnv() {
   const prepared: string[] = [];
