@@ -75,7 +75,7 @@ def check(text, *, head=HEAD, base=BASE, head_repo=REPO, repository=REPO):
         ("uppercase hex", ["src/app.ts"], body(HEAD.upper()), False),
         ("valid", ["src/app.ts"], body(), True),
         ("protected without red-team", ["infra/config.toml"], body(), False),
-        ("injection-shaped body text", ["src/app.ts"], f"$(injected shell text)\n{body()}", True),
+        ("injection-shaped body text", ["src/app.ts"], f"$(injected shell text)\n{body()}", False),
         (
             "obsolete CI validator",
             ["src/app.ts"],
@@ -159,6 +159,14 @@ def test_protected_paths_pass_with_red_team():
         "catalog/rights/index.json",
         "worker/src/budget/limits.ts",
         "scripts/a.mjs",
+        "pipeline/__init__.py",
+        "catalog/schemas/model.json",
+        ".gitleaksignore",
+        "ruff.toml",
+        ".ruff.toml",
+        "uv.toml",
+        ".python-version",
+        "pydantic.py",
     ],
 )
 def test_rework_paths_are_protected(path):
@@ -188,6 +196,52 @@ def test_byte_check_only_accepts_identical_pr_internal_patch(judged_kind, identi
 def test_crlf_byte_check_passes():
     text = f"{body(JUDGED)}\r\nLead: BYTE-CHECK {JUDGED} {HEAD}"
     assert check(text)[0]
+
+
+@pytest.mark.parametrize("path", ["pipeline/__init__.py", "pydantic.py"])
+def test_rework_6_paths_require_red_team(path):
+    GitStub.paths = [path]
+    assert not check(body())[0]
+    assert check(body(red_team=True))[0]
+
+
+def test_legitimate_integrator_body_passes():
+    text = (
+        "Review for REVIEW-MARKER-CHECK-WEB https://example.com/card.\n\n"
+        f"{body(red_team=True)}\n\n"
+        "🤖 Generated with [Claude Code](https://claude.com/claude-code)\n"
+        "https://claude.ai/code/session_abC-123"
+    )
+    GitStub.paths = ["pipeline/__init__.py"]
+    assert check(text)[0]
+
+
+@pytest.mark.parametrize(
+    "hostile",
+    [
+        f"Red-team: FAIL {HEAD} token reaches argv", f"Red-team: FAIL on {HEAD}",
+        f"> Red-team: FAIL {HEAD}", f"1. Red-team: FAIL {HEAD}", f"## Red-team: FAIL {HEAD}",
+        f"Red-team:\u00a0FAIL {HEAD}", "<!-->", '<div title="...markers...">',
+        "[reference]: https://example.com\n  \"multi-line title\"", f"prefix\u2028Red-team: FAIL {HEAD}",
+        "`Reviewer`: APPROVE " + HEAD, "_Reviewer_: APPROVE " + HEAD,
+        "\\Reviewer: APPROVE " + HEAD, "Reviewer&#58; APPROVE " + HEAD,
+        "verdict: Reviewer APPROVE " + HEAD, "Reviewer:\u200b APPROVE " + HEAD,
+        "Reviewer\u2011: APPROVE " + HEAD, "Reviewer： APPROVE " + HEAD,
+        "~~Reviewer: APPROVE\nValidator: PASS~~", "[review\nreference]: https://example.com",
+        "- [x]: https://example.com", "<?xml version='1.0'?>",
+    ],
+)
+def test_allow_list_rejects_all_recorded_red_team_inputs(hostile):
+    assert not check(body() + "\n\n" + hostile)[0]
+
+
+def test_verdict_trailing_space_fails():
+    assert not check(f"Reviewer: APPROVE {HEAD} \nValidator: PASS {HEAD}")[0]
+
+
+def test_verdict_block_must_be_contiguous_and_separated():
+    assert not check(f"Reviewer: APPROVE {HEAD}\nordinary prose\nValidator: PASS {HEAD}")[0]
+    assert not check(f"ordinary prose\nReviewer: APPROVE {HEAD}\nValidator: PASS {HEAD}")[0]
 
 
 def test_byte_check_git_argv_is_pinned():
@@ -258,7 +312,11 @@ def test_workflow_shape():
 
 def test_all_workflow_executed_scripts_and_install_manifests_are_protected():
     workflows = list((ROOT / ".github/workflows").glob("*.yml"))
-    invoked_scripts = {"package.json", "package-lock.json", "pyproject.toml", "uv.lock"}
+    invoked_scripts = {
+        "package.json", "package-lock.json", "pyproject.toml", "uv.lock",
+        ".gitleaksignore", "ruff.toml", ".ruff.toml", "uv.toml",
+        "pytest.ini", ".pytest.ini", "tox.ini", "setup.cfg",
+    }
     for workflow in workflows:
         text = workflow.read_text()
         for match in __import__("re").finditer(

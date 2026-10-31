@@ -1,26 +1,39 @@
 #!/usr/bin/env python3
-"""Validate review verdict markers against the exact pull request head."""
+"""Validate exact-head verdicts in an allow-listed pull request body.
+
+Allowed body lines are canonical verdicts (Reviewer: APPROVE, Validator: PASS,
+Red-team: PASS, or Lead: BYTE-CHECK with lowercase 40-hex SHAs), blank lines,
+the exact Claude Code footer, a Claude session URL, or plain ASCII prose using
+only letters, digits, spaces, and `,.;:()'\"/#?=%+@-`. Prose cannot contain
+verdict-related words. Verdict lines form one contiguous block separated from
+prose by blank lines.
+"""
 
 from __future__ import annotations
 
 import os
 import re
 import subprocess
-import unicodedata
 import json
+import unicodedata
 import urllib.error
 import urllib.request
 
 
-SHA = r"[0-9a-fA-F]{40}"
+SHA = r"[0-9a-f]{40}"
 SHA_RE = re.compile(rf"^{SHA}$")
 ROLES = ("Reviewer", "Validator", "Red-team")
 CANONICAL_MARKER = re.compile(
-    rf"^(?:(Reviewer): (APPROVE) ({SHA})|"
-    rf"(Validator|Red-team): (PASS) ({SHA})|"
-    rf"Lead: BYTE-CHECK ({SHA}) ({SHA}))$"
+    rf"^(?:Reviewer: APPROVE {SHA}|Validator: PASS {SHA}|"
+    rf"Red-team: PASS {SHA}|Lead: BYTE-CHECK {SHA} {SHA})$"
 )
-MARKER_SHAPE = re.compile(r"(?i)(reviewer|validator|red-team|lead)\s*\**\s*:")
+SESSION_URL = re.compile(r"^https://claude\.ai/code/session_[A-Za-z0-9_-]+$")
+PROSE_LINE = re.compile(r"^[A-Za-z0-9 ,.;:()'/#?=%+@-]*$")
+PROSE_FORBIDDEN = re.compile(
+    r"reviewer|validator|red-team|red team|redteam|lead:|approve|fail|reject|block|byte-check",
+    re.IGNORECASE,
+)
+FOOTER = "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
 PROTECTED_PREFIXES = (
     ".github/",
     ".claude/",
@@ -37,6 +50,8 @@ PROTECTED_PREFIXES = (
     "catalog/rights/",
     "catalog/schemas/",
     "pipeline/contracts/",
+    "pipeline/",
+    "catalog/",
 )
 PROTECTED_FILES = {
     ".mcp.json",
@@ -54,6 +69,7 @@ PROTECTED_FILES = {
     ".gitattributes",
     "tests/test_feasibility.py",
 }
+PROTECTED_FILES.update({".gitleaksignore", "ruff.toml", ".ruff.toml", "uv.toml", ".python-version"})
 PROTECTED_BASENAMES = {".pre-commit-config.yaml", "gemini.md", "copilot_instructions.md"}
 PROTECTED_BASENAMES.update({"conftest.py", "pytest.ini", ".pytest.ini", "tox.ini", "setup.cfg"})
 
@@ -77,6 +93,7 @@ def is_protected(path: str) -> bool:
             for prefix in ("vitest.config.", "vitest.workspace.", "vite.config.")
         )
         or basename.startswith(".yarnrc")
+        or ("/" not in normalized and basename.endswith(".py"))
         or normalized.startswith(PROTECTED_PREFIXES)
     )
 
@@ -101,32 +118,36 @@ def _normalized_body(body: str) -> str:
     return body.replace("\r\n", "\n").replace("\r", "\n")
 
 
-def _ambiguous_body(body: str) -> bool:
-    forbidden_chars = "\x0b\x0c\x85\u2028\u2029"
-    return (
-        "<!--" in body
-        or "\t" in body
-        or any(char in body for char in forbidden_chars)
-        or any(re.match(r"^\s*(?:`{3,}|~{3,})", line) for line in body.split("\n"))
-        or any(re.match(r"^\s*\[[^\]]+\]:", line) for line in body.split("\n"))
-        or re.search(r"<(?=[A-Za-z/!])", body) is not None
-    )
+def _allowed_line(line: str) -> bool:
+    if CANONICAL_MARKER.fullmatch(line) or not line or line == FOOTER or SESSION_URL.fullmatch(line):
+        return True
+    return bool(PROSE_LINE.fullmatch(line) and not PROSE_FORBIDDEN.search(line))
+
+
+def _allowed_body(body: str) -> bool:
+    lines = _normalized_body(body).split("\n")
+    if not all(_allowed_line(line) for line in lines):
+        return False
+    marker_indexes = [i for i, line in enumerate(lines) if CANONICAL_MARKER.fullmatch(line)]
+    if not marker_indexes:
+        return True
+    start, end = marker_indexes[0], marker_indexes[-1]
+    if marker_indexes != list(range(start, end + 1)):
+        return False
+    return (start == 0 or lines[start - 1] == "") and (end == len(lines) - 1 or lines[end + 1] == "")
 
 
 def _verdicts(body: str, sha: str, protected: bool) -> bool:
-    if _ambiguous_body(body):
+    if not _allowed_body(body):
         return False
     seen: dict[str, set[str]] = {role: set() for role in ROLES}
     for line in _normalized_body(body).split("\n"):
-        match = CANONICAL_MARKER.fullmatch(line)
-        if match:
-            reviewer, reviewer_token, reviewer_sha, role, token, marker, _, _ = match.groups()
-            if reviewer:
-                seen[reviewer].add(f"{reviewer_token} {reviewer_sha}")
-            elif role:
-                seen[role].add(f"{token} {marker}")
-        elif MARKER_SHAPE.search(line):
-            return False
+        if line.startswith("Reviewer:"):
+            seen["Reviewer"].add(line.removeprefix("Reviewer: "))
+        elif line.startswith("Validator:"):
+            seen["Validator"].add(line.removeprefix("Validator: "))
+        elif line.startswith("Red-team:"):
+            seen["Red-team"].add(line.removeprefix("Red-team: "))
 
     if seen["Reviewer"] != {f"APPROVE {sha}"} or seen["Validator"] != {f"PASS {sha}"}:
         return False
@@ -171,8 +192,6 @@ def check(
     if not head_repo or not repository or head_repo != repository:
         return False, "fork pull requests are not accepted"
     body = _normalized_body(body)
-    if _ambiguous_body(body):
-        return False, "body contains ambiguous markup"
     try:
         paths = changed_paths(base_sha, head_sha)
         if not paths:
@@ -181,10 +200,10 @@ def check(
         if _verdicts(body, head_sha, protected):
             return True, "current-head verdict markers found"
         for line in body.split("\n"):
-            match = CANONICAL_MARKER.fullmatch(line)
-            if not match or not match.group(7):
+            match = re.fullmatch(rf"Lead: BYTE-CHECK ({SHA}) ({SHA})", line)
+            if not match:
                 continue
-            judged, target = match.group(7), match.group(8)
+            judged, target = match.groups()
             if target.lower() != head_sha.lower() or not SHA_RE.fullmatch(judged):
                 continue
             if not _verdicts(body, judged, protected):
