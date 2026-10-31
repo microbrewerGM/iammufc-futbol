@@ -38,4 +38,6 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 tools/ci/review_markers.py
