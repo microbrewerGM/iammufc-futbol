@@ -25,8 +25,8 @@ describe("player trends table accessibility", () => {
   });
 
   it.each([
-    ["en", LOCALES.en, "No players have enough minutes to be ranked."],
-    ["es", LOCALES.es, "Ningún jugador tiene minutos suficientes para clasificarse."],
+    ["en", LOCALES.en, "No comparable players are available for 2024-25."],
+    ["es", LOCALES.es, "No hay jugadores comparables disponibles para 2024-25."],
   ])("renders a non-focusable status instead of an empty region when nothing ranks (%s)", (_n, locale, message) => {
     const html = render([row(a, 1, 100), row(b, 1, 200)], locale);
     expect(html).toContain(`<p role="status">${message}</p>`);
