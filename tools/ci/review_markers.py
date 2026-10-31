@@ -10,9 +10,9 @@ prose by blank lines.
 Stale canonical verdict lines must be replaced; an old verdict alongside a
 current one makes the allow-listed block invalid.
 
-Only worker/src/** (except security/ and budget/), tests/*.test.ts, docs/**,
-and the root README.md skip the red-team verdict. Every other changed path
-requires Red-team: PASS for the head. Prose deny words are not verdicts: a
+Only worker/src/views/**, worker/src/core/**, tests/*.test.ts, docs/**, and the
+root README.md skip the red-team verdict. Every other changed path requires
+Red-team: PASS for the head. Prose deny words are not verdicts: a
 human-written FAIL in prose is not machine-read; failed heads have no PASS
 line because the integrator does not write one for them.
 """
@@ -53,7 +53,13 @@ def needs_red_team(path: str) -> bool:
     if normalized.startswith("tests/") and normalized.endswith(".test.ts"):
         return False
     if normalized.startswith("worker/src/"):
-        return normalized.startswith(("worker/src/security/", "worker/src/budget/"))
+        if normalized in {
+            "worker/src/core/parser.ts",
+            "worker/src/core/question-triage-bridge.ts",
+            "worker/src/views/pages.ts",
+        }:
+            return True
+        return not normalized.startswith(("worker/src/views/", "worker/src/core/"))
     return True
 
 

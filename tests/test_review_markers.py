@@ -184,7 +184,16 @@ def test_crlf_byte_check_passes():
         ("nested/ruff.toml", True),
         ("new-top-level/file.ts", True),
         ("worker/src/security/x.ts", True),
+        ("worker/src/budget/x.ts", True),
+        ("worker/src/generated/catalog.json", True),
+        ("worker/src/generated/catalog-release.json", True),
+        ("worker/src/index.ts", True),
+        ("worker/src/other/x.ts", True),
+        ("worker/src/core/parser.ts", True),
+        ("worker/src/core/question-triage-bridge.ts", True),
+        ("worker/src/views/pages.ts", True),
         ("worker/src/views/x.ts", False),
+        ("worker/src/core/x.ts", False),
         ("tests/x.test.ts", False),
         ("docs/x.md", False),
         ("README.md", False),
@@ -577,3 +586,43 @@ def test_workflow_run_inputs_require_red_team_except_secret_free_vitest_tests():
     assert "pipeline/contracts/validate_public_catalog.py" in collected
     for path in collected:
         assert review_markers.needs_red_team(path), path
+
+
+def test_views_and_core_do_not_import_protected_worker_areas():
+    import posixpath
+
+    listing = stdlib_subprocess.Popen(
+        ["git", "ls-files", "-z"], cwd=ROOT, stdout=stdlib_subprocess.PIPE, text=True
+    )
+    stdout, _ = listing.communicate()
+    assert listing.returncode == 0
+    tracked = [path for path in stdout.split("\0") if path]
+    source_files = [
+        path for path in tracked
+        if path.startswith(("worker/src/views/", "worker/src/core/"))
+        and path.endswith((".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"))
+    ]
+    import_pattern = re.compile(
+        r"(?:\bfrom\s*|\bimport\s*\(|\brequire\s*\()\s*[\"'](\.[^\"']+)[\"']"
+    )
+    violations = []
+    excluded_importers = set()
+    for relative_path in source_files:
+        source = (ROOT / relative_path).read_text()
+        directory = posixpath.dirname(relative_path)
+        for specifier in import_pattern.findall(source):
+            resolved = posixpath.normpath(posixpath.join(directory, specifier))
+            if any(
+                component in {"security", "budget", "generated"}
+                for component in resolved.split("/")
+            ) or resolved == "worker/src/index" or resolved.startswith("worker/src/index/"):
+                if review_markers.needs_red_team(relative_path):
+                    excluded_importers.add(relative_path)
+                else:
+                    violations.append((relative_path, specifier))
+    assert not violations, violations
+    assert excluded_importers == {
+        "worker/src/core/parser.ts",
+        "worker/src/core/question-triage-bridge.ts",
+        "worker/src/views/pages.ts",
+    }
