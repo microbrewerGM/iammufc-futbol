@@ -23,16 +23,15 @@ def positive_int(value: str, name: str) -> int:
 
 
 def parse_statement_outputs(statement: Any) -> dict[str, str]:
-    v1_fields = {
+    v2_fields = {
         "statement_version", "catalog_contract_version", "source_revision", "builder",
         "builder_version", "artifact_sha256", "metric_count", "coverage_count", "validation_passed",
+        "producer_run_id", "producer_run_attempt", "producer_artifact_id",
     }
-    v2_fields = v1_fields | {"producer_run_id", "producer_run_attempt", "producer_artifact_id"}
     require(type(statement) is dict, "release statement must be an object")
     version = statement.get("statement_version")
-    require(type(version) is int and version in {1, 2}, "unsupported release statement version")
-    fields = v1_fields if version == 1 else v2_fields
-    require(set(statement) == fields, "release statement fields are invalid")
+    require(type(version) is int and version == 2, "unsupported release statement version")
+    require(set(statement) == v2_fields, "release statement fields are invalid")
     require(statement["catalog_contract_version"] == 1 and type(statement["catalog_contract_version"]) is int, "unsupported catalog contract")
     require(statement["builder"] == "iammufc-private-public-catalog", "unknown producer")
     require(statement["builder_version"] == version and type(statement["builder_version"]) is int, "builder version mismatch")
@@ -42,15 +41,14 @@ def parse_statement_outputs(statement: Any) -> dict[str, str]:
     for name in ("metric_count", "coverage_count"):
         require(type(statement[name]) is int and statement[name] > 0, f"invalid {name}")
     outputs = {"version": str(version)}
-    if version == 2:
-        for field, output in (
-            ("producer_run_id", "run_id"),
-            ("producer_run_attempt", "run_attempt"),
-            ("producer_artifact_id", "artifact_id"),
-        ):
-            require(type(statement[field]) is int and statement[field] > 0, f"invalid {field}")
-            outputs[output] = str(statement[field])
-        outputs["source_revision"] = statement["source_revision"]
+    for field, output in (
+        ("producer_run_id", "run_id"),
+        ("producer_run_attempt", "run_attempt"),
+        ("producer_artifact_id", "artifact_id"),
+    ):
+        require(type(statement[field]) is int and statement[field] > 0, f"invalid {field}")
+        outputs[output] = str(statement[field])
+    outputs["source_revision"] = statement["source_revision"]
     return outputs
 
 

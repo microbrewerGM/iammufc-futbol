@@ -98,7 +98,7 @@ describe.each(["en", "es"] as const)("%s example questions return fixture answer
       const rows = [...table!.matchAll(/<tbody>([\s\S]*?)<\/tbody>/g)][0]![1]!;
       expect([...rows.matchAll(/<tr>([\s\S]*?)<\/tr>/g)].map((match) => {
         const row = match[1]!;
-        return [row.match(/>(Alpha|Beta|Gamma)<\//)?.[1], row.match(/<td class="num">([^<]+)<\/td>/)?.[1]];
+        return [row.match(/>(Alpha|Beta|Gamma)<\//)?.[1], [...row.matchAll(/<td class="num">([^<]+)<\/td>/g)].at(-1)?.[1]];
       })).toEqual(example.order.map((name, index) => [name,
         language === "es" ? (example.metric === "minutes"
           ? example.values[index]!.replace(",", "") : example.values[index]!.replace(".", ",")) : example.values[index],

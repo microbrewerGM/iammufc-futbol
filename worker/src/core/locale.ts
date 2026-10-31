@@ -116,6 +116,8 @@ export interface Locale {
     seasonCol: string;
     playerCol: string;
     posCol: string;
+    rankCol: string;
+    resultCount: (returned: number, requested: number) => string;
     backToMatrix: string;
     fullSquadFor: (season: string) => string;
     artifactNote: string;
@@ -257,6 +259,8 @@ const EN: Locale = {
     seasonCol: "Season",
     playerCol: "Player",
     posCol: "Pos",
+    rankCol: "Rank",
+    resultCount: (returned, requested) => `Results shown: ${returned}; requested: ${requested}.`,
     backToMatrix: "Back to the coverage matrix",
     fullSquadFor: (s) => `Full squad for ${s}`,
     artifactNote: "identical questions produce this same key.",
@@ -401,6 +405,8 @@ const ES: Locale = {
     seasonCol: "Temporada",
     playerCol: "Jugador",
     posCol: "Pos",
+    rankCol: "Puesto",
+    resultCount: (returned, requested) => `Resultados mostrados: ${returned}; solicitados: ${requested}.`,
     backToMatrix: "Volver a la matriz de cobertura",
     fullSquadFor: (s) => `Plantilla completa de ${s}`,
     artifactNote: "preguntas idénticas producen esta misma clave.",

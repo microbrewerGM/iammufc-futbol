@@ -81,7 +81,7 @@ function validateRows(rows: unknown[], seasons: readonly string[], snapshotId: s
 /** Read totals against the latest snapshot, then load stage cells independently. */
 export async function clHistoryRead(env: Env, catalog: CompiledCatalog): Promise<{ result: CLHistoryResult; sourcesJson: unknown }> {
   const seasons = eligibleSeasons(catalog);
-  const statements = [env.DB.prepare("SELECT snapshot_id, sources_json FROM snapshots ORDER BY created_at DESC LIMIT 1")];
+  const statements = [env.DB.prepare("SELECT snapshot_id, created_at, sources_json FROM snapshots ORDER BY created_at DESC LIMIT 1")];
   if (seasons.length > 0) {
     const placeholders = seasons.map(() => "?").join(", ");
     statements.push(env.DB.prepare(
@@ -91,9 +91,10 @@ export async function clHistoryRead(env: Env, catalog: CompiledCatalog): Promise
     ).bind("CL", ...seasons));
   }
   const [latest, rowsResult] = await env.DB.batch(statements);
-  const meta = (latest?.results ?? [])[0] as { snapshot_id?: unknown; sources_json?: unknown } | undefined;
+  const meta = (latest?.results ?? [])[0] as { snapshot_id?: unknown; created_at?: unknown; sources_json?: unknown } | undefined;
   const snapshotId = meta?.snapshot_id;
-  if (typeof snapshotId !== "string" || !SNAPSHOT_RE.test(snapshotId)) {
+  const loadToken = meta?.created_at;
+  if (typeof snapshotId !== "string" || !SNAPSHOT_RE.test(snapshotId) || typeof loadToken !== "string" || loadToken.length === 0) {
     return { result: { snapshot_id: null, entries: [] }, sourcesJson: undefined };
   }
   if (seasons.length === 0) return { result: { snapshot_id: snapshotId, entries: [] }, sourcesJson: meta?.sources_json };
@@ -103,21 +104,27 @@ export async function clHistoryRead(env: Env, catalog: CompiledCatalog): Promise
   const stages = new Map<string, StageCode>();
   try {
     const stageResult = await env.DB.prepare(
-      `SELECT season, stage_reached, snapshot_id FROM cl_season_stage
-       WHERE season IN (${seasons.map(() => "?").join(", ")}) AND snapshot_id = ?
-       ORDER BY season DESC LIMIT ${seasons.length + 1}`,
+      `SELECT cl_season_stage.season, cl_season_stage.stage_reached, cl_season_stage.snapshot_id,
+              snapshots.created_at
+       FROM cl_season_stage JOIN snapshots ON snapshots.snapshot_id = cl_season_stage.snapshot_id
+       WHERE cl_season_stage.season IN (${seasons.map(() => "?").join(", ")})
+         AND cl_season_stage.snapshot_id = ?
+       ORDER BY cl_season_stage.season DESC LIMIT ${seasons.length + 1}`,
     ).bind(...seasons, snapshotId).all<unknown>();
     const stageRows = stageResult.results ?? [];
-    if (stageRows.length <= seasons.length) {
-      const seen = new Set<string>();
+    const tokenMatches = stageRows.every((value) => !!value && typeof value === "object" && !Array.isArray(value) &&
+      (value as Record<string, unknown>).created_at === loadToken);
+    if (stageRows.length <= seasons.length && tokenMatches) {
+      const counts = new Map<string, number>();
       for (const value of stageRows) {
         if (!value || typeof value !== "object" || Array.isArray(value)) continue;
         const row = value as Record<string, unknown>;
-        if (!validSeason(row.season) || !seasons.includes(row.season) || seen.has(row.season)) continue;
-        seen.add(row.season);
+        if (!validSeason(row.season) || !seasons.includes(row.season)) continue;
+        counts.set(row.season, (counts.get(row.season) ?? 0) + 1);
         if (row.snapshot_id === snapshotId && typeof row.stage_reached === "string" &&
             STAGE_CODES.has(row.stage_reached as StageCode)) stages.set(row.season, row.stage_reached as StageCode);
       }
+      for (const [season, count] of counts) if (count !== 1) stages.delete(season);
     }
   } catch {
     // Stage storage is optional for serving totals; unavailable cells stay null.
