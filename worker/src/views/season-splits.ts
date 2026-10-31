@@ -92,6 +92,6 @@ export function seasonSplitsBody(model: SeasonSplitView, locale: Locale): string
     return typeof value === "string" && value.trim() ? value : undefined;
   };
   const credits = [...new Set(lineage.map(creditFor).filter((v): v is string => v !== undefined))];
-  const sources = `<section aria-label="${strings.sourcesAndSnapshot}"><h2>${strings.sourcesAndSnapshot}</h2>${credits.map(c => `<p>${esc(c)}</p>`).join("")}${!lineage.length || lineage.some(ref => creditFor(ref) === undefined) ? `<p>${strings.sourceAttributionUnavailableForSomeData}</p>` : ""}<p>${strings.snapshot}: ${esc(result.snapshot_id)}</p></section>`;
+  const sources = `<section aria-label="${strings.sourcesAndSnapshot}"><h2>${strings.sourcesAndSnapshot}</h2>${credits.map(c => `<p>${esc(c)}</p>`).join("")}${!lineage.length || lineage.some(ref => creditFor(ref) === undefined) ? `<p>${strings.sourceAttributionUnavailableForSomeData}</p>` : ""}<p class="season-splits-snapshot">${strings.snapshot}: ${esc(result.snapshot_id)}</p></section>`;
   return `<h1>${title}</h1>${form}${summary}${partial}${coverageSummary}${coverage}${table}${method}${sources}`;
 }

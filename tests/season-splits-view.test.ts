@@ -13,6 +13,16 @@ const render = (value=model(), code: "en"|"es"="en") => seasonSplitsBody(value,L
 const tableRow = (html:string, name:string) => html.match(new RegExp(`<tr><th scope="row">${name}</th>[\\s\\S]*?</tr>`))?.[0] ?? "";
 
 describe("season split body", () => {
+  it.each(["en", "es"] as const)("preserves the full escaped snapshot in %s", code => {
+    const value = model();
+    const snapshot = "a".repeat(64) + "<>&";
+    value.result!.snapshot_id = snapshot;
+    const body = render(value, code);
+    expect(body).toContain(`class="season-splits-snapshot">${LOCALES[code].strings.seasonSplits.snapshot}: ${"a".repeat(64)}&lt;&gt;&amp;</p>`);
+    expect(body).toContain('class="comparison-table" role="region" tabindex="0"');
+    expect(body).not.toContain(snapshot);
+  });
+
   it.each(["en","es"] as const)("renders oracle venue totals and rates in %s", code => {
     const body=render(model(),code);
     expect(body).toContain(code==="en"?"Rows combine the selected seasons.":"Las filas combinan las temporadas seleccionadas.");
