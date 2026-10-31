@@ -256,7 +256,7 @@ function dataTable(
     )
     .join("");
   return `<h3>${esc(t.dataHeading)}</h3>
-<table><thead><tr><th class="num">${esc(t.rankCol)}</th><th>${esc(t.playerCol)}</th><th>${esc(t.posCol)}</th><th class="num">${esc(metricLbl)}</th></tr></thead>
+<table><thead><tr><th class="num" scope="col">${esc(t.rankCol)}</th><th>${esc(t.playerCol)}</th><th>${esc(t.posCol)}</th><th class="num">${esc(metricLbl)}</th></tr></thead>
 <tbody>${body}</tbody></table>`;
 }
 
