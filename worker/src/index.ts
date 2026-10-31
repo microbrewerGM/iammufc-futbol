@@ -1220,7 +1220,7 @@ function registerLocaleRoutes(code: LocaleCode) {
     let snapshot: string | null = null;
     let body: string;
     let credits: (string | null | undefined)[] = [];
-    let csvEntries: { state: "observed" | "partial" | "gap"; row?: { season: string; played: number; won: number; drawn: number; lost: number; goals: number; goals_against: number; lineage?: readonly string[] }; season?: string }[] | null = null;
+    let csvEntries: { state: "observed" | "partial" | "gap"; row?: { season: string; played: number; won: number; drawn: number; lost: number; goals: number; goals_against: number; stage_reached?: string | null; lineage?: readonly string[] }; season?: string }[] | null = null;
     let csvCredits: Record<string, string> = {};
     try {
       const [publication, read] = await Promise.all([currentPublication(c.env), clHistoryRead(c.env, decodedCatalog)]);
@@ -1250,18 +1250,18 @@ function registerLocaleRoutes(code: LocaleCode) {
             competition: "CL", dimensions: [], filters: {}, viz: "table", limit: 1 }, code).state;
           if (!cell || !["available", "computable_now_queued"].includes(state)) return { state: "gap" as const, season: entry.row.season };
           if (hashKeys[`openfootball:CL:${entry.row.season}`] === undefined) {
-            return { state: "observed" as const, row: { ...entry.row, lineage: [] } };
+            return { state: "observed" as const, row: { ...entry.row, stage_reached: entry.row.stage_reached ?? null, lineage: [] } };
           }
           const ref = `${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`;
           const credit = (code === "es" ? cell.attribution_text_es ?? cell.attribution_text : cell.attribution_text) ?? cell.source_name;
           if (credit.trim()) credits.push(credit);
-          return { state: "partial" as const, row: { ...entry.row, lineage: [ref] } };
+          return { state: "partial" as const, row: { ...entry.row, stage_reached: entry.row.stage_reached ?? null, lineage: [ref] } };
         });
         csvEntries = mapped;
-        csvCredits = Object.fromEntries(cells.map((cell) => [
-          `${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`,
-          (code === "es" ? cell.attribution_text_es ?? cell.attribution_text : cell.attribution_text) ?? cell.source_name,
-        ]));
+        csvCredits = Object.fromEntries(cells.flatMap((cell) => {
+          const credit = (code === "es" ? cell.attribution_text_es ?? cell.attribution_text : cell.attribution_text) ?? cell.source_name;
+          return credit.trim() ? [[`${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`, credit]] : [];
+        }));
         body = championsLeagueHistoryBody({ entries: mapped, credits: csvCredits, snapshotDate: publication.loadedAt.slice(0, 10) }, locale.strings.clHistory, code);
       }
     } catch {
@@ -1277,15 +1277,19 @@ function registerLocaleRoutes(code: LocaleCode) {
         return `"${text.replace(/"/g, '""')}"`;
       };
       const rows = [
-        [strings.season, strings.played, strings.won, strings.drawn, strings.lost, strings.goalsFor, strings.goalsAgainst, code === "es" ? "Atribución" : "Attribution"],
+        [strings.season, strings.stage, strings.played, strings.won, strings.drawn, strings.lost, strings.goalsFor, strings.goalsAgainst, code === "es" ? "Atribución" : "Attribution"],
         ...csvEntries.map((entry) => {
-          if (entry.state === "gap") return [entry.season ?? "", "", "", "", "", "", "", ""];
+          if (entry.state === "gap") return [entry.season ?? "", "", "", "", "", "", "", "", ""];
           const row = entry.row!;
           const refs = Array.isArray(row.lineage) ? row.lineage.filter((ref) => typeof ref === "string" && ref.trim()) : [];
           const attribution = refs.length > 0 && refs.every((ref) => Object.hasOwn(csvCredits, ref))
             ? [...new Set(refs.map((ref) => csvCredits[ref]))].join("; ")
             : "";
-          return [row.season, ...(attribution ? [row.played, row.won, row.drawn, row.lost, row.goals, row.goals_against] : ["", "", "", "", "", ""]), attribution];
+          const stageCode = row.stage_reached;
+          const stage = typeof stageCode === "string" && Object.hasOwn(strings.stages, stageCode)
+            ? strings.stages[stageCode as keyof typeof strings.stages]
+            : "";
+          return [row.season, attribution ? stage : "", ...(attribution ? [row.played, row.won, row.drawn, row.lost, row.goals, row.goals_against] : ["", "", "", "", "", ""]), attribution];
         }),
       ];
       return new Response(`${rows.map((row) => row.map((cell) => csvCell(cell)).join(",")).join("\r\n")}\r\n`, {
