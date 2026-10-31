@@ -118,7 +118,7 @@ def _verify_after_download(steps: list[dict]) -> bool:
     for index, step in enumerate(steps[download + 1 :], start=download + 1):
         run = step.get("run", "")
         if ".github/scripts/verify_public_catalog_producer.py artifact" in run:
-            if "if" in step or step.get("continue-on-error") == "true":
+            if "if" in step or "continue-on-error" in step:
                 return False
             return not any(
                 item.get("uses", "").startswith("cloudflare/wrangler-action")
@@ -156,6 +156,11 @@ def test_catalog_provenance_action_verifies_download_before_any_workflow_deploy(
                 i for i, step in enumerate(steps)
                 if step.get("uses") == "./.github/actions/verify-public-catalog-producer"
             ]
+            if any(
+                "if" in steps[index] or "continue-on-error" in steps[index]
+                for index in verify_indices
+            ):
+                return False
             if any(has_deploy(step) for step in steps):
                 if not verify_indices or any(
                     has_deploy(step) and not any(verify_index < i for verify_index in verify_indices)
@@ -178,12 +183,33 @@ def test_catalog_provenance_action_verifies_download_before_any_workflow_deploy(
     }
     assert not workflow_is_safe(negative)
 
+    for key, value in (("if", "false"), ("continue-on-error", "${{ true }}")):
+        unsafe_call = {
+            "jobs": {
+                "unsafe": {"steps": [
+                    {"uses": f"cloudflare/wrangler-action@sha"},
+                    {"uses": "./.github/actions/verify-public-catalog-producer", key: value},
+                ]}
+            }
+        }
+        assert not workflow_is_safe(unsafe_call)
+
     action_negative = [
         {"uses": "actions/download-artifact@sha"},
         {"run": "wrangler deploy"},
         {"run": "python3 .github/scripts/verify_public_catalog_producer.py artifact"},
     ]
     assert not _verify_after_download(action_negative)
+
+    for key, value in (("if", "false"), ("continue-on-error", "${{ true }}")):
+        action_with_unsafe_verify = [
+            {"uses": "actions/download-artifact@sha"},
+            {
+                "run": "python3 .github/scripts/verify_public_catalog_producer.py artifact",
+                key: value,
+            },
+        ]
+        assert not _verify_after_download(action_with_unsafe_verify)
 
 
 def test_private_seed_consumer_applies_schema_and_migration_before_private_seed() -> None:
