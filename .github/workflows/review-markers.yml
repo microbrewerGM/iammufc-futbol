@@ -3,11 +3,15 @@ name: Review markers
 on:
   pull_request_target:
     branches: [main]
-    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+    types: [opened, synchronize, reopened, edited]
 
 permissions:
   contents: read
   pull-requests: read
+
+concurrency:
+  group: review-markers-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   review-markers:
@@ -20,6 +24,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Fetch pull request head objects
         env:
@@ -31,4 +36,6 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_BODY: ${{ github.event.pull_request.body }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: python3 tools/ci/review_markers.py

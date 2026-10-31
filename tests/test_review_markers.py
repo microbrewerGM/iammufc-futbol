@@ -13,32 +13,39 @@ review_markers = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 SPEC.loader.exec_module(review_markers)
 
-HEAD = "a" * 40
-BASE = "b" * 40
-OTHER = "c" * 40
+HEAD, BASE, JUDGED, MERGE = (letter * 40 for letter in "abcd")
+REPO = "microbrewerGM/iammufc-futbol"
 
 
 class GitStub:
     paths = ["src/app.ts"]
-    ancestry = True
+    ancestry: dict[tuple[str, str], int] = {}
+    diffs: dict[tuple[str, str], str] = {}
     fail_diff = False
 
     @classmethod
     def run(cls, argv, **kwargs):
-        if argv[1] == "diff":
+        args = argv[1:]
+        if args[0] == "diff" and "--name-only" in args:
             if cls.fail_diff:
                 return subprocess.CompletedProcess(argv, 2, "", "stubbed diff failure")
-            return subprocess.CompletedProcess(argv, 0, "\0".join(cls.paths) + "\0", "")
-        if argv[1] == "merge-base":
-            code = 0 if cls.ancestry else 1
+            return subprocess.CompletedProcess(argv, 0, "\0".join(cls.paths) + ("\0" if cls.paths else ""), "")
+        if args[0] == "diff":
+            left, right = args[-2:]
+            return subprocess.CompletedProcess(argv, 0, cls.diffs.get((left, right), "patch"), "")
+        if args[:2] == ["merge-base", "--is-ancestor"]:
+            code = cls.ancestry.get((args[2], args[3]), 1)
             return subprocess.CompletedProcess(argv, code, "", "")
+        if args[0] == "merge-base":
+            return subprocess.CompletedProcess(argv, 0, MERGE + "\n", "")
         raise AssertionError(argv)
 
 
 @pytest.fixture(autouse=True)
 def stub_git(monkeypatch):
     GitStub.paths = ["src/app.ts"]
-    GitStub.ancestry = True
+    GitStub.ancestry = {(JUDGED, HEAD): 0}
+    GitStub.diffs = {(MERGE, JUDGED): "same", (BASE, HEAD): "same"}
     GitStub.fail_diff = False
     monkeypatch.setattr(review_markers.subprocess, "run", GitStub.run)
 
@@ -50,65 +57,107 @@ def body(sha=HEAD, *, red_team=False):
     return "\n".join(lines)
 
 
+def check(text, *, head=HEAD, base=BASE, head_repo=REPO, repository=REPO):
+    return review_markers.check(base, head, text, head_repo, repository)
+
+
 @pytest.mark.parametrize(
     ("description", "paths", "text", "expected"),
     [
         ("missing marker", ["src/app.ts"], f"Validator: PASS {HEAD}", False),
-        ("stale SHA", ["src/app.ts"], body(OTHER), False),
+        ("stale SHA", ["src/app.ts"], body("e" * 40), False),
         ("lowercase hex", ["src/app.ts"], body(HEAD), True),
         ("uppercase hex", ["src/app.ts"], body(HEAD.upper()), True),
         ("valid", ["src/app.ts"], body(), True),
         ("protected without red-team", ["infra/config.toml"], body(), False),
-        (
-            "byte-check line",
-            ["src/app.ts"],
-            f"{body(BASE)}\nLead: BYTE-CHECK {BASE} {HEAD}",
-            True,
-        ),
-        (
-            "injection-shaped body text",
-            ["src/app.ts"],
-            f"$(injected shell text)\n{body()}",
-            True,
-        ),
+        ("injection-shaped body text", ["src/app.ts"], f"$(injected shell text)\n{body()}", True),
+        ("obsolete CI validator", ["src/app.ts"], f"Reviewer: APPROVE {HEAD}\nValidator: CI 123 on {HEAD}", False),
+        ("negative verdict", ["src/app.ts"], body() + f"\nValidator: FAIL {HEAD}", False),
+        ("conflicting role verdicts", ["src/app.ts"], body() + f"\nReviewer: BLOCK {HEAD}", False),
+        ("fork PR", ["src/app.ts"], body(), False),
+        ("markers hidden in comments and fences", ["src/app.ts"], f"<!--\n{body()}\n-->\n```\n{body()}\n```", False),
     ],
 )
 def test_verdict_cases(description, paths, text, expected):
     GitStub.paths = paths
-    ok, _ = review_markers.check(BASE, HEAD, text)
-    assert ok is expected, description
+    repo = "fork/iammufc-futbol" if description == "fork PR" else REPO
+    assert check(text, head_repo=repo)[0] is expected, description
 
 
 def test_protected_paths_pass_with_red_team():
     GitStub.paths = ["infra/config.toml"]
-    assert review_markers.check(BASE, HEAD, body(red_team=True))[0]
+    assert check(body(red_team=True))[0]
 
 
-def test_byte_check_requires_ancestor():
-    GitStub.ancestry = False
-    text = f"{body(BASE)}\nLead: BYTE-CHECK {BASE} {HEAD}"
-    assert not review_markers.check(BASE, HEAD, text)[0]
+@pytest.mark.parametrize("path", [
+    "package.json", "package-lock.json", "pyproject.toml", "uv.lock", ".gitleaks.toml",
+    ".gitignore", "catalog/rights/index.json", "worker/src/budget/limits.ts", "scripts/a.mjs",
+])
+def test_rework_paths_are_protected(path):
+    assert review_markers.is_protected(path)
+
+
+@pytest.mark.parametrize("judged_kind,identical,expected", [
+    ("equal_base", True, False),
+    ("old_main", True, False),
+    ("internal_same", True, True),
+    ("internal_different", False, False),
+])
+def test_byte_check_only_accepts_identical_pr_internal_patch(judged_kind, identical, expected):
+    judged = BASE if judged_kind == "equal_base" else JUDGED
+    if judged_kind == "old_main":
+        GitStub.ancestry[(judged, BASE)] = 0
+    GitStub.ancestry[(judged, HEAD)] = 0
+    GitStub.diffs[(MERGE, judged)] = "same" if identical else "different"
+    GitStub.diffs[(BASE, HEAD)] = "same"
+    text = f"{body(judged)}\nLead: BYTE-CHECK {judged} {HEAD}"
+    assert check(text)[0] is expected
+
+
+def test_head_negative_verdict_fails_even_when_judged_markers_pass():
+    text = f"{body(JUDGED)}\nValidator: CHANGES {HEAD}\nLead: BYTE-CHECK {JUDGED} {HEAD}"
+    assert not check(text)[0]
 
 
 def test_empty_diff_and_git_error_fail_closed():
     GitStub.paths = []
-    assert not review_markers.check(BASE, HEAD, body())[0]
+    assert not check(body())[0]
     GitStub.fail_diff = True
-    assert not review_markers.check(BASE, HEAD, body())[0]
+    assert not check(body())[0]
 
 
 def test_invalid_sha_fails_closed():
-    assert not review_markers.check("missing", HEAD, body())[0]
+    assert not check(body(), base="missing")[0]
 
 
 def test_workflow_shape():
     workflow = (ROOT / ".github/workflows/review-markers.yml").read_text()
     assert "pull_request_target:" in workflow
-    assert "types: [opened, synchronize, reopened, edited, labeled, unlabeled]" in workflow
+    assert "types: [opened, synchronize, reopened, edited]" in workflow
     assert "ref: ${{ github.event.pull_request.base.sha }}" in workflow
+    assert "persist-credentials: false" in workflow
     assert "uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" in workflow
     assert "permissions:\n  contents: read\n  pull-requests: read" in workflow
+    assert "concurrency:" in workflow and "review-markers-${{ github.event.pull_request.number }}" in workflow
+    assert "HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}" in workflow
+    assert "GITHUB_REPOSITORY: ${{ github.repository }}" in workflow
     assert "${{ github.event.pull_request.body }}" in workflow
     for line in workflow.splitlines():
         if line.lstrip().startswith("run:"):
             assert "${{" not in line
+
+
+def test_all_workflow_executed_scripts_and_install_manifests_are_protected():
+    workflows = list((ROOT / ".github/workflows").glob("*.yml"))
+    invoked_scripts = {"package.json", "package-lock.json", "pyproject.toml", "uv.lock"}
+    for workflow in workflows:
+        text = workflow.read_text()
+        for match in __import__("re").finditer(r"\b(?:node|python3?|uv run python)\s+([\w./-]+\.(?:py|mjs|js|cjs))", text):
+            invoked_scripts.add(match.group(1))
+        if "npm ci" in text or "npm install" in text:
+            invoked_scripts.update(("package.json", "package-lock.json"))
+        if "uv sync" in text:
+            invoked_scripts.update(("pyproject.toml", "uv.lock"))
+    repo_files = {p.relative_to(ROOT).as_posix() for p in ROOT.rglob("*") if p.is_file()}
+    missing = sorted(path for path in invoked_scripts if path in repo_files and not review_markers.is_protected(path))
+    assert not missing, f"workflow inputs must be protected: {missing}"
