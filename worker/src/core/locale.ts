@@ -102,6 +102,14 @@ export interface Locale {
     playerTrendsUnknown: string;
     playerTrendsUnavailable: string;
     playerTrendsPlayerLabel: string;
+    playerTrendsAdditionalPlayerLabel: (number: number) => string;
+    playerTrendsMetricLabel: string;
+    playerTrendsNormalizationLabel: string;
+    playerTrendsGoals: string;
+    playerTrendsAssists: string;
+    playerTrendsTotal: string;
+    playerTrendsPer90: string;
+    playerTrendsCompareLink: string;
     playerTrendsFromLabel: string;
     playerTrendsThroughLabel: string;
     playerTrendsSubmit: string;
@@ -290,6 +298,14 @@ const EN: Locale = {
     playerTrendsUnknown: "Player not found.",
     playerTrendsUnavailable: "Trend unavailable.",
     playerTrendsPlayerLabel: "Player",
+    playerTrendsAdditionalPlayerLabel: (number) => `Player ${number} (optional)`,
+    playerTrendsMetricLabel: "Metric",
+    playerTrendsNormalizationLabel: "Normalization",
+    playerTrendsGoals: "Goals",
+    playerTrendsAssists: "Assists",
+    playerTrendsTotal: "Total",
+    playerTrendsPer90: "Per 90 minutes",
+    playerTrendsCompareLink: "Compare the full squad",
     playerTrendsFromLabel: "From",
     playerTrendsThroughLabel: "Through",
     playerTrendsSubmit: "View trend",
@@ -482,6 +498,14 @@ const ES: Locale = {
     playerTrendsUnknown: "No se encontró el jugador.",
     playerTrendsUnavailable: "La evolución no está disponible.",
     playerTrendsPlayerLabel: "Jugador",
+    playerTrendsAdditionalPlayerLabel: (number) => `Jugador ${number} (opcional)`,
+    playerTrendsMetricLabel: "Métrica",
+    playerTrendsNormalizationLabel: "Normalización",
+    playerTrendsGoals: "Goles",
+    playerTrendsAssists: "Asistencias",
+    playerTrendsTotal: "Total",
+    playerTrendsPer90: "Por 90 minutos",
+    playerTrendsCompareLink: "Comparar toda la plantilla",
     playerTrendsFromLabel: "Desde",
     playerTrendsThroughLabel: "Hasta",
     playerTrendsSubmit: "Ver evolución",

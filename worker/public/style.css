@@ -219,6 +219,11 @@ p { margin: var(--space-2) 0; }
 
 form { display: flex; gap: var(--space-2); flex-wrap: wrap; }
 
+.player-trends-form { margin-block: var(--space-4); }
+.player-trends-form label { display: flex; flex: 1 1 12rem; flex-direction: column; gap: var(--space-1); }
+.player-trends-form button:focus-visible,
+.player-trends-form a:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+
 input[type="text"], input[type="number"], select {
   flex: 1 1 16rem;
   min-width: 0;

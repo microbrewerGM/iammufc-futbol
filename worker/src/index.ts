@@ -25,6 +25,7 @@ import {
   currentSnapshot,
   playerRangeFacts,
   playerRangeIdentityCatalog,
+  playerChoices,
   savePlayerRangeHistory,
   enforceBudget,
   clearQuestionHistory,
@@ -813,7 +814,16 @@ function registerLocaleRoutes(code: LocaleCode) {
       const facts = await playerTrendsIdentityLabels(c.env, request.person_ids);
       if (facts.length !== request.person_ids.length || facts.some(person => !person.label?.trim())) return renderError(unknown, 404);
       const credits = Object.fromEntries(catalog.coverage.map(cell => [`${cell.source_id}:${cell.attribution_asset ?? cell.source_name}`, locale.code === "es" ? cell.attribution_text_es ?? cell.attribution_text ?? "" : cell.attribution_text ?? ""]));
-      const form = `<form method="get" action="/${locale.code}/players/trends"><input type="hidden" name="schema_version" value="1"><input type="hidden" name="competition" value="PL"><label>${esc(t.playerTrendsPlayerLabel)}<select name="person_ids">${facts.map(person => `<option value="${esc(person.person_id)}"${person.person_id === request!.person_ids[0] ? " selected" : ""}>${esc(person.label)}</option>`).join("")}</select></label><label>${esc(t.playerTrendsFromLabel)}<select name="start_season">${eligibleSeasons.map(season => `<option value="${esc(season)}"${season === request!.seasons[0] ? " selected" : ""}>${esc(season)}</option>`).join("")}</select></label><label>${esc(t.playerTrendsThroughLabel)}<select name="end_season">${eligibleSeasons.map(season => `<option value="${esc(season)}"${season === request!.seasons[request!.seasons.length - 1] ? " selected" : ""}>${esc(season)}</option>`).join("")}</select></label><button type="submit">${esc(t.playerTrendsSubmit)}</button></form>`;
+      const selectedPeople = request.person_ids;
+      const choices = await playerChoices(c.env, snapshot, { seasons: request.seasons, competition: "PL" });
+      const playerSelects = Array.from({ length: 5 }, (_, index) => {
+        const label = index === 0 ? t.playerTrendsPlayerLabel : t.playerTrendsAdditionalPlayerLabel(index + 1);
+        const selectedId = selectedPeople[index];
+        const placeholder = `<option value="" selected disabled>${esc(label)}</option>`;
+        const uniqueOptions = choices.map(person => `<option value="${esc(person.person_id)}"${person.person_id === selectedId ? " selected" : ""}>${esc(person.label)}</option>`).join("");
+        return `<label for="trend-player-${index + 1}">${esc(label)}<select id="trend-player-${index + 1}" name="person_ids"${index < 2 ? " required" : ""}>${selectedId ? uniqueOptions : placeholder + uniqueOptions}</select></label>`;
+      }).join("");
+      const form = `<form class="player-trends-form" method="get" action="/${locale.code}/players/trends"><input type="hidden" name="schema_version" value="1"><input type="hidden" name="competition" value="PL">${playerSelects}<label for="trend-metric">${esc(t.playerTrendsMetricLabel)}<select id="trend-metric" name="metric"><option value="goals"${request.metric === "goals" ? " selected" : ""}>${esc(t.playerTrendsGoals)}</option><option value="assists"${request.metric === "assists" ? " selected" : ""}>${esc(t.playerTrendsAssists)}</option></select></label><label for="trend-normalization">${esc(t.playerTrendsNormalizationLabel)}<select id="trend-normalization" name="normalization"><option value="total"${request.normalization === "total" ? " selected" : ""}>${esc(t.playerTrendsTotal)}</option><option value="per90"${request.normalization === "per90" ? " selected" : ""}>${esc(t.playerTrendsPer90)}</option></select></label><label for="trend-start-season">${esc(t.playerTrendsFromLabel)}<select id="trend-start-season" name="start_season">${eligibleSeasons.map(season => `<option value="${esc(season)}"${season === request!.seasons[0] ? " selected" : ""}>${esc(season)}</option>`).join("")}</select></label><label for="trend-end-season">${esc(t.playerTrendsThroughLabel)}<select id="trend-end-season" name="end_season">${eligibleSeasons.map(season => `<option value="${esc(season)}"${season === request!.seasons[request!.seasons.length - 1] ? " selected" : ""}>${esc(season)}</option>`).join("")}</select></label><button type="submit">${esc(t.playerTrendsSubmit)}</button><a href="/${locale.code}/compare">${esc(t.playerTrendsCompareLink)}</a></form>`;
       const body = form + playerTrendsBody({ ...result, ...(leaders ? { leaders } : {}), people: facts, credits }, {}, locale);
       const canonical = new URLSearchParams(); canonical.set("schema_version", "1"); canonical.set("competition", "PL"); request.person_ids.forEach(id => canonical.append("person_ids", id)); request.seasons.forEach(season => canonical.append("seasons", season)); canonical.set("metric", request.metric); canonical.set("normalization", request.normalization); canonical.set("min_minutes", String(request.min_minutes)); canonical.set("viz", request.viz);
       const res = html(page(body, { title: locale.strings.playerTrendsLink, locale, unprefixedPath: `/players/trends?${canonical}`, snapshotId: snapshot }));
