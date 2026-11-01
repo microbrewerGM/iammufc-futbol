@@ -54,7 +54,7 @@ describe("empty per-90 leaderboard season detail", () => {
     const html = await response.text();
     expect(response.status).toBe(200);
     expect(html).toContain(`<p role="status">${message}</p>`);
-    expect(html).toMatch(/<select name="end_season">[\s\S]*?<option value="2024-25" selected>2024-25<\/option>[\s\S]*?<\/select>/);
+    expect(html).toMatch(/<select id="trend-end-season" name="end_season">[\s\S]*?<option value="2024-25" selected>2024-25<\/option>[\s\S]*?<\/select>/);
   });
 
   it("escapes a crafted season in the status message", () => {
