@@ -54,7 +54,7 @@ jobs:
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
           RUNNER_TEMP: ${{ runner.temp }}
         run: node scripts/gauntlet-capture.mjs
-      - name: Add blinded pairing hash to summary
+      - name: Add dev page count to summary
         run: cat "$RUNNER_TEMP/summary.txt" >> "$GITHUB_STEP_SUMMARY"
       - name: Upload encrypted captures
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
