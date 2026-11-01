@@ -22,7 +22,7 @@
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "0.21.3",
     "@cloudflare/workers-types": "5.20260817.1",
-    "playwright": "1.63.0",
+    "playwright": "1.64.1",
     "typescript": "5.9.3",
     "vitest": "4.1.12",
     "wrangler": "4.123.0"
