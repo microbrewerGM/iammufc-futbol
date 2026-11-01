@@ -47,12 +47,13 @@ describe("player trends form", () => {
     expect(body).toContain("<option value=\"fpl:code:1\" selected><Alex></option>");
   });
 
-  it.each([2, 3, 4, 5])("submits %i selected players from rendered markup; omitted optionals produce no blank person_ids", async count => {
+  it.each([2, 3, 4, 5])("renders each of %i requested players selected and submits them; omitted optionals produce no blank person_ids", async count => {
     const f = fixture(); activeEnv = f.env;
     const ids = Array.from({ length: count }, (_, i) => `fpl:code:${i + 1}`);
     const rendered = decode(await (await route("en", queryFor(ids))).text());
     const selects = [...rendered.matchAll(/<select id="trend-player-(\d)" name="person_ids"([^>]*)>([\s\S]*?)<\/select>/g)];
     expect(selects).toHaveLength(5);
+    ids.forEach((id, index) => expect(selects[index]![3]).toMatch(new RegExp(`<option value="${id}" selected>`)));
     const submitted = new URLSearchParams();
     for (const [, , attrs, options] of selects) {
       const selected = [...options!.matchAll(/<option value="([^"]*)"([^>]*)>/g)].find(match => match[2]!.includes("selected"));
@@ -66,6 +67,25 @@ describe("player trends form", () => {
     expect(response.status).toBe(200);
     const result = decode(await response.text());
     for (const id of ids) expect(result).toMatch(new RegExp(`<option value="${id}" selected>`));
+  });
+
+  it("keeps a requested player selected when that player is absent from choices", async () => {
+    const f = fixture(); activeEnv = f.env;
+    f.sqlite.prepare("UPDATE player_season_stats SET minutes = 0 WHERE player_id = 'p2'").run();
+    const body = decode(await (await route("en", queryFor(["fpl:code:1", "fpl:code:2"]))).text());
+    const second = new RegExp('<select id="trend-player-2" name="person_ids"[^>]*>([\\s\\S]*?)</select>').exec(body)?.[1];
+    expect(second).toContain('<option value="fpl:code:2" selected>Blair</option>');
+    expect([...second!.matchAll(/value="fpl:code:2"/g)]).toHaveLength(1);
+  });
+
+  it("accepts a different available player selected in the form", async () => {
+    const f = fixture(); activeEnv = f.env;
+    const rendered = decode(await (await route("en", queryFor(["fpl:code:1", "fpl:code:2"]))).text());
+    const changed = rendered.replace('<option value="fpl:code:2" selected>Blair</option>', '<option value="fpl:code:2">Blair</option><option value="fpl:code:3" selected>Casey</option>');
+    const second = new RegExp('<select id="trend-player-2" name="person_ids"[^>]*>([\\s\\S]*?)</select>').exec(changed)?.[1];
+    expect(second).toContain('<option value="fpl:code:3" selected>Casey</option>');
+    const submitted = queryFor(["fpl:code:1", "fpl:code:3"]);
+    expect((await route("en", submitted)).status).toBe(200);
   });
 
   it("limits the form to five native single-select controls and the existing route rejects a sixth", async () => {
