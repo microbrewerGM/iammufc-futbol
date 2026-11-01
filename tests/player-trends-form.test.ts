@@ -29,7 +29,7 @@ const queryFor = (ids: string[]) => {
   const q = new URLSearchParams("schema_version=1&competition=PL&metric=assists&normalization=per90&start_season=2023-24&end_season=2023-24");
   ids.forEach(id => q.append("person_ids", id)); return q;
 };
-const decode = (html: string) => html.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+const decode = (html: string) => html.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
 
 describe("player trends form", () => {
   it.each(["en", "es"])("renders contract-matching selected metric and normalization, labels, and localized compare link in %s", async locale => {
