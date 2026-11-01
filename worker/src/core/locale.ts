@@ -113,6 +113,7 @@ export interface Locale {
     playerTrendsFromLabel: string;
     playerTrendsThroughLabel: string;
     playerTrendsSubmit: string;
+    playerTrendsInstruction: string;
     opponentHistoryTitle: string;
     opponentHistoryChoose: string;
     opponentHistoryOpponentLabel: string;
@@ -309,6 +310,7 @@ const EN: Locale = {
     playerTrendsFromLabel: "From",
     playerTrendsThroughLabel: "Through",
     playerTrendsSubmit: "View trend",
+    playerTrendsInstruction: "Choose at least two players to compare their season-by-season goals or assists.",
     opponentHistoryTitle: "Opponent history",
     opponentHistoryChoose: "Choose an opponent and scope",
     opponentHistoryOpponentLabel: "Opponent",
@@ -509,6 +511,7 @@ const ES: Locale = {
     playerTrendsFromLabel: "Desde",
     playerTrendsThroughLabel: "Hasta",
     playerTrendsSubmit: "Ver evolución",
+    playerTrendsInstruction: "Elige al menos dos jugadores para comparar sus goles o asistencias por temporada.",
     opponentHistoryTitle: "Historial contra rivales",
     opponentHistoryChoose: "Elige un rival y el alcance",
     opponentHistoryOpponentLabel: "Rival",
