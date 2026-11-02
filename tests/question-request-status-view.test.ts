@@ -30,10 +30,16 @@ describe("request result status views",()=>{
   it("escapes identity labels and refuses invalid identifiers",()=>{
     expect(questionResultPanel("en",{...view("confirmation_required"),personLabel:'<img src=x onerror="x">'})).toContain("&lt;img");
     expect(questionResultPanel("en",{...view("released"),requestId:'"><script>'})).toBe("");
+    expect(questionResultPanel("en",{...view("released"),requestId:"a".repeat(64)+"\n"})).toBe("");
     expect(questionResultPanel("en",{...view("released"),revision:NaN})).toBe("");
   });
   it("keeps the existing intake page API compatible",()=>{
     expect(questionRequestPage("en","received")).toContain("Received");
     expect(questionRequestPage("es","triaging",undefined,view("building"))).toContain("Preparando tu resultado");
+  });
+  it("preserves the request when switching between EN and ES",()=>{
+    const result=view("confirmation_required");
+    expect(questionRequestPage("en","filled",undefined,result)).toContain(`/es/requests?id=${result.requestId}`);
+    expect(questionRequestPage("es","filled",undefined,result)).toContain(`/en/requests?id=${result.requestId}`);
   });
 });

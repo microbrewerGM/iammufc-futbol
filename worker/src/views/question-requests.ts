@@ -25,7 +25,7 @@ const RESULT_STRINGS = {
 } as const;
 
 export function questionResultPanel(code: LocaleCode, result: QuestionResultView): string {
-  if (!/^[0-9a-f]{64}$/.test(result.requestId) || !Number.isSafeInteger(result.revision) || result.revision < 1 || !Object.hasOwn(RESULT_STRINGS[code], result.state)) return "";
+  if (result.requestId.length !== 64 || !/^[0-9a-f]{64}$/.test(result.requestId) || !Number.isSafeInteger(result.revision) || result.revision < 1 || !Object.hasOwn(RESULT_STRINGS[code], result.state)) return "";
   const t = RESULT_STRINGS[code];
   const parsed = parseIntent(result.intent);
   const intent = parsed.ok && !validateExecutionSupport(parsed.intent) && parsed.intent.entity_type === "player" && parsed.intent.entity_id !== "all" && parsed.intent.limit === 1 ? parsed.intent : null;
@@ -51,5 +51,6 @@ const STRINGS = {
 export function questionRequestPage(code: LocaleCode, status?: string, error?: "invalid" | "unavailable", result?: QuestionResultView): string {
   const t = STRINGS[code];
   const body = `<h1>${esc(t.title)}</h1><p>${esc(t.intro)}</p>${error ? `<p role="alert">${esc(t[error])}</p>` : ""}<form method="post" action="/${code}/requests"><label for="question">${esc(t.label)}</label><textarea id="question" name="text" maxlength="500" required></textarea><button type="submit">${esc(t.submit)}</button></form>${status && !result ? `<p role="status">${esc((t as Record<string, string>)[status] ?? t.received)}</p>` : ""}`;
-  return page(body + (result ? questionResultPanel(code, result) : ""), { title: t.title, locale: LOCALES[code], unprefixedPath: "/requests" });
+  const requestPath = result && result.requestId.length === 64 && /^[0-9a-f]{64}$/.test(result.requestId) ? `/requests?id=${result.requestId}` : "/requests";
+  return page(body + (result ? questionResultPanel(code, result) : ""), { title: t.title, locale: LOCALES[code], unprefixedPath: requestPath });
 }
