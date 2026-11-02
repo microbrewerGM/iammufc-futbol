@@ -185,6 +185,7 @@ export async function claimQuestion(deps: TriageDeps, caller: TriageCaller, raw:
       || cur.lease_id!==prior.lease_id || cur.lease_owner!==caller.service || !cur.lease_expires_at || Date.parse(cur.lease_expires_at)<=now
       || (v2 ? !receiptMatches(prior.receipt,cur,p,now) || prior.receipt!.lease_id!==cur.lease_id : !!prior.receipt)) return reply(deps,"claim_result",{outcome:"conflict"});
     if(v2 && !await contextMatches(deps,p))return reply(deps,"claim_result",{outcome:"conflict"});
+    if(v2 && (!eligible(deps,cur,nowMs(deps)) || Date.parse(cur.lease_expires_at!)<=nowMs(deps)))return reply(deps,"claim_result",{outcome:"conflict"});
     return reply(deps,"claim_result",v2 ? claimResponse(deps,cur) : prior.response);
   }
   if (!cur) return reply(deps,"claim_result",{outcome:"not_found"});
@@ -213,6 +214,7 @@ export async function ackQuestion(deps: TriageDeps, caller: TriageCaller, raw: u
   if (prior) {
     if (prior.body_hash!==bodyHash || !cur || (v2 ? !receiptMatches(prior.receipt,cur,p,now) || prior.receipt!.lease_id!==p.lease_id : !!prior.receipt || !!cur.managed)) return reply(deps,"ack_result",{outcome:"conflict"});
     if(v2 && !await contextMatches(deps,p))return reply(deps,"ack_result",{outcome:"conflict"});
+    if(v2 && !retained(cur,nowMs(deps)))return reply(deps,"ack_result",{outcome:"conflict"});
     return reply(deps,"ack_result",{outcome:"replayed",response:prior.response});
   }
   if (!cur || !eligible(deps,cur,now) || cur.status!=="triaging" || cur.attempt!==p.attempt || cur.lease_id!==p.lease_id || cur.lease_owner!==caller.service

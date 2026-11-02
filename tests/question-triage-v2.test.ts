@@ -95,6 +95,14 @@ describe("generation-fenced triage v2",()=>{
       expect(body(result).payload.outcome).toBe("conflict");
     }
   });
+  it("uses fresh lease and retention clocks after replay metadata awaits",async()=>{
+    const x=fixture(),c=await x.claim();let calls=0;const context=x.deps.currentContext!;
+    x.deps.currentContext=async()=>{const value=await context();if(++calls===2)x.advance(901);return value;};
+    expect(body(await claimQuestion(x.deps,caller,c.request)).payload.outcome).toBe("conflict");
+    const y=fixture(),claimed=await y.claim(),ack=y.ackBody(claimed.question);await ackQuestion(y.deps,caller,ack);let reads=0;const current=y.deps.currentContext!;
+    y.deps.currentContext=async()=>{const value=await current();if(++reads===2)y.advance(91*86400);return value;};
+    expect(body(await ackQuestion(y.deps,caller,ack)).payload.outcome).toBe("conflict");
+  });
   it("reads and claims initial generation with bounded text-free receipts",async()=>{
     const x=fixture(),read=body(await readQuestions(x.deps,caller,wire("read",{cursor:null,limit:10})));
     expect(read.version).toBe(2);expect(read.payload.questions).toEqual([{request_id:id,locale:"en",text:"Original question",revision:1,generation:0,attempt:0}]);expect(JSON.stringify(read)).not.toContain("owner");
