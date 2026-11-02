@@ -4,6 +4,7 @@ import { mapQuestionVerdict, requestCatalogDigest } from "../core/question-reque
 import { ackQuestion, claimQuestion, readQuestions, TRIAGE_CAPABILITY, TRIAGE_MAX_REQUEST_BYTES, type TriageCaller, type TriageDeps } from "../core/question-triage-bridge";
 import { accessIdentity, type AccessEnv } from "../security/auth";
 import { D1QuestionTriageStore, sweepQuestionBeforeRequest } from "./question-triage-sweep";
+import { executeQuestionResult,readQuestionResults,requestExecutionDeps } from "../core/question-request-execution";
 
 export type QuestionTriageEnv = AccessEnv & { Bindings: Env & { BRIDGE_CURSOR_KEY?: string; BRIDGE_NOW?: () => Date; BRIDGE_NEW_LEASE_ID?: () => string } };
 export function createQuestionTriageBridgeRouter(resolveCaller: (c: import("hono").Context<QuestionTriageEnv>) => TriageCaller | null = c => {
@@ -40,16 +41,40 @@ export function createQuestionTriageBridgeRouter(resolveCaller: (c: import("hono
     } catch { return c.text("Bridge unavailable.", 503); }
   });
   router.all("/answer-now/context", c => c.text("Method not allowed.", 405, { Allow: "POST" }));
+  for (const kind of ["execute","results"] as const) {
+    router.post(`/answer-now/${kind}`,async c=>{
+      const caller=resolveCaller(c);
+      if (!caller || caller.capability!==TRIAGE_CAPABILITY) return c.json({error:"invalid_caller"},403);
+      const body=await readBody(c.req.raw,1024);
+      if (!body.ok) return c.json({error:body.status===413?"too_large":"malformed"},body.status);
+      let request:unknown;
+      try {request=JSON.parse(body.raw);} catch {return c.json({error:"malformed"},400);}
+      if (!request || typeof request!=="object" || Array.isArray(request)) return c.json({error:"malformed"},400);
+      const envelope=request as Record<string,unknown>;
+      if (Object.keys(envelope).length!==3 || !["version","kind","payload"].every(k=>Object.hasOwn(envelope,k)) || envelope.version!==1 || envelope.kind!==kind || !envelope.payload || typeof envelope.payload!=="object" || Array.isArray(envelope.payload)) return c.json({error:"malformed"},400);
+      const payload=envelope.payload as Record<string,unknown>;
+      try {
+        if (kind==="results") {
+          if (Object.keys(payload).length!==1 || !Number.isInteger(payload.limit) || Number(payload.limit)<1 || Number(payload.limit)>10) return c.json({error:"malformed"},400);
+          return c.json({version:1,kind:"results_result",payload:{results:await readQuestionResults(c.env,Number(payload.limit))}});
+        }
+        if (Object.keys(payload).length!==2 || typeof payload.request_id!=="string" || payload.request_id.length!==64 || !/^[0-9a-f]{64}$/.test(payload.request_id) || !Number.isSafeInteger(payload.revision) || Number(payload.revision)<1) return c.json({error:"malformed"},400);
+        const outcome=await executeQuestionResult(requestExecutionDeps(c.env),payload.request_id,Number(payload.revision),caller.service);
+        return c.json({version:1,kind:"execute_result",payload:{request_id:payload.request_id,outcome}});
+      } catch {return c.text("Bridge unavailable.",503);}
+    });
+    router.all(`/answer-now/${kind}`,c=>c.text("Method not allowed.",405,{Allow:"POST"}));
+  }
   return router;
 }
-async function readBody(request: Request): Promise<{ ok: true; raw: string } | { ok: false; status: 400 | 413 }> {
+async function readBody(request: Request,maxBytes=TRIAGE_MAX_REQUEST_BYTES): Promise<{ ok: true; raw: string } | { ok: false; status: 400 | 413 }> {
   const length = request.headers.get("content-length");
-  if (length !== null && (!/^\d+$/.test(length) || Number(length) > TRIAGE_MAX_REQUEST_BYTES)) return { ok: false, status: 413 };
+  if (length !== null && (!/^\d+$/.test(length) || Number(length) > maxBytes)) return { ok: false, status: 413 };
   try {
     const reader = request.body?.getReader();
     if (!reader) return { ok: true, raw: "" };
     let size = 0; const chunks: Uint8Array[] = [];
-    while (true) { const { done, value } = await reader.read(); if (done) break; size += value.byteLength; if (size > TRIAGE_MAX_REQUEST_BYTES) { await reader.cancel(); return { ok: false, status: 413 }; } chunks.push(value); }
+    while (true) { const { done, value } = await reader.read(); if (done) break; size += value.byteLength; if (size > maxBytes) { await reader.cancel(); return { ok: false, status: 413 }; } chunks.push(value); }
     const bytes = new Uint8Array(size); let offset = 0;
     for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
     return { ok: true, raw: new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes) };
