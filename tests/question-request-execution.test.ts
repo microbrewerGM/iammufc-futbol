@@ -36,6 +36,16 @@ describe("trusted confirmed request execution",()=>{
   it("only the CAS winner computes under simultaneous delivery",async()=>{
     const x=await fixture();expect((await Promise.all([executeQuestionResult(x.deps,id,2,"one"),executeQuestionResult(x.deps,id,2,"two")])).sort()).toEqual(["accepted","conflict"]);expect(x.deps.execute).toHaveBeenCalledTimes(1);
   });
+  it("does not compute after a post-claim storage pause outlives the lease",async()=>{
+    const x=await fixture(),get=x.deps.store.get;let reads=0;
+    x.deps.store.get=async request=>{const row=await get(request);if(++reads===3)x.advance(900);return row;};
+    expect(await executeQuestionResult(x.deps,id,2,"service")).toBe("conflict");expect(x.deps.execute).not.toHaveBeenCalled();
+  });
+  it.each(["snapshot","generation"])("does not compute after %s changes during post-claim storage",async change=>{
+    const x=await fixture(),get=x.deps.store.get;let reads=0;
+    x.deps.store.get=async request=>{const row=await get(request);if(++reads===3){if(change==="snapshot")x.binding.snapshotId="c".repeat(64);else x.binding.revision++;}return row;};
+    expect(await executeQuestionResult(x.deps,id,2,"service")).toBe("conflict");expect(x.deps.execute).not.toHaveBeenCalled();
+  });
   it.each(["empty","wrong_person","null","nonfinite"])("never releases %s result",async bad=>{
     const x=await fixture();if(bad==="empty")x.response.rows=[];if(bad==="wrong_person")x.response.rows[0]!.route_key="fpl:code:2";if(bad==="nonfinite")x.response.rows[0]!.value=Infinity;
     x.deps.execute=async()=>bad==="null"?null:x.response;

@@ -30,6 +30,9 @@ export async function executeQuestionResult(deps:RequestExecutionDeps,requestId:
   if (claimed!=="accepted") return claimed;
   const leased=await deps.store.get(requestId);
   if (!leased || leased.state!=="in_review" || leased.revision!==revision+1 || leased.leaseOwner!==service || !leased.leaseId) return "conflict";
+  const binding=await deps.currentBinding(requestId);
+  const now=deps.now().getTime();
+  if (binding.revision!==leased.requestRevision || binding.snapshotId!==leased.spec.data_snapshot_id || !Number.isFinite(now) || !leased.leaseExpiresAt || Date.parse(leased.leaseExpiresAt)<=now || Date.parse(leased.expiresAt)<=now) return "conflict";
   let response:unknown;
   try { response=await deps.execute(selection.intent,leased.spec); }
   catch (error) { return error instanceof QueryFailure ? error.outcome : "unavailable"; }
