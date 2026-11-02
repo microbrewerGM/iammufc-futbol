@@ -11,7 +11,7 @@ export interface NotificationRow {
 }
 interface Source {
   request_id:string;account_sub:string;locale:"en"|"es";q_revision:number;q_status:string;q_expires:string;q_lease:string|null;
-  r_revision:number|null;r_parent:number|null;r_state:string|null;r_expires:string|null;r_deadline:string|null;snapshot_id:string|null;db_now:string;
+  r_revision:number|null;r_parent:number|null;r_state:string|null;r_expires:string|null;r_deadline:string|null;r_null_spec:number;snapshot_id:string|null;db_now:string;
 }
 interface Projection {source:Source;status:string;path:string|null}
 const NOW="strftime('%Y-%m-%dT%H:%M:%SZ','now')";
@@ -19,7 +19,7 @@ const SNAPSHOT="(SELECT snapshot_id FROM snapshots ORDER BY created_at DESC LIMI
 const JOIN="question_requests q LEFT JOIN question_request_results r ON r.request_id=q.request_id";
 const OWNED="(q.lease_id LIKE 'q2:%' OR r.request_id IS NOT NULL)";
 const CLEAR="lease_id=NULL,lease_owner=NULL,lease_expires_at=NULL,inflight_revision=NULL,inflight_status=NULL,inflight_result_path=NULL";
-const SOURCE_KEYS:(keyof Source)[]=["request_id","account_sub","locale","q_revision","q_status","q_expires","q_lease","r_revision","r_parent","r_state","r_expires","r_deadline","snapshot_id"];
+const SOURCE_KEYS:(keyof Source)[]=["request_id","account_sub","locale","q_revision","q_status","q_expires","q_lease","r_revision","r_parent","r_state","r_expires","r_deadline","r_null_spec","snapshot_id"];
 const same=(a:Source,b:Source)=>SOURCE_KEYS.every(key=>a[key]===b[key]);
 
 /** Only fixed metadata is returned. Account ownership is used internally by the
@@ -28,18 +28,23 @@ export class D1NotificationStore {
   constructor(readonly env:Env){}
   private source(id:string):Promise<Source|null>{
     return this.env.DB.prepare(`SELECT q.request_id,q.account_sub,q.locale,q.revision AS q_revision,q.status AS q_status,q.expires_at AS q_expires,q.lease_id AS q_lease,
-      r.revision AS r_revision,r.request_revision AS r_parent,r.state AS r_state,r.expires_at AS r_expires,r.response_deadline AS r_deadline,
+      r.revision AS r_revision,r.request_revision AS r_parent,r.state AS r_state,r.expires_at AS r_expires,r.response_deadline AS r_deadline,(r.spec_json IS NULL) AS r_null_spec,
       ${SNAPSHOT} AS snapshot_id,${NOW} AS db_now FROM ${JOIN} WHERE q.request_id=? AND ${OWNED}`).bind(id).first<Source>();
   }
   private async project(id:string):Promise<Projection|null>{
     const before=await this.source(id);if(!before || before.q_expires<=before.db_now)return null;
     let status:string,path:string|null=null;
     if(before.r_revision!==null){
-      const view=await readQuestionResultStatus(this.env,before.account_sub,id,before.locale);if(!view)return null;
-      status=view.state;
-      if(status==="released"){
-        if(!view.currentBinding || !view.resultPath)throw new Error("notification_projection_unavailable");
-        path=view.resultPath;
+      // Claims/retries legitimately advance the parent beyond a null-spec
+      // generation's base revision. No result link exists to become stale.
+      if(["failed","expired"].includes(before.r_state ?? "") || before.r_null_spec===1 && ["triaging","clarification_required","unsupported","unavailable"].includes(before.r_state ?? ""))status=before.r_state!;
+      else{
+        const view=await readQuestionResultStatus(this.env,before.account_sub,id,before.locale);if(!view)return null;
+        status=view.state;
+        if(status==="released"){
+          if(!view.currentBinding || !view.resultPath)throw new Error("notification_projection_unavailable");
+          path=view.resultPath;
+        }
       }
     }else status=({received:"received",triaging:"triaging",junk:"junk",triage_failed:"failed"} as Record<string,string>)[before.q_status] ?? "unavailable";
     const fresh=await this.source(id);if(!fresh || !same(before,fresh) || fresh.q_expires<=fresh.db_now)return null;
@@ -51,9 +56,9 @@ export class D1NotificationStore {
     const s=p.source;
     return {sql:`EXISTS(SELECT 1 FROM ${JOIN} WHERE q.request_id=? AND ${OWNED} AND q.account_sub=? AND q.locale=?
       AND q.revision=? AND q.status=? AND q.expires_at=? AND q.lease_id IS ? AND r.revision IS ? AND r.request_revision IS ? AND r.state IS ?
-      AND r.expires_at IS ? AND r.response_deadline IS ? AND ${SNAPSHOT} IS ? AND q.expires_at>${NOW}
+      AND r.expires_at IS ? AND r.response_deadline IS ? AND (r.spec_json IS NULL)=? AND ${SNAPSHOT} IS ? AND q.expires_at>${NOW}
       AND (coalesce(r.state,'') NOT IN ('triaging','clarification_required','confirmation_required') OR (?='expired')=(r.response_deadline<=${NOW})))`,
-      values:[s.request_id,s.account_sub,s.locale,s.q_revision,s.q_status,s.q_expires,s.q_lease,s.r_revision,s.r_parent,s.r_state,s.r_expires,s.r_deadline,s.snapshot_id,p.status]};
+      values:[s.request_id,s.account_sub,s.locale,s.q_revision,s.q_status,s.q_expires,s.q_lease,s.r_revision,s.r_parent,s.r_state,s.r_expires,s.r_deadline,s.r_null_spec,s.snapshot_id,p.status]};
   }
   get(id:string):Promise<NotificationRow|null>{return this.env.DB.prepare(`SELECT n.*,${NOW} AS db_now FROM question_request_notifications n WHERE request_id=?`).bind(id).first<NotificationRow>();}
   private async recover(id:string):Promise<void>{

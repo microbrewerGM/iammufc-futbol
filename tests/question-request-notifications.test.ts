@@ -121,6 +121,20 @@ describe("authoritative durable notification service",()=>{
     const stale=fixture();await stale.release(id,false,true);expect((await stale.prepare()).payload.payload).toMatchObject({status:"stale",result_path:null});
     const expired=fixture();await expired.release(id,true);expired.advance(86401);expect((await expired.prepare()).payload.payload).toMatchObject({status:"expired",result_path:null});
   });
+  it("projects null-spec clarification generations across claims and bounded expiry",async()=>{
+    const x=fixture(),verdict={version:1,request_id:id,relevant:true,junk_reason:null,restated_question:"Show goals",tables:[],visuals:[],field_status:[],families:[]};
+    x.db.prepare("UPDATE question_requests SET status='triaged',verdict_json=?,lease_expires_at=NULL,revision=revision+1 WHERE request_id=?").run(JSON.stringify(verdict),id);
+    x.db.prepare("UPDATE question_requests SET status='no_data',revision=revision+1 WHERE request_id=?").run(id);
+    const deadline=iso(Date.parse(x.now())+86400_000);
+    x.db.prepare("INSERT INTO question_request_results(request_id,request_revision,state,created_at,updated_at,response_deadline,expires_at)VALUES(?,4,'clarification_required',?,?,?,?)").run(id,x.now(),x.now(),deadline,x.expires);
+    x.advance(1);x.db.exec("BEGIN");
+    x.db.prepare("UPDATE question_requests SET status='received',attempt=0,verdict_json=NULL,lease_id=NULL,lease_owner=NULL,lease_expires_at=NULL,claimed_at=NULL,retry_after=NULL,revision=revision+1,updated_at=? WHERE request_id=?").run(x.now(),id);
+    x.db.prepare("INSERT INTO question_request_clarifications(request_id,generation,parent_revision,text,submitted_at)VALUES(?,1,5,'PRIVATE CLARIFICATION',?)").run(id,x.now());
+    x.db.prepare("UPDATE question_request_results SET state='triaging',request_revision=5,clarification_count=1,attempt=0,spec_json=NULL,verified_json=NULL,lease_id=NULL,lease_owner=NULL,lease_expires_at=NULL,revision=revision+1,updated_at=?,response_deadline=? WHERE request_id=?").run(x.now(),iso(Date.parse(x.now())+86400_000),id);x.db.exec("COMMIT");
+    x.db.prepare("UPDATE question_requests SET status='triaging',attempt=1,lease_id='q2:generation',lease_owner='triage',claimed_at=?,lease_expires_at=?,revision=revision+1,updated_at=? WHERE request_id=?").run(x.now(),iso(Date.parse(x.now())+900_000),x.now(),id);
+    const grant=await x.prepare();expect(grant.payload.payload).toMatchObject({status:"triaging",result_path:null});expect(JSON.stringify(grant)).not.toContain("PRIVATE CLARIFICATION");
+    await x.ack(grant,"retry");x.advance(86401);await x.prepare();expect(x.row()).toMatchObject({desired_status:"expired",desired_result_path:null,creation_status:"triaging"});
+  });
   it("keeps three complete release verifications below the D1 Free query cap",async()=>{
     const x=fixture(3);await x.release();await x.release("1".padStart(64,"0"));await x.release("2".padStart(64,"0"));x.resetQueries();
     expect((await x.read()).payload.items).toHaveLength(3);expect(x.queries()).toBeLessThan(45);
