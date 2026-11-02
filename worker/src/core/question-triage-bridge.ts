@@ -13,20 +13,21 @@ const competitions = new Set(catalog.coverage.map(row => row.competition));
 const seasons = new Set(catalog.coverage.map(row => row.season));
 
 export interface TriageCaller { service: string; capability: string }
-export interface TriageQuestion { request_id: string; locale: "en" | "es"; text: string; account_sub: string; status: string; attempt: number; lease_id: string | null; lease_owner: string | null; lease_expires_at: string | null; retry_after: string | null; revision: number; claimed_at: string | null; verdict_json: string | null; exploration_request_id: string | null }
-export interface TriageOperation { service: string; type: "claim" | "ack"; operation_id: string; body_hash: string; response: unknown; lease_id: string | null }
-export interface AnswerNowDraft { state: "confirmation_required" | "clarification_required" | "unsupported" | "unavailable"; specJson: string | null; snapshotId: string | null }
+export interface TriageQuestion { request_id: string; locale: "en" | "es"; text: string; account_sub: string; status: string; attempt: number; lease_id: string | null; lease_owner: string | null; lease_expires_at: string | null; retry_after: string | null; revision: number; claimed_at: string | null; verdict_json: string | null; exploration_request_id: string | null; managed?: number; generation?: number; result_revision?: number; result_state?: string | null; clarification_valid?: number; expires_at?: string; response_deadline?: string | null }
+export interface TriageReceipt { protocol: 2; request_id: string; generation: number; input_revision: number; applied_revision: number; lease_id: string }
+export interface TriageOperation { service: string; type: "claim" | "ack"; operation_id: string; body_hash: string; response: unknown; lease_id: string | null; receipt?: TriageReceipt }
+export interface AnswerNowDraft { state: "confirmation_required" | "clarification_required" | "unsupported" | "unavailable" | "failed"; specJson: string | null; snapshotId: string | null }
 export interface TriageStore {
   page(after: string | null, limit: number): Promise<TriageQuestion[]>;
   get(id: string): Promise<TriageQuestion | null>;
-  operation(service: string, type: "claim" | "ack", id: string): Promise<TriageOperation | null>;
+  operation(service: string, type: "claim" | "ack", id: string, requestId: string): Promise<TriageOperation | null>;
   claim(row: TriageQuestion, next: TriageQuestion, op: TriageOperation): Promise<boolean>;
   ack(row: TriageQuestion, next: TriageQuestion, op: TriageOperation, admission: { requestId: string; requestJson: string; jobId: string; accountSub: string; createdAt: string } | null, now: string, answerNow?: AnswerNowDraft): Promise<boolean>;
   sweepRows(kind: "expired" | "triaged" | "queued", now: string, limit: number): Promise<TriageQuestion[]>;
-  settle(row: TriageQuestion, next: TriageQuestion): Promise<boolean>;
+  settle(row: TriageQuestion, next: TriageQuestion, now: string): Promise<boolean>;
   queueResult(row: TriageQuestion, now: string): Promise<"complete" | "partial" | "no_data" | "gone" | "failed" | "pending">;
 }
-export interface TriageDeps { store: TriageStore; now(): Date; newLeaseId(): string; cursorKey: Uint8Array; answerNow?(row: TriageQuestion, verdict: unknown): Promise<AnswerNowDraft> }
+export interface TriageDeps { protocol?: 1 | 2; store: TriageStore; now(): Date; newLeaseId(): string; cursorKey: Uint8Array; answerNow?(row: TriageQuestion, verdict: unknown): Promise<AnswerNowDraft> }
 export type TriageError = "malformed" | "too_large" | "invalid_caller" | "invalid_cursor";
 export type TriageResult = { ok: true; body: string } | { ok: false; error: TriageError };
 const HASH = /^[0-9a-f]{64}$/;
@@ -41,8 +42,8 @@ function checkStrings(v: unknown): boolean { if (typeof v === "string") return w
 function canonical(v: unknown): string { if (!checkStrings(v)) throw new TypeError("ill-formed string"); if (v === null || typeof v !== "object") return JSON.stringify(v); if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`; return `{${Object.keys(v).sort().map(k => `${JSON.stringify(k)}:${canonical((v as Record<string, unknown>)[k])}`).join(",")}}`; }
 const bytes = (s: string) => new TextEncoder().encode(s).length;
 async function hash(value: string): Promise<string> { const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)); return [...new Uint8Array(d)].map(x => x.toString(16).padStart(2, "0")).join(""); }
-function envelope(raw: unknown, kind: string): Record<string, unknown> | TriageFailure { if (typeof raw !== "string") return bad("malformed"); if (bytes(raw) > TRIAGE_MAX_REQUEST_BYTES) return bad("too_large"); let v: unknown; try { v = JSON.parse(raw); } catch { return bad("malformed"); } if (!object(v) || !closed(v, ["version", "kind", "payload"]) || v.version !== 1 || v.kind !== kind || !object(v.payload) || !checkStrings(v)) return bad("malformed"); return v.payload; }
-function reply(kind: string, payload: unknown): TriageResult { const body = JSON.stringify({ version: 1, kind, payload }); return bytes(body) > 256 * 1024 ? bad("too_large") : { ok: true, body }; }
+function envelope(raw: unknown, kind: string, protocol = 1): Record<string, unknown> | TriageFailure { if (typeof raw !== "string") return bad("malformed"); if (bytes(raw) > TRIAGE_MAX_REQUEST_BYTES) return bad("too_large"); let v: unknown; try { v = JSON.parse(raw); } catch { return bad("malformed"); } if (!object(v) || !closed(v, ["version", "kind", "payload"]) || v.version !== protocol || v.kind !== kind || !object(v.payload) || !checkStrings(v)) return bad("malformed"); return v.payload; }
+function reply(deps: TriageDeps, kind: string, payload: unknown): TriageResult { const body = JSON.stringify({ version: deps.protocol ?? 1, kind, payload }); return bytes(body) > 256 * 1024 ? bad("too_large") : { ok: true, body }; }
 function time(ms: number): string { return new Date(ms).toISOString().replace(".000Z", "Z"); }
 function nowMs(d: TriageDeps): number { return Math.floor(d.now().getTime() / 1000) * 1000; }
 function callerOk(c: TriageCaller): boolean { return object(c) && ID.test(c.service) && c.capability === TRIAGE_CAPABILITY; }
@@ -102,57 +103,134 @@ function cellStatus(verdict: Record<string, any>): { total: number; available: n
   return { total, available, fieldStatus };
 }
 
+/** Metadata is private receipt data, never a second durable copy of question text. */
+export function parseTriageReceipt(value: unknown): TriageReceipt | null {
+  if (!object(value) || !closed(value, ["protocol","request_id","generation","input_revision","applied_revision","lease_id"])
+    || value.protocol !== 2 || typeof value.request_id !== "string" || value.request_id.length !== 64 || !HASH.test(value.request_id)
+    || !isInt(value.generation,0,3) || !isInt(value.input_revision,1,Number.MAX_SAFE_INTEGER-2)
+    || !isInt(value.applied_revision,value.input_revision+1,value.input_revision+2)
+    || typeof value.lease_id !== "string" || !ID.test(value.lease_id) || value.lease_id.trim() !== value.lease_id) return null;
+  return value as unknown as TriageReceipt;
+}
+function generation(row: TriageQuestion): number { return row.generation ?? 0; }
+function retained(row: TriageQuestion, now: number): boolean {
+  return typeof row.expires_at === "string" && Date.parse(row.expires_at) > now;
+}
+function eligible(deps: TriageDeps, row: TriageQuestion, now: number): boolean {
+  if (deps.protocol !== 2) return !row.managed;
+  if (!retained(row,now) || !isInt(generation(row),0,3)) return false;
+  return row.managed
+    ? generation(row) >= 1 && row.result_state === "triaging" && row.clarification_valid === 1
+      && typeof row.response_deadline === "string" && Date.parse(row.response_deadline) > now
+    : generation(row) === 0;
+}
+function receiptMatches(receipt: TriageReceipt | undefined, row: TriageQuestion | null, p: Record<string,unknown>, now: number): boolean {
+  return !!receipt && !!row && receipt.request_id === p.request_id && receipt.generation === p.expected_generation
+    && receipt.input_revision === p.expected_revision && generation(row) === receipt.generation
+    && row.revision === receipt.applied_revision && retained(row,now);
+}
+function claimResponse(deps: TriageDeps, row: TriageQuestion, includeText = true): unknown {
+  return { outcome: "claimed", question: { request_id: row.request_id, locale: row.locale,
+    ...(includeText ? { text: row.text } : {}), attempt: row.attempt, lease_id: row.lease_id,
+    lease_expires_at: row.lease_expires_at,
+    ...(deps.protocol === 2 ? { revision: row.revision, generation: generation(row) } : {}) } };
+}
+
 export async function readQuestions(deps: TriageDeps, caller: TriageCaller, raw: unknown): Promise<TriageResult> {
-  if (!callerOk(caller)) return bad("invalid_caller"); const p = envelope(raw, "read"); if (isError(p)) return p;
-  if (!closed(p, ["cursor", "limit"]) || (p.cursor !== null && typeof p.cursor !== "string") || !isInt(p.limit, 1, PAGE_SIZE)) return bad("malformed");
-  let after: string | null = null;
-  if (p.cursor !== null) { const m = /^q1:([0-9a-f]{64}):([0-9a-f]{32})$/.exec(p.cursor as string); if (!m || !(await verifyCursor(deps.cursorKey, caller, m[1]!, m[2]!))) return bad("invalid_cursor"); after = m[1]!; }
-  const rows = await deps.store.page(after, p.limit + 1), page = rows.slice(0, p.limit);
-  const next = rows.length > p.limit && page.length ? `q1:${page[page.length - 1]!.request_id}:${await signCursor(deps.cursorKey, caller, page[page.length - 1]!.request_id)}` : null;
-  return reply("read_result", { questions: page.map(({ request_id, locale, text }) => ({ request_id, locale, text })), next_cursor: next });
+  if (!callerOk(caller)) return bad("invalid_caller");
+  const p=envelope(raw,"read",deps.protocol ?? 1); if(isError(p)) return p;
+  if (!closed(p,["cursor","limit"]) || (p.cursor !== null && typeof p.cursor !== "string") || !isInt(p.limit,1,PAGE_SIZE)) return bad("malformed");
+  const v2=deps.protocol === 2, signingCaller=v2 ? {...caller,capability:caller.capability+":v2"} : caller;
+  let after:string|null=null;
+  if (p.cursor !== null) {
+    const m=(v2 ? /^q2:([0-9a-f]{64}):([0-9a-f]{32})$/ : /^q1:([0-9a-f]{64}):([0-9a-f]{32})$/).exec(p.cursor as string);
+    if (!m || !await verifyCursor(deps.cursorKey,signingCaller,m[1]!,m[2]!)) return bad("invalid_cursor");
+    after=m[1]!;
+  }
+  const rows=(await deps.store.page(after,p.limit+1)).filter(row=>eligible(deps,row,nowMs(deps))), page=rows.slice(0,p.limit);
+  const last=page[page.length-1];
+  const next=rows.length>p.limit && last ? (v2 ? "q2:" : "q1:")+last.request_id+":"+await signCursor(deps.cursorKey,signingCaller,last.request_id) : null;
+  return reply(deps,"read_result",{questions:page.map(row=>({request_id:row.request_id,locale:row.locale,text:row.text,
+    ...(v2 ? {revision:row.revision,generation:generation(row),attempt:row.attempt} : {})})),next_cursor:next});
 }
 async function cursorMac(key: Uint8Array, caller: TriageCaller, id: string): Promise<string> { const k = await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]); const tag = new Uint8Array(await crypto.subtle.sign("HMAC", k, new TextEncoder().encode(`${caller.service}\n${caller.capability}\n${id}`))); return [...tag.slice(0, 16)].map(x => x.toString(16).padStart(2, "0")).join(""); }
 async function signCursor(key: Uint8Array, caller: TriageCaller, id: string): Promise<string> { return cursorMac(key, caller, id); }
 async function verifyCursor(key: Uint8Array, caller: TriageCaller, id: string, tag: string): Promise<boolean> { return tag === await cursorMac(key, caller, id); }
+
 export async function claimQuestion(deps: TriageDeps, caller: TriageCaller, raw: unknown): Promise<TriageResult> {
-  if (!callerOk(caller)) return bad("invalid_caller"); const p = envelope(raw, "claim"); if (isError(p)) return p;
-  if (!closed(p, ["request_id", "expected_attempt", "operation_id"]) || typeof p.request_id !== "string" || !HASH.test(p.request_id) || !isInt(p.expected_attempt, 0, 2) || typeof p.operation_id !== "string" || !/^qt:[a-z0-9:_-]{1,92}$/.test(p.operation_id)) return bad("malformed");
-  const now = nowMs(deps), bodyHash = await hash(canonical(p)), prior = await deps.store.operation(caller.service, "claim", p.operation_id);
-  if (prior) { if (prior.body_hash !== bodyHash) return reply("claim_result", { outcome: "conflict" }); const cur = await deps.store.get(p.request_id); if (!cur || cur.status !== "triaging" || cur.lease_id !== prior.lease_id || cur.lease_owner !== caller.service || !cur.lease_expires_at || Date.parse(cur.lease_expires_at) <= now) return reply("claim_result", { outcome: "conflict" }); return reply("claim_result", prior.response); }
-  const cur = await deps.store.get(p.request_id); if (!cur) return reply("claim_result", { outcome: "not_found" }); if (cur.status !== "received" || cur.attempt !== p.expected_attempt || cur.attempt >= 3 || cur.retry_after && Date.parse(cur.retry_after) > now) return reply("claim_result", { outcome: "conflict" });
-  const lease = deps.newLeaseId(); if (!ID.test(lease) || cur.lease_id === lease) throw new Error("invalid random lease id");
-  const next = { ...cur, status: "triaging", attempt: cur.attempt + 1, lease_id: lease, lease_owner: caller.service, lease_expires_at: time(now + TRIAGE_LEASE_SECONDS * 1000), claimed_at: time(now), retry_after: null, revision: cur.revision + 1 };
-  const response = { outcome: "claimed", question: { request_id: cur.request_id, locale: cur.locale, text: cur.text, attempt: next.attempt, lease_id: lease, lease_expires_at: next.lease_expires_at } };
-  const op: TriageOperation = { service: caller.service, type: "claim", operation_id: p.operation_id, body_hash: bodyHash, response, lease_id: lease };
-  return await deps.store.claim(cur, next, op) ? reply("claim_result", response) : reply("claim_result", { outcome: "conflict" });
+  if (!callerOk(caller)) return bad("invalid_caller");
+  const v2=deps.protocol === 2, p=envelope(raw,"claim",deps.protocol ?? 1); if(isError(p)) return p;
+  if (!closed(p,v2 ? ["request_id","expected_revision","expected_generation","expected_attempt","operation_id"] : ["request_id","expected_attempt","operation_id"])
+    || typeof p.request_id !== "string" || p.request_id.length!==64 || !HASH.test(p.request_id)
+    || !isInt(p.expected_attempt,0,2) || typeof p.operation_id !== "string" || !/^qt:[a-z0-9:_-]{1,92}$/.test(p.operation_id) || p.operation_id.trim()!==p.operation_id
+    || v2 && (!isInt(p.expected_revision,1,Number.MAX_SAFE_INTEGER-2) || !isInt(p.expected_generation,0,3))) return bad("malformed");
+  const now=nowMs(deps), bodyHash=await hash(canonical(v2 ? {protocol:2,kind:"claim",payload:p} : p));
+  const prior=await deps.store.operation(caller.service,"claim",p.operation_id,p.request_id), cur=await deps.store.get(p.request_id);
+  if (prior) {
+    if (prior.body_hash!==bodyHash || !cur || !eligible(deps,cur,now) || cur.status!=="triaging"
+      || cur.lease_id!==prior.lease_id || cur.lease_owner!==caller.service || !cur.lease_expires_at || Date.parse(cur.lease_expires_at)<=now
+      || (v2 ? !receiptMatches(prior.receipt,cur,p,now) || prior.receipt!.lease_id!==cur.lease_id : !!prior.receipt)) return reply(deps,"claim_result",{outcome:"conflict"});
+    return reply(deps,"claim_result",v2 ? claimResponse(deps,cur) : prior.response);
+  }
+  if (!cur) return reply(deps,"claim_result",{outcome:"not_found"});
+  if (!eligible(deps,cur,now) || cur.status!=="received" || cur.attempt!==p.expected_attempt || cur.attempt>=3
+    || cur.retry_after && Date.parse(cur.retry_after)>now || v2 && (cur.revision!==p.expected_revision || generation(cur)!==p.expected_generation)) return reply(deps,"claim_result",{outcome:"conflict"});
+  const random=deps.newLeaseId(), lease=v2 ? "q2:"+random : random;
+  if (!ID.test(lease) || lease.trim()!==lease || cur.lease_id===lease) throw new Error("invalid random lease id");
+  const next={...cur,status:"triaging",attempt:cur.attempt+1,lease_id:lease,lease_owner:caller.service,
+    lease_expires_at:time(now+TRIAGE_LEASE_SECONDS*1000),claimed_at:time(now),retry_after:null,revision:cur.revision+1};
+  const op:TriageOperation={service:caller.service,type:"claim",operation_id:p.operation_id,body_hash:bodyHash,response:claimResponse(deps,next,!v2),lease_id:lease,
+    ...(v2 ? {receipt:{protocol:2 as const,request_id:cur.request_id,generation:generation(cur),input_revision:cur.revision,applied_revision:next.revision,lease_id:lease}} : {})};
+  return await deps.store.claim(cur,next,op) ? reply(deps,"claim_result",claimResponse(deps,next)) : reply(deps,"claim_result",{outcome:"conflict"});
 }
 export async function ackQuestion(deps: TriageDeps, caller: TriageCaller, raw: unknown): Promise<TriageResult> {
-  if (!callerOk(caller)) return bad("invalid_caller"); const p = envelope(raw, "ack"); if (isError(p)) return p;
-  if (!closed(p, ["request_id", "attempt", "lease_id", "operation_id", "outcome"]) || typeof p.request_id !== "string" || !HASH.test(p.request_id) || !isInt(p.attempt, 1, 3) || typeof p.lease_id !== "string" || !ID.test(p.lease_id) || typeof p.operation_id !== "string" || !/^qt:[a-z0-9:_-]{1,92}$/.test(p.operation_id) || !object(p.outcome)) return bad("malformed");
-  const now = nowMs(deps), bodyHash = await hash(canonical(deps.answerNow ? { answer_now: 1, payload: p } : p)), prior = await deps.store.operation(caller.service, "ack", p.operation_id);
-  if (prior) return prior.body_hash === bodyHash ? reply("ack_result", { outcome: "replayed", response: prior.response }) : reply("ack_result", { outcome: "conflict" });
-  const cur = await deps.store.get(p.request_id); if (!cur || cur.status !== "triaging" || cur.attempt !== p.attempt || cur.lease_id !== p.lease_id || cur.lease_owner !== caller.service || !cur.lease_expires_at || Date.parse(cur.lease_expires_at) <= now) return reply("ack_result", { outcome: "conflict" });
-  const outcome = p.outcome; let next: TriageQuestion; let answerNow: AnswerNowDraft | undefined; let admission: { requestId: string; requestJson: string; jobId: string; accountSub: string; createdAt: string } | null = null;
-  if (closed(outcome, ["status", "reason"]) && outcome.status === "failed" && ["source_unavailable", "validation_failed", "publication_failed"].includes(String(outcome.reason))) {
-    if (cur.attempt === 3) next = { ...cur, status: "triage_failed", retry_after: null, lease_expires_at: null, revision: cur.revision + 1 };
-    else next = { ...cur, status: "received", retry_after: time(Math.min(now + ({ 1: 300, 2: 1800 }[cur.attempt] ?? 1800) * 1000, Date.parse(cur.claimed_at!) + 86400_000)), lease_expires_at: null, revision: cur.revision + 1 };
-  } else if (closed(outcome, ["status", "verdict"]) && outcome.status === "verdict" && validateVerdict(outcome.verdict, cur.request_id)) {
-    const verdict = outcome.verdict; const computed = cellStatus(verdict); const stored = { ...verdict, field_status: computed.fieldStatus };
-    if (verdict.relevant === false) next = { ...cur, status: "junk", verdict_json: canonical(stored), lease_expires_at: null, retry_after: null, revision: cur.revision + 1 };
-    else if (deps.answerNow) {
-      answerNow = await deps.answerNow(cur, stored);
-      next = { ...cur, status: answerNow.state === "confirmation_required" ? "filled" : "no_data", verdict_json: canonical(stored), exploration_request_id: null, lease_expires_at: null, retry_after: null, revision: cur.revision + 2 };
-    } else if (verdict.families.includes("arrival_manager")) {
-      const createdAt = time(now);
-      const request = { academy_basis: "documented_first_team_promotion", as_of: createdAt.slice(0, 10), family: "arrival_manager", joining_basis: "effective_first_team_spell_entry", population: "first_team_available", version: 1, visualization: "table" };
-      const requestJson = canonical(request), requestId = await hash(requestJson), jobId = await hash(`${requestId}\njob`);
-      admission = { requestId, requestJson, jobId, accountSub: cur.account_sub, createdAt };
-      next = { ...cur, status: "queued", verdict_json: canonical(stored), exploration_request_id: requestId, lease_expires_at: null, retry_after: null, revision: cur.revision + 2 };
-    } else { const status = computed.total === 0 || computed.available === 0 ? "no_data" : computed.available === computed.total ? "filled" : "partial"; next = { ...cur, status, verdict_json: canonical(stored), lease_expires_at: null, retry_after: null, revision: cur.revision + 2 }; }
-  } else return reply("ack_result", { outcome: "invalid_verdict" });
-  const response = { outcome: "accepted", status: next.status };
-  const op: TriageOperation = { service: caller.service, type: "ack", operation_id: p.operation_id, body_hash: bodyHash, response, lease_id: cur.lease_id };
-  return await deps.store.ack(cur, next, op, admission, time(now), answerNow) ? reply("ack_result", response) : reply("ack_result", { outcome: "conflict" });
+  if (!callerOk(caller)) return bad("invalid_caller");
+  const v2=deps.protocol===2, p=envelope(raw,"ack",deps.protocol ?? 1); if(isError(p)) return p;
+  if (v2 && !deps.answerNow) throw new Error("answer_now_mapping_unavailable");
+  if (!closed(p,v2 ? ["request_id","expected_revision","expected_generation","attempt","lease_id","operation_id","outcome"] : ["request_id","attempt","lease_id","operation_id","outcome"])
+    || typeof p.request_id!=="string" || p.request_id.length!==64 || !HASH.test(p.request_id) || !isInt(p.attempt,1,3)
+    || typeof p.lease_id!=="string" || !ID.test(p.lease_id) || p.lease_id.trim()!==p.lease_id
+    || typeof p.operation_id!=="string" || !/^qt:[a-z0-9:_-]{1,92}$/.test(p.operation_id) || p.operation_id.trim()!==p.operation_id || !object(p.outcome)
+    || v2 && (!isInt(p.expected_revision,1,Number.MAX_SAFE_INTEGER-2) || !isInt(p.expected_generation,0,3))) return bad("malformed");
+  const now=nowMs(deps), bodyHash=await hash(canonical(v2 ? {protocol:2,kind:"ack",payload:p} : deps.answerNow ? {answer_now:1,payload:p} : p));
+  const prior=await deps.store.operation(caller.service,"ack",p.operation_id,p.request_id), cur=await deps.store.get(p.request_id);
+  if (prior) {
+    if (prior.body_hash!==bodyHash || !cur || (v2 ? !receiptMatches(prior.receipt,cur,p,now) || prior.receipt!.lease_id!==p.lease_id : !!prior.receipt || !!cur.managed)) return reply(deps,"ack_result",{outcome:"conflict"});
+    return reply(deps,"ack_result",{outcome:"replayed",response:prior.response});
+  }
+  if (!cur || !eligible(deps,cur,now) || cur.status!=="triaging" || cur.attempt!==p.attempt || cur.lease_id!==p.lease_id || cur.lease_owner!==caller.service
+    || !cur.lease_expires_at || Date.parse(cur.lease_expires_at)<=now
+    || v2 && (cur.revision!==p.expected_revision || generation(cur)!==p.expected_generation)) return reply(deps,"ack_result",{outcome:"conflict"});
+  const outcome=p.outcome; let next:TriageQuestion; let answerNow:AnswerNowDraft|undefined;
+  let admission:{requestId:string;requestJson:string;jobId:string;accountSub:string;createdAt:string}|null=null;
+  if (closed(outcome,["status","reason"]) && outcome.status==="failed" && ["source_unavailable","validation_failed","publication_failed"].includes(String(outcome.reason))) {
+    next=cur.attempt===3
+      ? {...cur,status:"triage_failed",retry_after:null,lease_expires_at:null,revision:cur.revision+1}
+      : {...cur,status:"received",retry_after:time(Math.min(now+({1:300,2:1800}[cur.attempt] ?? 1800)*1000,Date.parse(cur.claimed_at!)+86400_000)),lease_expires_at:null,revision:cur.revision+1};
+    if(v2 && cur.managed && next.status==="triage_failed") answerNow={state:"failed",specJson:null,snapshotId:null};
+  } else if (closed(outcome,["status","verdict"]) && outcome.status==="verdict" && validateVerdict(outcome.verdict,cur.request_id)) {
+    const verdict=outcome.verdict, computed=cellStatus(verdict), stored={...verdict,field_status:computed.fieldStatus};
+    if(verdict.relevant===false) {
+      next={...cur,status:"junk",verdict_json:canonical(stored),lease_expires_at:null,retry_after:null,revision:cur.revision+1};
+      if(v2 && cur.managed) answerNow={state:"unsupported",specJson:null,snapshotId:null};
+    } else if(deps.answerNow) {
+      answerNow=await deps.answerNow(cur,stored);
+      if(v2 && generation(cur)>=3 && answerNow.state==="clarification_required") answerNow={state:"unsupported",specJson:null,snapshotId:null};
+      next={...cur,status:answerNow.state==="confirmation_required"?"filled":"no_data",verdict_json:canonical(stored),exploration_request_id:null,lease_expires_at:null,retry_after:null,revision:cur.revision+2};
+    } else if(verdict.families.includes("arrival_manager")) {
+      const createdAt=time(now),request={academy_basis:"documented_first_team_promotion",as_of:createdAt.slice(0,10),family:"arrival_manager",joining_basis:"effective_first_team_spell_entry",population:"first_team_available",version:1,visualization:"table"};
+      const requestJson=canonical(request),requestId=await hash(requestJson),jobId=await hash(requestId+"\njob");
+      admission={requestId,requestJson,jobId,accountSub:cur.account_sub,createdAt};
+      next={...cur,status:"queued",verdict_json:canonical(stored),exploration_request_id:requestId,lease_expires_at:null,retry_after:null,revision:cur.revision+2};
+    } else {
+      const status=computed.total===0 || computed.available===0 ? "no_data" : computed.available===computed.total ? "filled" : "partial";
+      next={...cur,status,verdict_json:canonical(stored),lease_expires_at:null,retry_after:null,revision:cur.revision+2};
+    }
+  } else return reply(deps,"ack_result",{outcome:"invalid_verdict"});
+  const response={outcome:"accepted",status:next.status,...(v2 ? {revision:next.revision,generation:generation(cur)} : {})};
+  const op:TriageOperation={service:caller.service,type:"ack",operation_id:p.operation_id,body_hash:bodyHash,response,lease_id:cur.lease_id,
+    ...(v2 ? {receipt:{protocol:2 as const,request_id:cur.request_id,generation:generation(cur),input_revision:cur.revision,applied_revision:next.revision,lease_id:cur.lease_id!}} : {})};
+  return await deps.store.ack(cur,next,op,admission,time(now),answerNow) ? reply(deps,"ack_result",response) : reply(deps,"ack_result",{outcome:"conflict"});
 }
 
 export async function sweepQuestions(deps: TriageDeps, limit = 100, selected?: "expired" | "triaged" | "queued"): Promise<{ moved: number }> {
@@ -160,12 +238,13 @@ export async function sweepQuestions(deps: TriageDeps, limit = 100, selected?: "
   for (const kind of (selected ? [selected] : ["expired", "triaged", "queued"] as const)) {
     const rows = await deps.store.sweepRows(kind, stamp, limit);
     for (const row of rows) {
+      if (!eligible(deps,row,now)) continue;
       try {
         let next: TriageQuestion | null = null;
         if (kind === "expired") next = row.attempt >= 3 ? { ...row, status: "triage_failed", lease_expires_at: null, retry_after: null, revision: row.revision + 1 } : { ...row, status: "received", lease_expires_at: null, retry_after: time(Math.min(now + ({ 1: 300, 2: 1800 }[row.attempt] ?? 1800) * 1000, Date.parse(row.claimed_at!) + 86400_000)), revision: row.revision + 1 };
         else if (kind === "triaged") { const v = JSON.parse(row.verdict_json ?? "null"); const cells = cellStatus(v); const status = cells.total === 0 || cells.available === 0 ? "no_data" : cells.total === cells.available ? "filled" : "partial"; next = { ...row, status, revision: row.revision + 1 }; }
         else { const result = await deps.store.queueResult(row, stamp); if (result !== "pending") { const cells = cellStatus(JSON.parse(row.verdict_json ?? "null")); const fromCells = cells.total === 0 || cells.available === 0 ? "no_data" : cells.available === cells.total ? "filled" : "partial"; const status = result === "gone" ? fromCells : result === "no_data" || result === "failed" || cells.total === 0 ? "no_data" : result === "complete" && cells.available === cells.total ? "filled" : "partial"; next = { ...row, status, revision: row.revision + 1 }; } }
-        if (next && await deps.store.settle(row, next)) moved++;
+        if (next && await deps.store.settle(row, next, stamp)) moved++;
       } catch { /* A corrupt or aborting row never blocks later rows in the batch. */ }
     }
   }

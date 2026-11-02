@@ -19,7 +19,11 @@ export function createQuestionTriageBridgeRouter(resolveCaller: (c: import("hono
     router.post(`/${kind}`, c => handle(c, resolveCaller, kind));
     router.all(`/${kind}`, c => c.text("Method not allowed.", 405, { Allow: "POST" }));
   }
-  router.post("/answer-now/ack", c => handle(c, resolveCaller, "ack", true));
+  for (const kind of ["read","claim"] as const) {
+    router.post(`/answer-now/${kind}`,c=>handle(c,resolveCaller,kind,true,2));
+    router.all(`/answer-now/${kind}`,c=>c.text("Method not allowed.",405,{Allow:"POST"}));
+  }
+  router.post("/answer-now/ack", c => handle(c, resolveCaller, "ack", true,"auto"));
   router.all("/answer-now/ack", c => c.text("Method not allowed.", 405, { Allow: "POST" }));
   router.post("/answer-now/context", async c => {
     const caller = resolveCaller(c);
@@ -34,10 +38,10 @@ export function createQuestionTriageBridgeRouter(resolveCaller: (c: import("hono
     if (!c.env.BRIDGE_CURSOR_KEY) return c.text("Bridge unavailable.", 503);
     try {
       // Schema probe must succeed before a scheduled client claims any question.
-      await c.env.DB.prepare("SELECT request_id FROM question_request_results LIMIT 1").all();
+      if (!await answerNowSchemaReady(c.env)) return c.text("Bridge unavailable.",503);
       const result = await c.env.DB.prepare("SELECT i.person_id AS id,max(p.web_name) AS label FROM player_identities i JOIN players p ON p.player_id=i.player_id GROUP BY i.person_id ORDER BY i.person_id LIMIT 201").all<{ id: string; label: string }>();
       const people = result.results.slice(0,200).filter(p => p.id.length >= 1 && p.id.length <= 64 && /^[a-z0-9]/.test(p.id) && !/[^a-z0-9:_-]/.test(p.id) && p.label.length >= 1 && p.label.length <= 120 && !/[\p{Cc}\p{Cf}]/u.test(p.label));
-      return c.json({ version: 1, kind: "answer_now_context", payload: { catalog_digest: await requestCatalogDigest(), people, has_more: result.results.length > 200 } });
+      return c.json({ version: 1, kind: "answer_now_context", payload: { triage_protocol:2,catalog_digest: await requestCatalogDigest(), people, has_more: result.results.length > 200 } });
     } catch { return c.text("Bridge unavailable.", 503); }
   });
   router.all("/answer-now/context", c => c.text("Method not allowed.", 405, { Allow: "POST" }));
@@ -80,14 +84,23 @@ async function readBody(request: Request,maxBytes=TRIAGE_MAX_REQUEST_BYTES): Pro
     return { ok: true, raw: new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes) };
   } catch { return { ok: false, status: 400 }; }
 }
-async function handle(c: import("hono").Context<QuestionTriageEnv>, resolve: (c: import("hono").Context<QuestionTriageEnv>) => TriageCaller | null, kind: "read" | "claim" | "ack", answerNow = false): Promise<Response> {
+async function answerNowSchemaReady(env:Env):Promise<boolean>{
+  await env.DB.prepare("SELECT request_id FROM question_request_results LIMIT 1").all();
+  await env.DB.prepare("SELECT request_id FROM question_request_clarifications LIMIT 1").all();
+  const guards=await env.DB.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name IN ('question_requests_clarification_state_machine','question_requests_clarification_clock_update','question_request_results_generation_transition','question_request_results_spec_update','question_requests_state_machine','question_requests_clock_update','question_request_results_transition')").all<{name:string}>();
+  const expected=new Set(['question_requests_clarification_state_machine','question_requests_clarification_clock_update','question_request_results_generation_transition','question_request_results_spec_update']);
+  return guards.results.length===expected.size && guards.results.every(row=>expected.has(row.name));
+}
+async function handle(c: import("hono").Context<QuestionTriageEnv>, resolve: (c: import("hono").Context<QuestionTriageEnv>) => TriageCaller | null, kind: "read" | "claim" | "ack", answerNow = false,requestedProtocol:1|2|"auto"=1): Promise<Response> {
   const caller = resolve(c); if (!caller) return c.json({ error: "invalid_caller" }, 403);
   const body = await readBody(c.req.raw);
   if (!body.ok) return c.json({ error: body.status === 413 ? "too_large" : "malformed" }, body.status);
   const raw = body.raw;
   if (!c.env.BRIDGE_CURSOR_KEY) return c.text("Bridge unavailable.", 503);
-  const store = new D1QuestionTriageStore(c.env.DB);
-  const deps: TriageDeps = { store, cursorKey: new TextEncoder().encode(c.env.BRIDGE_CURSOR_KEY), now: c.env.BRIDGE_NOW ?? (() => new Date()), newLeaseId: c.env.BRIDGE_NEW_LEASE_ID ?? (() => crypto.randomUUID()) };
+  let protocol:1|2=requestedProtocol==="auto"?1:requestedProtocol;
+  if(requestedProtocol==="auto"){try{if(JSON.parse(raw)?.version===2)protocol=2;}catch{/* closed core decoder returns malformed */}}
+  const store = new D1QuestionTriageStore(c.env.DB,protocol);
+  const deps: TriageDeps = { protocol,store, cursorKey: new TextEncoder().encode(c.env.BRIDGE_CURSOR_KEY), now: c.env.BRIDGE_NOW ?? (() => new Date()), newLeaseId: c.env.BRIDGE_NEW_LEASE_ID ?? (() => crypto.randomUUID()) };
   if (answerNow) deps.answerNow = async (row, verdict) => {
     const mapped = await mapQuestionVerdict(verdict, { requestId: row.request_id, revision: row.revision+2, locale: row.locale, snapshotId: await currentSnapshot(c.env), resolvePerson: async (id, competition) => (await resolvePlayerIdentity(c.env,id,competition))?.person_id ?? null });
     if (mapped.kind === "ready") return { state: "confirmation_required", specJson: JSON.stringify(mapped.spec), snapshotId: mapped.spec.data_snapshot_id };
@@ -96,6 +109,7 @@ async function handle(c: import("hono").Context<QuestionTriageEnv>, resolve: (c:
     throw new Error("invalid_answer_now_mapping");
   };
   try {
+    if(protocol===2 && !await answerNowSchemaReady(c.env))return c.text("Bridge unavailable.",503);
     if (kind !== "ack" && !(await sweepQuestionBeforeRequest(deps))) return c.text("Bridge unavailable.", 503);
     const result = kind === "read" ? await readQuestions(deps, caller, raw) : kind === "claim" ? await claimQuestion(deps, caller, raw) : await ackQuestion(deps, caller, raw);
     if (!result.ok) return c.json({ error: result.error }, result.error === "too_large" ? 413 : result.error === "invalid_caller" ? 403 : 400);
