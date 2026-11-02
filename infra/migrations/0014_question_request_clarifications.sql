@@ -244,4 +244,3 @@ BEGIN SELECT RAISE(ABORT,'invalid request result generation transition'); END;
 DROP TRIGGER IF EXISTS question_requests_state_machine;
 DROP TRIGGER IF EXISTS question_requests_clock_update;
 DROP TRIGGER IF EXISTS question_request_results_transition;
-
