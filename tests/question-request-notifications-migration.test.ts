@@ -60,6 +60,14 @@ describe("durable ID-only notification migration",()=>{
     const x=fixture();x.grant();x.bind();expect(()=>x.update("issue_number=102")).toThrow();expect(()=>x.update("create_state='pending',issue_number=NULL")).toThrow();
     const other="c".repeat(64);x.parent(other);x.insert(other);x.grant(true,other);expect(()=>x.bind(101,other)).toThrow();expect(x.row(other).issue_number).toBeNull();
   });
+  it("prevents UPDATE OR REPLACE from deleting another request's one-time grant",()=>{
+    const x=fixture();x.db.exec("PRAGMA recursive_triggers=OFF");x.grant();x.bind();const original=x.row();
+    const other="c".repeat(64);x.parent(other);x.insert(other);x.grant(true,other);
+    expect(()=>x.db.prepare(`UPDATE OR REPLACE question_request_notifications SET create_state='bound',issue_number=101,${clear},revision=revision+1,updated_at=? WHERE request_id=?`).run(x.now(),other)).toThrow();
+    expect(x.row()).toEqual(original);expect(x.row(other).create_state).toBe("pending");
+    expect(()=>x.db.prepare("INSERT OR REPLACE INTO question_request_notifications(request_id,desired_status,create_state,issue_number,created_at,updated_at,expires_at)VALUES(?,'triaging','bound',101,?,?,?)").run("d".repeat(64),x.now(),x.now(),x.expires)).toThrow();
+    expect(x.row()).toEqual(original);
+  });
   it("advances desired revision only on fixed content changes",()=>{
     const x=fixture();x.update("desired_status=desired_status");expect(x.row()).toMatchObject({revision:2,desired_revision:1});
     expect(()=>x.update("desired_revision=desired_revision+1")).toThrow();expect(()=>x.update("desired_status='building'")).toThrow();

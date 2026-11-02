@@ -39,6 +39,17 @@ CREATE TRIGGER IF NOT EXISTS question_request_notifications_no_replace
 BEFORE INSERT ON question_request_notifications WHEN EXISTS(SELECT 1 FROM question_request_notifications WHERE request_id=NEW.request_id)
 BEGIN SELECT RAISE(IGNORE); END;
 
+-- REPLACE deletes uniqueness conflicts without DELETE triggers when recursive
+-- triggers are off. Reject issue conflicts before SQLite reaches that deletion.
+CREATE TRIGGER IF NOT EXISTS question_request_notifications_issue_insert
+BEFORE INSERT ON question_request_notifications WHEN NEW.issue_number IS NOT NULL AND
+ EXISTS(SELECT 1 FROM question_request_notifications n WHERE n.issue_number=NEW.issue_number AND n.request_id!=NEW.request_id)
+BEGIN SELECT RAISE(ABORT,'notification issue already bound'); END;
+CREATE TRIGGER IF NOT EXISTS question_request_notifications_issue_update
+BEFORE UPDATE OF issue_number ON question_request_notifications WHEN NEW.issue_number IS NOT NULL AND
+ EXISTS(SELECT 1 FROM question_request_notifications n WHERE n.issue_number=NEW.issue_number AND n.request_id!=NEW.request_id)
+BEGIN SELECT RAISE(ABORT,'notification issue already bound'); END;
+
 CREATE TRIGGER IF NOT EXISTS question_request_notifications_initial
 BEFORE INSERT ON question_request_notifications
 WHEN NEW.revision IS NOT 1 OR NEW.desired_revision IS NOT 1 OR NEW.delivered_revision IS NOT 0 OR NEW.create_state IS NOT 'ready'
