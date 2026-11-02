@@ -66,7 +66,7 @@ function screenQuestion(s: string): boolean {
   if ((folded.match(/\S{20,}/g) ?? []).some(token => { const core = token.replace(/[-/]/g, ""); return core.length >= 20 && /[a-z]/i.test(core) && /\d/.test(core); })) return false;
   return true;
 }
-function validateVerdict(v: unknown, requestId: string): v is Record<string, any> {
+export function validateVerdict(v: unknown, requestId: string): v is Record<string, any> {
   if (!object(v) || !checkStrings(v) || bytes(canonical(v)) > 10240 || !closed(v, ["version", "request_id", "relevant", "junk_reason", "restated_question", "tables", "visuals", "field_status", "families"])) return false;
   if (v.version !== 1 || v.request_id !== requestId || typeof v.relevant !== "boolean" || typeof v.restated_question !== "string" || v.restated_question.length > 300 || !screenQuestion(v.restated_question) || !Array.isArray(v.tables) || v.tables.length > 3 || !Array.isArray(v.visuals) || v.visuals.length > 4 || !Array.isArray(v.field_status) || v.field_status.length > 24 || !Array.isArray(v.families) || v.families.length > 1) return false;
   if (v.relevant ? v.junk_reason !== null || !v.restated_question.trim() : !["off_topic", "not_a_question", "abusive", "prompt_injection", "unintelligible", "out_of_scope"].includes(String(v.junk_reason)) || v.tables.length || v.visuals.length || v.field_status.length || v.families.length) return false;
