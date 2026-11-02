@@ -87,6 +87,14 @@ describe("generation-fenced triage v2",()=>{
     const request=JSON.parse(x.ackBody(c.question,{status:"failed",reason:"source_unavailable"}));request.payload.data_snapshot_id="new-snapshot";
     expect(body(await ackQuestion(x.deps,caller,JSON.stringify(request))).payload.outcome).toBe("conflict");expect(x.q().status).toBe("triaging");
   });
+  it("rechecks metadata after awaited claim or ack receipt reads",async()=>{
+    for(const kind of ["claim","ack"] as const){
+      const x=fixture(),c=await x.claim(),ack=x.ackBody(c.question);if(kind==="ack")await ackQuestion(x.deps,caller,ack);
+      const get=x.store.get.bind(x.store);x.store.get=async requestId=>{const row=await get(requestId);x.db.prepare("INSERT INTO snapshots(snapshot_id,created_at,sources_json,row_counts) VALUES(?,?,'{}','{}')").run("new-snapshot",stamp(Date.parse(x.now())+1000));return row;};
+      const result=kind==="claim"?await claimQuestion(x.deps,caller,c.request):await ackQuestion(x.deps,caller,ack);
+      expect(body(result).payload.outcome).toBe("conflict");
+    }
+  });
   it("reads and claims initial generation with bounded text-free receipts",async()=>{
     const x=fixture(),read=body(await readQuestions(x.deps,caller,wire("read",{cursor:null,limit:10})));
     expect(read.version).toBe(2);expect(read.payload.questions).toEqual([{request_id:id,locale:"en",text:"Original question",revision:1,generation:0,attempt:0}]);expect(JSON.stringify(read)).not.toContain("owner");
