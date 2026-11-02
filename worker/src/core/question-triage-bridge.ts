@@ -14,7 +14,7 @@ const seasons = new Set(catalog.coverage.map(row => row.season));
 
 export interface TriageCaller { service: string; capability: string }
 export interface TriageQuestion { request_id: string; locale: "en" | "es"; text: string; account_sub: string; status: string; attempt: number; lease_id: string | null; lease_owner: string | null; lease_expires_at: string | null; retry_after: string | null; revision: number; claimed_at: string | null; verdict_json: string | null; exploration_request_id: string | null; managed?: number; generation?: number; result_revision?: number; result_state?: string | null; clarification_valid?: number; expires_at?: string; response_deadline?: string | null }
-export interface TriageReceipt { protocol: 2; request_id: string; generation: number; input_revision: number; applied_revision: number; lease_id: string }
+export interface TriageReceipt { protocol: 2; request_id: string; generation: number; input_revision: number; applied_revision: number; lease_id: string; catalog_digest:string; data_snapshot_id:string }
 export interface TriageOperation { service: string; type: "claim" | "ack"; operation_id: string; body_hash: string; response: unknown; lease_id: string | null; receipt?: TriageReceipt }
 export interface AnswerNowDraft { state: "confirmation_required" | "clarification_required" | "unsupported" | "unavailable" | "failed"; specJson: string | null; snapshotId: string | null }
 export interface TriageStore {
@@ -29,7 +29,7 @@ export interface TriageStore {
   /** Authoritative DB-clock deadline expiry and current-binding invalidation. */
   maintainResults?(limit: number): Promise<number>;
 }
-export interface TriageDeps { protocol?: 1 | 2; store: TriageStore; now(): Date; newLeaseId(): string; cursorKey: Uint8Array; answerNow?(row: TriageQuestion, verdict: unknown): Promise<AnswerNowDraft> }
+export interface TriageDeps { protocol?: 1 | 2; store: TriageStore; now(): Date; newLeaseId(): string; cursorKey: Uint8Array; currentContext?():Promise<{catalog_digest:string;data_snapshot_id:string|null}>; answerNow?(row: TriageQuestion, verdict: unknown): Promise<AnswerNowDraft> }
 export type TriageError = "malformed" | "too_large" | "invalid_caller" | "invalid_cursor";
 export type TriageResult = { ok: true; body: string } | { ok: false; error: TriageError };
 const HASH = /^[0-9a-f]{64}$/;
@@ -107,14 +107,23 @@ function cellStatus(verdict: Record<string, any>): { total: number; available: n
 
 /** Metadata is private receipt data, never a second durable copy of question text. */
 export function parseTriageReceipt(value: unknown): TriageReceipt | null {
-  if (!object(value) || !closed(value, ["protocol","request_id","generation","input_revision","applied_revision","lease_id"])
+  if (!object(value) || !closed(value, ["protocol","request_id","generation","input_revision","applied_revision","lease_id","catalog_digest","data_snapshot_id"])
     || value.protocol !== 2 || typeof value.request_id !== "string" || value.request_id.length !== 64 || !HASH.test(value.request_id)
     || !isInt(value.generation,0,3) || !isInt(value.input_revision,1,Number.MAX_SAFE_INTEGER-2)
     || !isInt(value.applied_revision,value.input_revision+1,value.input_revision+2)
-    || typeof value.lease_id !== "string" || !ID.test(value.lease_id) || value.lease_id.trim() !== value.lease_id) return null;
+    || typeof value.lease_id !== "string" || !ID.test(value.lease_id) || value.lease_id.trim() !== value.lease_id
+    || !contextShape(value)) return null;
   return value as unknown as TriageReceipt;
 }
 function generation(row: TriageQuestion): number { return row.generation ?? 0; }
+function contextShape(p:Record<string,unknown>):boolean{
+  return typeof p.catalog_digest==="string" && p.catalog_digest.length===64 && HASH.test(p.catalog_digest)
+    && typeof p.data_snapshot_id==="string" && p.data_snapshot_id.length>=1 && p.data_snapshot_id.length<=128 && !/[^A-Za-z0-9:_-]/.test(p.data_snapshot_id);
+}
+async function contextMatches(deps:TriageDeps,p:Record<string,unknown>):Promise<boolean>{
+  if(!deps.currentContext)throw new Error("triage_context_unavailable");
+  const current=await deps.currentContext();return current.catalog_digest===p.catalog_digest && current.data_snapshot_id===p.data_snapshot_id;
+}
 function retained(row: TriageQuestion, now: number): boolean {
   return typeof row.expires_at === "string" && Date.parse(row.expires_at) > now;
 }
@@ -129,6 +138,7 @@ function eligible(deps: TriageDeps, row: TriageQuestion, now: number): boolean {
 }
 function receiptMatches(receipt: TriageReceipt | undefined, row: TriageQuestion | null, p: Record<string,unknown>, now: number): boolean {
   return !!receipt && !!row && receipt.request_id === p.request_id && receipt.generation === p.expected_generation
+    && receipt.catalog_digest===p.catalog_digest && receipt.data_snapshot_id===p.data_snapshot_id
     && receipt.input_revision === p.expected_revision && generation(row) === receipt.generation
     && row.revision === receipt.applied_revision && retained(row,now);
 }
@@ -163,10 +173,11 @@ async function verifyCursor(key: Uint8Array, caller: TriageCaller, id: string, t
 export async function claimQuestion(deps: TriageDeps, caller: TriageCaller, raw: unknown): Promise<TriageResult> {
   if (!callerOk(caller)) return bad("invalid_caller");
   const v2=deps.protocol === 2, p=envelope(raw,"claim",deps.protocol ?? 1); if(isError(p)) return p;
-  if (!closed(p,v2 ? ["request_id","expected_revision","expected_generation","expected_attempt","operation_id"] : ["request_id","expected_attempt","operation_id"])
+  if (!closed(p,v2 ? ["request_id","expected_revision","expected_generation","expected_attempt","operation_id","catalog_digest","data_snapshot_id"] : ["request_id","expected_attempt","operation_id"])
     || typeof p.request_id !== "string" || p.request_id.length!==64 || !HASH.test(p.request_id)
     || !isInt(p.expected_attempt,0,2) || typeof p.operation_id !== "string" || !/^qt:[a-z0-9:_-]{1,92}$/.test(p.operation_id) || p.operation_id.trim()!==p.operation_id
-    || v2 && (!isInt(p.expected_revision,1,Number.MAX_SAFE_INTEGER-2) || !isInt(p.expected_generation,0,3))) return bad("malformed");
+    || v2 && (!isInt(p.expected_revision,1,Number.MAX_SAFE_INTEGER-2) || !isInt(p.expected_generation,0,3) || !contextShape(p))) return bad("malformed");
+  if(v2 && !await contextMatches(deps,p))return reply(deps,"claim_result",{outcome:"conflict"});
   const now=nowMs(deps), bodyHash=await hash(canonical(v2 ? {protocol:2,kind:"claim",payload:p} : p));
   const prior=await deps.store.operation(caller.service,"claim",p.operation_id,p.request_id), cur=await deps.store.get(p.request_id);
   if (prior) {
@@ -183,18 +194,19 @@ export async function claimQuestion(deps: TriageDeps, caller: TriageCaller, raw:
   const next={...cur,status:"triaging",attempt:cur.attempt+1,lease_id:lease,lease_owner:caller.service,
     lease_expires_at:time(now+TRIAGE_LEASE_SECONDS*1000),claimed_at:time(now),retry_after:null,revision:cur.revision+1};
   const op:TriageOperation={service:caller.service,type:"claim",operation_id:p.operation_id,body_hash:bodyHash,response:claimResponse(deps,next,!v2),lease_id:lease,
-    ...(v2 ? {receipt:{protocol:2 as const,request_id:cur.request_id,generation:generation(cur),input_revision:cur.revision,applied_revision:next.revision,lease_id:lease}} : {})};
+    ...(v2 ? {receipt:{protocol:2 as const,request_id:cur.request_id,generation:generation(cur),input_revision:cur.revision,applied_revision:next.revision,lease_id:lease,catalog_digest:p.catalog_digest as string,data_snapshot_id:p.data_snapshot_id as string}} : {})};
   return await deps.store.claim(cur,next,op) ? reply(deps,"claim_result",claimResponse(deps,next)) : reply(deps,"claim_result",{outcome:"conflict"});
 }
 export async function ackQuestion(deps: TriageDeps, caller: TriageCaller, raw: unknown): Promise<TriageResult> {
   if (!callerOk(caller)) return bad("invalid_caller");
   const v2=deps.protocol===2, p=envelope(raw,"ack",deps.protocol ?? 1); if(isError(p)) return p;
   if (v2 && !deps.answerNow) throw new Error("answer_now_mapping_unavailable");
-  if (!closed(p,v2 ? ["request_id","expected_revision","expected_generation","attempt","lease_id","operation_id","outcome"] : ["request_id","attempt","lease_id","operation_id","outcome"])
+  if (!closed(p,v2 ? ["request_id","expected_revision","expected_generation","attempt","lease_id","operation_id","outcome","catalog_digest","data_snapshot_id"] : ["request_id","attempt","lease_id","operation_id","outcome"])
     || typeof p.request_id!=="string" || p.request_id.length!==64 || !HASH.test(p.request_id) || !isInt(p.attempt,1,3)
     || typeof p.lease_id!=="string" || !ID.test(p.lease_id) || p.lease_id.trim()!==p.lease_id
     || typeof p.operation_id!=="string" || !/^qt:[a-z0-9:_-]{1,92}$/.test(p.operation_id) || p.operation_id.trim()!==p.operation_id || !object(p.outcome)
-    || v2 && (!isInt(p.expected_revision,1,Number.MAX_SAFE_INTEGER-2) || !isInt(p.expected_generation,0,3))) return bad("malformed");
+    || v2 && (!isInt(p.expected_revision,1,Number.MAX_SAFE_INTEGER-2) || !isInt(p.expected_generation,0,3) || !contextShape(p))) return bad("malformed");
+  if(v2 && !await contextMatches(deps,p))return reply(deps,"ack_result",{outcome:"conflict"});
   const now=nowMs(deps), bodyHash=await hash(canonical(v2 ? {protocol:2,kind:"ack",payload:p} : deps.answerNow ? {answer_now:1,payload:p} : p));
   const prior=await deps.store.operation(caller.service,"ack",p.operation_id,p.request_id), cur=await deps.store.get(p.request_id);
   if (prior) {
@@ -218,6 +230,7 @@ export async function ackQuestion(deps: TriageDeps, caller: TriageCaller, raw: u
       if(v2 && cur.managed) answerNow={state:"unsupported",specJson:null,snapshotId:null};
     } else if(deps.answerNow) {
       answerNow=await deps.answerNow(cur,stored);
+      if(v2 && (!await contextMatches(deps,p) || answerNow.snapshotId!==null && answerNow.snapshotId!==p.data_snapshot_id))return reply(deps,"ack_result",{outcome:"conflict"});
       if(v2 && generation(cur)>=3 && answerNow.state==="clarification_required") answerNow={state:"unsupported",specJson:null,snapshotId:null};
       next={...cur,status:answerNow.state==="confirmation_required"?"filled":"no_data",verdict_json:canonical(stored),exploration_request_id:null,lease_expires_at:null,retry_after:null,revision:cur.revision+2};
     } else if(verdict.families.includes("arrival_manager")) {
@@ -232,7 +245,7 @@ export async function ackQuestion(deps: TriageDeps, caller: TriageCaller, raw: u
   } else return reply(deps,"ack_result",{outcome:"invalid_verdict"});
   const response={outcome:"accepted",status:next.status,...(v2 ? {revision:next.revision,generation:generation(cur)} : {})};
   const op:TriageOperation={service:caller.service,type:"ack",operation_id:p.operation_id,body_hash:bodyHash,response,lease_id:cur.lease_id,
-    ...(v2 ? {receipt:{protocol:2 as const,request_id:cur.request_id,generation:generation(cur),input_revision:cur.revision,applied_revision:next.revision,lease_id:cur.lease_id!}} : {})};
+    ...(v2 ? {receipt:{protocol:2 as const,request_id:cur.request_id,generation:generation(cur),input_revision:cur.revision,applied_revision:next.revision,lease_id:cur.lease_id!,catalog_digest:p.catalog_digest as string,data_snapshot_id:p.data_snapshot_id as string}} : {})};
   return await deps.store.ack(cur,next,op,admission,time(now),answerNow) ? reply(deps,"ack_result",response) : reply(deps,"ack_result",{outcome:"conflict"});
 }
 
