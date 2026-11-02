@@ -10,8 +10,8 @@ CREATE TABLE IF NOT EXISTS question_request_results (
   attempt INTEGER NOT NULL DEFAULT 0 CHECK(typeof(attempt)='integer' AND attempt BETWEEN 0 AND 3),
   spec_json TEXT CHECK(spec_json IS NULL OR coalesce(typeof(spec_json)='text' AND length(CAST(spec_json AS BLOB))<=16384 AND json_valid(spec_json) AND json_type(spec_json)='object',0)),
   verified_json TEXT CHECK(verified_json IS NULL OR coalesce(typeof(verified_json)='text' AND length(CAST(verified_json AS BLOB))<=32768 AND json_valid(verified_json) AND json_type(verified_json)='object',0)),
-  lease_id TEXT CHECK(lease_id IS NULL OR (typeof(lease_id)='text' AND length(lease_id) BETWEEN 1 AND 96 AND lease_id NOT GLOB '*[^a-z0-9:_-]*')),
-  lease_owner TEXT CHECK(lease_owner IS NULL OR (typeof(lease_owner)='text' AND length(lease_owner) BETWEEN 1 AND 96 AND lease_owner NOT GLOB '*[^a-z0-9:_-]*')),
+  lease_id TEXT CHECK(lease_id IS NULL OR (typeof(lease_id)='text' AND length(lease_id) BETWEEN 1 AND 96 AND lease_id GLOB '[a-z0-9]*' AND instr(lease_id,char(0))=0 AND lease_id NOT GLOB '*[^a-z0-9:_-]*')),
+  lease_owner TEXT CHECK(lease_owner IS NULL OR (typeof(lease_owner)='text' AND length(lease_owner) BETWEEN 1 AND 96 AND lease_owner GLOB '[a-z0-9]*' AND instr(lease_owner,char(0))=0 AND lease_owner NOT GLOB '*[^a-z0-9:_-]*')),
   lease_expires_at TEXT CHECK(lease_expires_at IS NULL OR (typeof(lease_expires_at)='text' AND length(lease_expires_at)=20 AND strftime('%Y-%m-%dT%H:%M:%SZ',lease_expires_at) IS lease_expires_at)),
   created_at TEXT NOT NULL CHECK(typeof(created_at)='text' AND length(created_at)=20 AND strftime('%Y-%m-%dT%H:%M:%SZ',created_at) IS created_at),
   updated_at TEXT NOT NULL CHECK(typeof(updated_at)='text' AND length(updated_at)=20 AND strftime('%Y-%m-%dT%H:%M:%SZ',updated_at) IS updated_at AND updated_at>=created_at),
@@ -111,15 +111,17 @@ WHEN NEW.request_id IS NOT OLD.request_id OR NEW.request_revision IS NOT OLD.req
  OR (NEW.state='building' AND OLD.state='confirmation_required' AND OLD.response_deadline<=strftime('%Y-%m-%dT%H:%M:%SZ','now'))
  OR (NEW.state='released' AND OLD.lease_expires_at<=strftime('%Y-%m-%dT%H:%M:%SZ','now'))
  OR (NEW.lease_expires_at IS NOT NULL AND NEW.lease_expires_at>NEW.expires_at)
+ OR (NEW.state='in_review' AND NEW.lease_expires_at>strftime('%Y-%m-%dT%H:%M:%SZ','now','+900 seconds'))
  OR NOT EXISTS(SELECT 1 FROM question_requests q WHERE q.request_id=NEW.request_id AND q.revision=NEW.request_revision)
  OR NOT coalesce(
    (OLD.state='confirmation_required' AND NEW.state='building' AND OLD.response_deadline>NEW.updated_at AND NEW.attempt=OLD.attempt AND NEW.lease_id IS OLD.lease_id AND NEW.lease_owner IS OLD.lease_owner)
    OR (OLD.state='building' AND NEW.state='in_review' AND OLD.attempt<3 AND NEW.attempt=OLD.attempt+1 AND NEW.lease_id IS NOT OLD.lease_id)
    OR (OLD.state='in_review' AND NEW.state IN ('released','building','failed') AND NEW.attempt=OLD.attempt AND NEW.lease_id IS OLD.lease_id AND NEW.lease_owner IS OLD.lease_owner
        AND (NEW.state!='released' OR OLD.lease_expires_at>NEW.updated_at)
-       AND (NEW.state!='building' OR OLD.lease_expires_at<=NEW.updated_at AND OLD.attempt<3)
-       AND (NEW.state!='failed' OR OLD.attempt=3 AND OLD.lease_expires_at<=NEW.updated_at))
-   OR (OLD.state IN ('clarification_required','confirmation_required') AND NEW.state='expired' AND OLD.response_deadline<=NEW.updated_at AND NEW.attempt=OLD.attempt AND NEW.lease_id IS OLD.lease_id AND NEW.lease_owner IS OLD.lease_owner)
+       AND (NEW.state!='building' OR OLD.lease_expires_at<=NEW.updated_at AND OLD.lease_expires_at<=strftime('%Y-%m-%dT%H:%M:%SZ','now') AND OLD.attempt<3)
+       AND (NEW.state!='failed' OR OLD.attempt=3 AND OLD.lease_expires_at<=NEW.updated_at AND OLD.lease_expires_at<=strftime('%Y-%m-%dT%H:%M:%SZ','now')))
+   OR (OLD.state IN ('clarification_required','confirmation_required') AND NEW.state='expired' AND OLD.response_deadline<=NEW.updated_at AND OLD.response_deadline<=strftime('%Y-%m-%dT%H:%M:%SZ','now') AND NEW.attempt=OLD.attempt AND NEW.lease_id IS OLD.lease_id AND NEW.lease_owner IS OLD.lease_owner)
+   OR (OLD.state IN ('building','in_review') AND NEW.state='expired' AND OLD.expires_at<=NEW.updated_at AND OLD.expires_at<=strftime('%Y-%m-%dT%H:%M:%SZ','now') AND NEW.attempt=OLD.attempt AND NEW.lease_id IS OLD.lease_id AND NEW.lease_owner IS OLD.lease_owner)
    OR (OLD.state='released' AND NEW.state='stale' AND NEW.attempt=OLD.attempt AND NEW.lease_id IS OLD.lease_id AND NEW.lease_owner IS OLD.lease_owner),0)
 BEGIN SELECT RAISE(ABORT,'invalid request result transition'); END;
 

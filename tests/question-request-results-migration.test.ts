@@ -70,6 +70,32 @@ describe("request result persistence foundation", () => {
     db.prepare("UPDATE question_request_results SET state='released',verified_json=?,lease_expires_at=NULL,revision=revision+1").run(JSON.stringify(evidence()));
     expect(db.prepare("SELECT state FROM question_request_results").get().state).toBe("released");
   });
+  it("uses the database clock for lease duration and recovery, not future audit timestamps", () => {
+    const db = fresh(); insert(db); db.exec("UPDATE question_request_results SET state='building',revision=2");
+    const future = iso(Date.parse(now)+120_000);
+    expect(() => db.prepare("UPDATE question_request_results SET state='in_review',attempt=1,lease_id='valid',lease_owner='service',updated_at=?,lease_expires_at=?,revision=3").run(future,iso(Date.parse(now)+1020_000))).toThrow();
+    db.prepare("UPDATE question_request_results SET state='in_review',attempt=1,lease_id='valid',lease_owner='service',lease_expires_at=?,revision=3").run(iso(Date.parse(now)+60_000));
+    expect(() => db.prepare("UPDATE question_request_results SET state='building',lease_expires_at=NULL,updated_at=?,revision=4").run(future)).toThrow();
+  });
+  it("rejects invalid lease identity prefixes and hidden NUL suffixes", () => {
+    const db = fresh(); insert(db); db.exec("UPDATE question_request_results SET state='building',revision=2");
+    for (const lease of [":bad", "-bad", "valid\u0000hidden"]) expect(() => db.prepare("UPDATE question_request_results SET state='in_review',attempt=1,lease_id=?,lease_owner='service',lease_expires_at=?,revision=3").run(lease,iso(Date.parse(now)+60_000))).toThrow();
+  });
+  it.each(["building", "in_review"])("can expire retained execution from %s using authoritative time", state => {
+    const db = fresh(), clockDb = new DatabaseSync(":memory:"); let clock = now;
+    // Replace only the test database's clock; all date formatting still goes
+    // through SQLite's real strftime implementation on a separate connection.
+    db.function("strftime", { varargs: true }, (...args: (string | number | null)[]) => {
+      const bound = args.map(arg => arg === "now" ? clock : arg);
+      return clockDb.prepare(`SELECT strftime(${bound.map(() => "?").join(",")}) AS value`).get(...bound).value;
+    });
+    insert(db);
+    if (state === "in_review") claim(db);
+    else db.exec("UPDATE question_request_results SET state='building',revision=2");
+    clock = iso(Date.parse(expires)+1000);
+    db.prepare("UPDATE question_request_results SET state='expired',lease_expires_at=NULL,updated_at=?,revision=revision+1").run(clock);
+    expect(db.prepare("SELECT state FROM question_request_results").get().state).toBe("expired");
+  });
   it("marks a release stale only after clearing its evidence", () => {
     const db = fresh(); insert(db); claim(db);
     db.prepare("UPDATE question_request_results SET state='released',verified_json=?,lease_expires_at=NULL,revision=revision+1").run(JSON.stringify(evidence()));
