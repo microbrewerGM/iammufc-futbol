@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import {handleNotification} from "../core/question-request-notifications";
 import { currentSnapshot, resolvePlayerIdentity, type Env } from "../core/db";
 import { mapQuestionVerdict, requestCatalogDigest } from "../core/question-request-intent";
 import { ackQuestion, claimQuestion, readQuestions, TRIAGE_CAPABILITY, TRIAGE_MAX_REQUEST_BYTES, type TriageCaller, type TriageDeps } from "../core/question-triage-bridge";
@@ -15,6 +16,15 @@ export function createQuestionTriageBridgeRouter(resolveCaller: (c: import("hono
   return /^[a-z0-9][a-z0-9:_-]{0,95}$/.test(service) ? { service, capability: TRIAGE_CAPABILITY } : null;
 }) {
   const router = new Hono<QuestionTriageEnv>();
+  for(const kind of ["read","prepare","check","bind","ack"] as const){
+    router.post(`/answer-now/notifications/${kind}`,async c=>{
+      const caller=resolveCaller(c);if(!caller || caller.capability!==TRIAGE_CAPABILITY)return c.json({error:"invalid_caller"},403);
+      const raw=await readBody(c.req.raw,8192);if(!raw.ok)return c.json({error:raw.status===413?"too_large":"malformed"},raw.status);
+      const result=await handleNotification(c.env,caller,kind,raw.raw,c.env.BRIDGE_NEW_LEASE_ID);
+      return new Response(result.body,{status:result.status,headers:{"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"}});
+    });
+    router.all(`/answer-now/notifications/${kind}`,c=>c.text("Method not allowed.",405,{Allow:"POST"}));
+  }
   for (const kind of ["read", "claim", "ack"] as const) {
     router.post(`/${kind}`, c => handle(c, resolveCaller, kind));
     router.all(`/${kind}`, c => c.text("Method not allowed.", 405, { Allow: "POST" }));
