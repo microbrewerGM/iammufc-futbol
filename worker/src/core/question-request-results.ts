@@ -57,7 +57,9 @@ export async function confirmQuestionResult(deps: ResultDeps, requestId: string,
 export async function claimQuestionResult(deps: ResultDeps, requestId: string, revision: number, service: string): Promise<ResultTransition> {
   const row = await deps.store.get(requestId), now = clock(deps);
   if (!row) return "not_found";
-  if (!ID.test(service) || row.revision !== revision || !live(row, now) || row.attempt >= 3 || (row.state !== "building" && !(row.state === "in_review" && row.leaseExpiresAt !== null && Date.parse(row.leaseExpiresAt) <= now))) return "conflict";
+  // Expired work must pass through recoverQuestionResult first, matching the
+  // durable schema's in_review -> building -> in_review transition sequence.
+  if (!ID.test(service) || row.revision !== revision || !live(row, now) || row.attempt >= 3 || row.state !== "building") return "conflict";
   const lease = deps.newLeaseId();
   if (!ID.test(lease) || lease === row.leaseId) throw new Error("invalid_lease_id");
   return save(deps, row, next(row, now, { state: "in_review", attempt: row.attempt + 1, leaseId: lease, leaseOwner: service, leaseExpiresAt: stamp(Math.min(now + 900_000, Date.parse(row.expiresAt))) }));
