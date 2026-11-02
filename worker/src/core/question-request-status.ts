@@ -12,7 +12,7 @@ const catalog = new Catalog(decodeCompiledCatalog(compiled));
 type State = ResultState | "clarification_required" | "unsupported" | "unavailable" | "stale";
 export interface RequestStatusView {
   requestId: string; revision: number; state: State; personLabel?: string;
-  intent?: QueryIntent; resultPath?: string; currentBinding?: boolean;
+  intent?: QueryIntent; resultPath?: string; currentBinding?: boolean; clarificationAvailable?: boolean;
 }
 interface StatusRow {
   request_id: string; request_revision: number; parent_revision: number; revision: number; state: State;
@@ -30,7 +30,7 @@ export async function readQuestionResultStatus(env: Env, account: string, reques
     FROM question_request_results r JOIN question_requests q ON q.request_id=r.request_id
     WHERE r.request_id=? AND q.account_sub=?`).bind(requestId,account).first<StatusRow>();
   if (!row) return undefined;
-  const view: RequestStatusView = {requestId,revision:row.revision,state:row.state,currentBinding:false};
+  const view: RequestStatusView = {requestId,revision:row.revision,state:row.state,currentBinding:false,clarificationAvailable:false};
   if (row.expires_at<=row.db_now || row.parent_expires_at<=row.db_now || ["confirmation_required","clarification_required"].includes(row.state) && row.response_deadline<=row.db_now) return {...view,state:"expired"};
   if (row.request_revision!==row.parent_revision) return {...view,state:"stale"};
   if (row.spec_json===null) return view;
@@ -51,6 +51,16 @@ export async function readQuestionResultStatus(env: Env, account: string, reques
     try { evidence=JSON.parse(row.verified_json ?? "null"); } catch { return {...view,state:"stale"}; }
     if (!evidence || evidence.entity_id!==intent.entity_id || !await verifyQuestionResult(spec,{artifact_key:evidence.artifact_key,snapshot_id:evidence.snapshot_id,intent,feasibility,rows:[{route_key:evidence.entity_id,label:person.web_name,value:evidence.value}],attribution:[evidence.attribution]},{requestId,revision:row.parent_revision,snapshotId})) return {...view,state:"stale"};
   }
+  // Identity resolution and evidence hashing await other work. Re-read the
+  // parent, sidecar, retention and snapshot together after all those awaits.
+  const fresh=await env.DB.prepare(`SELECT q.revision AS parent_revision,r.revision,r.state,r.expires_at,q.expires_at AS parent_expires_at,r.response_deadline,
+    (SELECT snapshot_id FROM snapshots ORDER BY created_at DESC LIMIT 1) AS snapshot_id,
+    strftime('%Y-%m-%dT%H:%M:%SZ','now') AS db_now
+    FROM question_request_results r JOIN question_requests q ON q.request_id=r.request_id
+    WHERE r.request_id=? AND q.account_sub=?`).bind(requestId,account).first<StatusRow & {snapshot_id:string|null}>();
+  if (!fresh) return undefined;
+  if (fresh.expires_at<=fresh.db_now || fresh.parent_expires_at<=fresh.db_now || fresh.state==="confirmation_required" && fresh.response_deadline<=fresh.db_now) return {...view,state:"expired"};
+  if (fresh.parent_revision!==row.parent_revision || fresh.revision!==row.revision || fresh.state!==row.state || fresh.snapshot_id!==snapshotId) return {...view,state:"stale"};
   return {...view,intent,personLabel:person.web_name,currentBinding:true,...(row.state==="released" ? {resultPath:requestResultPath(intent,locale)} : {})};
 }
 

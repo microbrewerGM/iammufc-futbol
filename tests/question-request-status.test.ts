@@ -12,9 +12,9 @@ async function fixture() {
   const mapped=await mapQuestionVerdict(verdict,{requestId:id,revision:4,locale:"en",snapshotId:snapshot,resolvePerson:async p=>p});
   if(mapped.kind!=="ready") throw new Error("fixture_not_ready");
   const row={request_id:id,request_revision:4,parent_revision:4,revision:1,state:"confirmation_required",spec_json:JSON.stringify(mapped.spec),verified_json:null as string|null,expires_at:"2027-01-01T00:00:00Z",parent_expires_at:"2027-01-01T00:00:00Z",response_deadline:"2026-11-03T00:00:00Z",db_now:"2026-11-02T00:00:00Z"};
-  const data={snapshot,row,person:{person_id:"fpl:code:1",web_name:"Server <Player>"}};
+  const data={snapshot,row,person:{person_id:"fpl:code:1",web_name:"Server <Player>"},duringIdentity:null as (()=>void)|null};
   const queries:{sql:string;args:unknown[]}[]=[];
-  const DB={prepare:(sql:string)=>{let args:unknown[]=[];const statement={bind:(...v:unknown[])=>{args=v;queries.push({sql,args});return statement;},first:async()=>sql.includes("FROM question_request_results") ? args[1]==="owner" ? data.row : null : sql.includes("FROM snapshots") ? {snapshot_id:data.snapshot} : null,all:async()=>({results:[data.person]})};return statement;}};
+  const DB={prepare:(sql:string)=>{let args:unknown[]=[];const statement={bind:(...v:unknown[])=>{args=v;queries.push({sql,args});return statement;},first:async()=>sql.includes("FROM question_request_results") ? args[1]==="owner" ? {...data.row,snapshot_id:data.snapshot} : null : sql.includes("FROM snapshots") ? {snapshot_id:data.snapshot} : null,all:async()=>{data.duringIdentity?.();return {results:[data.person]};}};return statement;}};
   return {row,data,mapped,queries,env:{DB} as unknown as Env};
 }
 describe("account-owned request status projection",()=>{
@@ -44,6 +44,10 @@ describe("account-owned request status projection",()=>{
     x.row.state="building";x.row.parent_expires_at=x.row.db_now;
     expect(await readQuestionResultStatus(x.env,"owner",id,"en")).toMatchObject({state:"expired"});
   });
+  it.each(["snapshot","generation","deadline"])("rechecks %s after awaited identity resolution",async change=>{
+    const x=await fixture();x.data.duringIdentity=()=>{if(change==="snapshot")x.data.snapshot="c".repeat(64);if(change==="generation")x.row.parent_revision++;if(change==="deadline")x.row.response_deadline=x.row.db_now;};
+    const view=await readQuestionResultStatus(x.env,"owner",id,"en");expect(view?.state).toBe(change==="deadline"?"expired":"stale");expect(view?.currentBinding).toBe(false);
+  });
   it("shows a localized released link only with finite, bound verified evidence",async()=>{
     const x=await fixture();x.row.state="released";
     expect(await readQuestionResultStatus(x.env,"owner",id,"es")).toMatchObject({state:"stale"});
@@ -52,5 +56,10 @@ describe("account-owned request status projection",()=>{
     const result=await readQuestionResultStatus(x.env,"owner",id,"es");expect(result?.state).toBe("released");expect(result?.resultPath).toMatch(/^\/es\/q\?/);
     x.row.verified_json=JSON.stringify({...evidence,entity_id:"fpl:code:2"});
     expect(await readQuestionResultStatus(x.env,"owner",id,"es")).toMatchObject({state:"stale"});
+  });
+  it("does not advertise release evidence after publication during identity lookup",async()=>{
+    const x=await fixture();x.row.state="released";x.row.verified_json=JSON.stringify({artifact_key:x.mapped.spec.artifact_key,snapshot_id:snapshot,entity_id:"fpl:code:1",value:0,attribution:new Catalog(decodeCompiledCatalog(compiled)).checkFeasibility(x.mapped.intent,"en").attribution_text});
+    x.data.duringIdentity=()=>{x.data.snapshot="c".repeat(64);};
+    const view=await readQuestionResultStatus(x.env,"owner",id,"es");expect(view).toMatchObject({state:"stale",currentBinding:false});expect(view?.resultPath).toBeUndefined();
   });
 });
