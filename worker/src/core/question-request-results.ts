@@ -13,6 +13,8 @@ export interface ResultStore {
   /** Atomically match the full expected revision AND parent generation. For
    * insert, confirmation, claim and release, also match the current snapshot to
    * next.spec. Recovery to expired/failed may close a stale snapshot's work.
+   * At write time enforce parent retention, and, on confirmation/release, the
+   * response deadline/live lease respectively using the authoritative DB clock.
    * A store that checks only the sidecar revision does not satisfy this port.
    */
   compareAndSet(before: QuestionResult | null, next: QuestionResult): Promise<boolean>;
@@ -47,7 +49,9 @@ export async function confirmQuestionResult(deps: ResultDeps, requestId: string,
   if (row.revision !== revision || row.state !== "confirmation_required" || !live(row, now) || Date.parse(row.responseDeadline) <= now) return "conflict";
   const binding = await deps.currentBinding(requestId);
   if (binding.revision !== row.requestRevision || binding.snapshotId !== row.spec.data_snapshot_id) return "conflict";
-  return save(deps, row, next(row, now, { state: "building" }));
+  const finished = clock(deps);
+  if (!live(row, finished) || Date.parse(row.responseDeadline) <= finished) return "conflict";
+  return save(deps, row, next(row, finished, { state: "building" }));
 }
 
 export async function claimQuestionResult(deps: ResultDeps, requestId: string, revision: number, service: string): Promise<ResultTransition> {
@@ -61,17 +65,20 @@ export async function claimQuestionResult(deps: ResultDeps, requestId: string, r
 
 /** Only the service that owns the still-live lease may complete trusted execution. */
 export async function completeQuestionResult(deps: ResultDeps, requestId: string, revision: number, service: string, leaseId: string, response: unknown): Promise<ResultTransition> {
+  // The caller's object must not change between verification and evidence copy.
+  let execution: unknown;
+  try { execution = structuredClone(response); } catch { return "invalid_result"; }
   const row = await deps.store.get(requestId), now = clock(deps);
   if (!row) return "not_found";
   if (row.revision !== revision || row.state !== "in_review" || row.leaseOwner !== service || row.leaseId !== leaseId || row.leaseExpiresAt === null || Date.parse(row.leaseExpiresAt) <= now || !live(row, now)) return "conflict";
   const binding = await deps.currentBinding(requestId);
-  const verified = await verifyQuestionResult(row.spec, response, { requestId, revision: binding.revision, snapshotId: binding.snapshotId });
+  const verified = await verifyQuestionResult(row.spec, execution, { requestId, revision: binding.revision, snapshotId: binding.snapshotId });
   if (!verified) return "invalid_result";
   // Re-read the time and storage binding after asynchronous verification. A stale
   // snapshot/generation never becomes a fresh release merely by passing earlier.
   const fresh = await deps.currentBinding(requestId), finished = clock(deps);
   if (fresh.revision !== binding.revision || fresh.snapshotId !== binding.snapshotId || finished >= Date.parse(row.leaseExpiresAt) || !live(row, finished)) return "conflict";
-  const executed = response as { rows: { value: number }[]; attribution: string[] };
+  const executed = execution as { rows: { value: number }[]; attribution: string[] };
   return save(deps, row, next(row, finished, { state: "released", leaseExpiresAt: null, evidence: { artifact_key: row.spec.artifact_key, snapshot_id: row.spec.data_snapshot_id, entity_id: JSON.parse(row.spec.canonical_intent).entity_id, value: executed.rows[0]!.value, attribution: executed.attribution[0]!, verified_at: stamp(finished) } }));
 }
 

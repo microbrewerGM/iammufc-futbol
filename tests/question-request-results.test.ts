@@ -18,7 +18,10 @@ async function fixture() {
     store: {
       get: async request => row?.requestId === request ? structuredClone(row) : null,
       compareAndSet: async (before, value) => {
-        if (row?.revision !== before?.revision || binding.revision !== value.requestRevision || binding.snapshotId !== value.spec.data_snapshot_id) return false;
+        if (row?.revision !== before?.revision || binding.revision !== value.requestRevision) return false;
+        if (!["expired", "failed"].includes(value.state) && (binding.snapshotId !== value.spec.data_snapshot_id || Date.parse(value.expiresAt) <= now)) return false;
+        if (before?.state === "confirmation_required" && value.state === "building" && Date.parse(before.responseDeadline) <= now) return false;
+        if (value.state === "released" && (before?.leaseExpiresAt === null || before?.leaseExpiresAt === undefined || Date.parse(before.leaseExpiresAt) <= now)) return false;
         row = structuredClone(value); return true;
       },
     },
@@ -85,5 +88,34 @@ describe("request result transitions", () => {
     const x = await fixture(); await confirmQuestionResult(x.deps, x.id, 1, "owner");
     const outcomes = await Promise.all([claimQuestionResult(x.deps, x.id, 2, "one"), claimQuestionResult(x.deps, x.id, 2, "two")]);
     expect(outcomes.sort()).toEqual(["accepted", "conflict"]);
+  });
+  it("rechecks the confirmation deadline after asynchronous binding lookup", async () => {
+    const x = await fixture(), original = x.deps.currentBinding;
+    x.deps.currentBinding = async id => { x.advance(86400); return original(id); };
+    expect(await confirmQuestionResult(x.deps, x.id, 1, "owner")).toBe("conflict");
+    expect(x.read().state).toBe("confirmation_required");
+  });
+  it("persists only evidence from an immutable verified response copy", async () => {
+    const x = await fixture(); await confirmQuestionResult(x.deps, x.id, 1, "owner"); await claimQuestionResult(x.deps, x.id, 2, "service");
+    const original = x.deps.currentBinding; let reads = 0;
+    x.deps.currentBinding = async id => { if (++reads === 2) { x.response.rows[0]!.value = 999; x.response.attribution = ["forged"]; } return original(id); };
+    const row = x.read();
+    expect(await completeQuestionResult(x.deps, x.id, row.revision, "service", row.leaseId!, x.response)).toBe("accepted");
+    expect(x.read().evidence?.value).toBe(0);
+    expect(x.read().evidence?.attribution).not.toBe("forged");
+  });
+  it("requires the store to fence confirmation expiry at the actual CAS boundary", async () => {
+    const x = await fixture(), original = x.deps.store.compareAndSet;
+    x.deps.store.compareAndSet = async (before, after) => { x.advance(86400); return original(before, after); };
+    expect(await confirmQuestionResult(x.deps, x.id, 1, "owner")).toBe("conflict");
+    expect(x.read().state).toBe("confirmation_required");
+  });
+  it("requires the store to fence lease expiry at the actual CAS boundary", async () => {
+    const x = await fixture(); await confirmQuestionResult(x.deps, x.id, 1, "owner"); await claimQuestionResult(x.deps, x.id, 2, "service");
+    const original = x.deps.store.compareAndSet;
+    x.deps.store.compareAndSet = async (before, after) => { x.advance(900); return original(before, after); };
+    const row = x.read();
+    expect(await completeQuestionResult(x.deps, x.id, row.revision, "service", row.leaseId!, x.response)).toBe("conflict");
+    expect(x.read().state).toBe("in_review");
   });
 });
