@@ -78,6 +78,20 @@ describe("generation-fenced triage v2",()=>{
     const x=fixture();await x.clarify();const c=await x.claim();x.advance(901);expect(body(await claimQuestion(x.deps,caller,c.request)).payload.outcome).toBe("conflict");
     await sweepQuestions(x.deps,10,"expired");expect(x.q().status).toBe("received");expect(body(await claimQuestion(x.deps,caller,c.request)).payload.outcome).toBe("conflict");
   });
+  it("prevents downgrade of an initial v2 lease into legacy family admission or recovery",async()=>{
+    const x=fixture(),c=await x.claim();expect(x.r()).toBeUndefined();
+    const family={...verdict(),families:["arrival_manager"]};const legacyAck=wire("ack",{request_id:id,attempt:1,lease_id:c.question.lease_id,operation_id:"qt:downgrade",outcome:{status:"verdict",verdict:family}},1);
+    expect(body(await ackQuestion(x.legacy,caller,legacyAck)).payload.outcome).toBe("conflict");expect(x.db.prepare("SELECT count(*) n FROM exploration_shared_jobs").get().n).toBe(0);
+    const row=(await x.store.get(id))!;expect(await x.legacyStore.ack({...row,managed:0},{...row,status:"filled",verdict_json:JSON.stringify(verdict()),lease_expires_at:null,revision:row.revision+2},{service:caller.service,type:"ack",operation_id:"qt:sql-downgrade",body_hash:snapshot,response:{},lease_id:row.lease_id},null,x.now())).toBe(false);
+    x.advance(901);expect(await x.legacyStore.sweepRows("expired",x.now(),10)).toEqual([]);await sweepQuestions(x.deps,10,"expired");x.advance(300);
+    expect(body(await readQuestions(x.legacy,caller,wire("read",{cursor:null,limit:10},1))).payload.questions).toEqual([]);
+    expect(body(await claimQuestion(x.legacy,caller,wire("claim",{request_id:id,expected_attempt:1,operation_id:"qt:legacy-retry"},1))).payload.outcome).toBe("not_found");
+  });
+  it("uses database time to fence sweeps even when the application clock runs fast",async()=>{
+    const x=fixture();await x.claim();const row=(await x.store.get(id))!,fast=stamp(Date.parse(x.now())+901_000);
+    expect(await sweepQuestions({...x.deps,now:()=>new Date(fast)},10,"expired")).toEqual({moved:0});
+    expect(await x.store.settle(row,{...row,status:"received",revision:row.revision+1,lease_expires_at:null,retry_after:stamp(Date.parse(fast)+300_000)},fast)).toBe(false);expect(x.q().status).toBe("triaging");
+  });
   it("never accepts an old v1 receipt or replays a managed request through v1",async()=>{
     const x=fixture();const claimRequest=wire("claim",{request_id:id,expected_attempt:0,operation_id:"qt:old-claim"},1);
     const old=body(await claimQuestion(x.legacy,caller,claimRequest)).payload.question;
@@ -117,6 +131,17 @@ describe("generation-fenced triage v2",()=>{
   it("separates sweep throttles and closes exhausted managed leases",async()=>{
     const x=fixture();await x.clarify();for(let attempt=1;attempt<3;attempt++){const c=await x.claim();await ackQuestion(x.deps,caller,x.ackBody(c.question,{status:"failed",reason:"validation_failed"}));x.advance(attempt===1?300:1800);}await x.claim();x.advance(901);
     expect(await sweepQuestionBeforeRequest(x.legacy)).toBe(true);expect(x.q().status).toBe("triaging");expect(await sweepQuestionBeforeRequest(x.deps)).toBe(true);expect(x.q().status).toBe("triage_failed");expect(x.r()).toMatchObject({state:"failed",request_revision:x.q().revision});
+  });
+  it("expires abandoned null-spec generations after an outage longer than a day",async()=>{
+    const x=fixture();await x.clarify();await x.claim();x.advance(86401);
+    expect(await sweepQuestions(x.deps,10,"expired")).toEqual({moved:1});expect(x.r()).toMatchObject({state:"expired",spec_json:null,lease_expires_at:null});
+    expect(body(await readQuestions(x.deps,caller,wire("read",{cursor:null,limit:10}))).payload.questions).toEqual([]);
+    expect(await sweepQuestions(x.deps,10,"expired")).toEqual({moved:0});
+  });
+  it("closes stale confirmed work after a publication rather than repeatedly offering execution",async()=>{
+    const x=fixture(),c=await x.claim();await x.ack(c.question);x.db.exec("UPDATE question_request_results SET state='building',revision=revision+1");
+    x.db.prepare("INSERT INTO snapshots(snapshot_id,created_at,sources_json,row_counts)VALUES(?,?,'{}','{}')").run("c".repeat(64),stamp(Date.parse(x.now())+1000));
+    expect(await sweepQuestions(x.deps,10,"expired")).toEqual({moved:1});expect(x.r()).toMatchObject({state:"stale",verified_json:null,lease_expires_at:null});
   });
   it("caps repeated ambiguity at generation three without renewing retention",async()=>{
     const x=fixture(),expiry=x.q().expires_at;for(let generation=0;generation<=3;generation++){const c=await x.claim();await x.ack(c.question,verdict(true));if(generation<3)x.requeue("Clarified "+generation);}

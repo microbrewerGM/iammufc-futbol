@@ -26,6 +26,8 @@ export interface TriageStore {
   sweepRows(kind: "expired" | "triaged" | "queued", now: string, limit: number): Promise<TriageQuestion[]>;
   settle(row: TriageQuestion, next: TriageQuestion, now: string): Promise<boolean>;
   queueResult(row: TriageQuestion, now: string): Promise<"complete" | "partial" | "no_data" | "gone" | "failed" | "pending">;
+  /** Authoritative DB-clock deadline expiry and current-binding invalidation. */
+  maintainResults?(limit: number): Promise<number>;
 }
 export interface TriageDeps { protocol?: 1 | 2; store: TriageStore; now(): Date; newLeaseId(): string; cursorKey: Uint8Array; answerNow?(row: TriageQuestion, verdict: unknown): Promise<AnswerNowDraft> }
 export type TriageError = "malformed" | "too_large" | "invalid_caller" | "invalid_cursor";
@@ -117,7 +119,8 @@ function retained(row: TriageQuestion, now: number): boolean {
   return typeof row.expires_at === "string" && Date.parse(row.expires_at) > now;
 }
 function eligible(deps: TriageDeps, row: TriageQuestion, now: number): boolean {
-  if (deps.protocol !== 2) return !row.managed;
+  if (deps.protocol !== 2) return !row.managed && !row.lease_id?.startsWith("q2:");
+  if (row.status === "triaging" && !row.lease_id?.startsWith("q2:")) return false;
   if (!retained(row,now) || !isInt(generation(row),0,3)) return false;
   return row.managed
     ? generation(row) >= 1 && row.result_state === "triaging" && row.clarification_valid === 1
@@ -176,7 +179,7 @@ export async function claimQuestion(deps: TriageDeps, caller: TriageCaller, raw:
   if (!eligible(deps,cur,now) || cur.status!=="received" || cur.attempt!==p.expected_attempt || cur.attempt>=3
     || cur.retry_after && Date.parse(cur.retry_after)>now || v2 && (cur.revision!==p.expected_revision || generation(cur)!==p.expected_generation)) return reply(deps,"claim_result",{outcome:"conflict"});
   const random=deps.newLeaseId(), lease=v2 ? "q2:"+random : random;
-  if (!ID.test(lease) || lease.trim()!==lease || cur.lease_id===lease) throw new Error("invalid random lease id");
+  if (!ID.test(lease) || lease.trim()!==lease || cur.lease_id===lease || !v2 && lease.startsWith("q2:")) throw new Error("invalid random lease id");
   const next={...cur,status:"triaging",attempt:cur.attempt+1,lease_id:lease,lease_owner:caller.service,
     lease_expires_at:time(now+TRIAGE_LEASE_SECONDS*1000),claimed_at:time(now),retry_after:null,revision:cur.revision+1};
   const op:TriageOperation={service:caller.service,type:"claim",operation_id:p.operation_id,body_hash:bodyHash,response:claimResponse(deps,next,!v2),lease_id:lease,
@@ -234,7 +237,7 @@ export async function ackQuestion(deps: TriageDeps, caller: TriageCaller, raw: u
 }
 
 export async function sweepQuestions(deps: TriageDeps, limit = 100, selected?: "expired" | "triaged" | "queued"): Promise<{ moved: number }> {
-  const now = nowMs(deps), stamp = time(now); let moved = 0;
+  const now = nowMs(deps), stamp = time(now); let moved = deps.protocol===2 && deps.store.maintainResults ? await deps.store.maintainResults(limit) : 0;
   for (const kind of (selected ? [selected] : ["expired", "triaged", "queued"] as const)) {
     const rows = await deps.store.sweepRows(kind, stamp, limit);
     for (const row of rows) {

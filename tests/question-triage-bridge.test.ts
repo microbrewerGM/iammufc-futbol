@@ -212,6 +212,12 @@ describe("question triage service bridge", () => {
 
   it("ack races an expired-lease sweep after reading a live lease", async () => {
     const { db, d1 } = sqliteForBridge();
+    const clockDb = new DatabaseSync(":memory:");
+    let databaseNow = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+    db.function("strftime", { varargs: true }, (...args: (string | number | null)[]) => {
+      const bound = args.map(value => value === "now" ? databaseNow : value);
+      return clockDb.prepare(`SELECT strftime(${bound.map(() => "?").join(",")}) AS value`).get(...bound).value;
+    });
     db.exec("DROP TRIGGER IF EXISTS question_requests_state_machine; DROP TRIGGER IF EXISTS question_requests_clarification_state_machine");
     const requestId = "8".repeat(64);
     addQuestion(db, requestId, "triaging", 900);
@@ -222,6 +228,7 @@ describe("question triage service bridge", () => {
     const leaseExpired = new Date(afterExpiry.getTime() - 1_000).toISOString().replace(/\.\d{3}Z$/, "Z");
     const stillLive = new Date(afterExpiry.getTime() + 30_000).toISOString().replace(/\.\d{3}Z$/, "Z");
     d1.afterQuestionRead = async () => {
+      databaseNow = afterExpiry.toISOString().replace(/\.\d{3}Z$/, "Z");
       db.prepare("UPDATE question_requests SET lease_expires_at=? WHERE request_id=?").run(leaseExpired, requestId);
       expect(await sweepQuestions(sweepDeps, 100, "expired")).toEqual({ moved: 1 });
       db.prepare("UPDATE question_requests SET status='triaging',lease_expires_at=?,retry_after=NULL WHERE request_id=?").run(stillLive, requestId);
@@ -233,6 +240,7 @@ describe("question triage service bridge", () => {
     expect(await ackDeps.store.get(requestId)).toMatchObject({ status: "triaging", lease_expires_at: stillLive, revision: 3 });
     expect(db.prepare("SELECT count(*) AS n FROM exploration_bridge_operations WHERE operation_id='qt:live-lease-race'").get()).toEqual({ n: 0 });
     db.close();
+    clockDb.close();
   });
 
   it("no_shared_rows_when_status_update_missed", async () => {

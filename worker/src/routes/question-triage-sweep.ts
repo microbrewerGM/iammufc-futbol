@@ -1,4 +1,6 @@
 import { parseTriageReceipt,sweepQuestions,type AnswerNowDraft,type TriageDeps,type TriageOperation,type TriageQuestion,type TriageStore } from "../core/question-triage-bridge";
+import {requestCatalogDigest} from "../core/question-request-intent";
+import {RENDERER_VERSION,TRANSFORM_CODE_VERSION} from "../core/intent";
 
 type DB=Pick<D1Database,"prepare"|"batch">;
 type OpRow={service:string;operation_type:"claim"|"ack";operation_id:string;body_hash:string;response_json:string;lease_id:string|null};
@@ -10,8 +12,8 @@ const SELECT=`SELECT q.request_id,q.locale,
   CASE WHEN c.generation=r.clarification_count AND c.parent_revision=r.request_revision THEN 1 ELSE 0 END AS clarification_valid
   FROM question_requests q LEFT JOIN question_request_results r ON r.request_id=q.request_id
   LEFT JOIN question_request_clarifications c ON c.request_id=r.request_id`;
-const V1_SCOPE="NOT EXISTS(SELECT 1 FROM question_request_results r WHERE r.request_id=q.request_id)";
-const V2_SCOPE=`(NOT EXISTS(SELECT 1 FROM question_request_results r WHERE r.request_id=q.request_id)
+const V1_SCOPE="NOT EXISTS(SELECT 1 FROM question_request_results r WHERE r.request_id=q.request_id) AND (q.lease_id IS NULL OR substr(q.lease_id,1,3)!='q2:')";
+const V2_SCOPE=`(q.status!='triaging' OR substr(q.lease_id,1,3)='q2:') AND (NOT EXISTS(SELECT 1 FROM question_request_results r WHERE r.request_id=q.request_id)
   OR EXISTS(SELECT 1 FROM question_request_results r JOIN question_request_clarifications c ON c.request_id=r.request_id
     WHERE r.request_id=q.request_id AND r.state='triaging' AND r.clarification_count BETWEEN 1 AND 3
     AND c.generation=r.clarification_count AND c.parent_revision=r.request_revision AND q.revision>=r.request_revision
@@ -71,7 +73,7 @@ export class D1QuestionTriageStore implements TriageStore{
   }
   async get(id:string):Promise<TriageQuestion|null>{return this.db.prepare(`${SELECT} WHERE q.request_id=?${this.protocol===1?" AND "+V1_SCOPE:""}`).bind(id).first<TriageQuestion>();}
   async operation(service:string,type:"claim"|"ack",id:string,requestId:string):Promise<TriageOperation|null>{
-    const scope=this.protocol===1?`NOT EXISTS(SELECT 1 FROM question_request_results r WHERE r.request_id=?)`:
+    const scope=this.protocol===1?`EXISTS(SELECT 1 FROM question_requests q WHERE q.request_id=? AND ${V1_SCOPE})`:
       `EXISTS(SELECT 1 FROM question_requests q LEFT JOIN question_request_results r ON r.request_id=q.request_id
         WHERE q.request_id=? AND q.expires_at>strftime('%Y-%m-%dT%H:%M:%SZ','now')
         AND json_extract(o.response_json,'$.payload.receipt.protocol')=2
@@ -154,18 +156,32 @@ export class D1QuestionTriageStore implements TriageStore{
       if(rows.length)queuedSweepCursor=rows[rows.length-1]!.request_id;
       return rows;
     }
-    const where=kind==="expired"?"q.status='triaging' AND q.lease_expires_at<=?":"q.status='triaged'";
+    const where=kind==="expired"?"q.status='triaging' AND q.lease_expires_at<=? AND q.lease_expires_at<=strftime('%Y-%m-%dT%H:%M:%SZ','now')":"q.status='triaged'";
     return (await this.db.prepare(`${SELECT} WHERE ${where} AND ${this.scope()} ORDER BY q.updated_at,q.request_id LIMIT ?`).bind(...(kind==="expired"?[now,limit]:[limit])).all<TriageQuestion>()).results;
   }
   async settle(row:TriageQuestion,next:TriageQuestion,now:string):Promise<boolean>{
     const update=this.db.prepare(`UPDATE question_requests AS q SET status=?,lease_expires_at=?,retry_after=?,revision=?,updated_at=max(updated_at,strftime('%Y-%m-%dT%H:%M:%SZ','now'))
-      WHERE q.request_id=? AND q.status=? AND q.revision=? AND q.lease_id IS ? AND q.lease_owner IS ? AND ${this.fence()} RETURNING request_id`)
+      WHERE q.request_id=? AND q.status=? AND q.revision=? AND q.lease_id IS ? AND q.lease_owner IS ?
+      AND (q.status!='triaging' OR q.lease_expires_at<=strftime('%Y-%m-%dT%H:%M:%SZ','now')) AND ${this.fence()} RETURNING request_id`)
       .bind(next.status,next.lease_expires_at,next.retry_after,next.revision,row.request_id,row.status,row.revision,row.lease_id,row.lease_owner,...this.fenceValues(row));
     if(this.protocol===2 && row.managed && next.status==="triage_failed"){
       const result=await this.db.batch([update,this.remap(row,next,{state:"failed",specJson:null,snapshotId:null},now)]);
       return result[0]!.results.length===1;
     }
     return (await update.all()).results.length===1;
+  }
+  async maintainResults(limit:number):Promise<number>{
+    if(this.protocol!==2 || !Number.isInteger(limit) || limit<1 || limit>100)return 0;
+    const expired=`((r.state IN ('triaging','clarification_required','confirmation_required') AND r.response_deadline<=strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+      OR (r.state IN ('building','in_review') AND r.expires_at<=strftime('%Y-%m-%dT%H:%M:%SZ','now')))`;
+    const result=await this.db.prepare(`UPDATE question_request_results AS r SET state=CASE WHEN ${expired} THEN 'expired' ELSE 'stale' END,
+      verified_json=NULL,lease_expires_at=NULL,revision=revision+1,updated_at=max(updated_at,strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+      WHERE r.request_id IN(SELECT r.request_id FROM question_request_results r JOIN question_requests q ON q.request_id=r.request_id
+        WHERE ${expired} OR (r.state IN ('confirmation_required','building','in_review','released') AND
+          (r.request_revision!=q.revision OR json_extract(r.spec_json,'$.data_snapshot_id') IS NOT (SELECT snapshot_id FROM snapshots ORDER BY created_at DESC LIMIT 1)
+          OR json_extract(r.spec_json,'$.catalog_digest')!=? OR json_extract(r.spec_json,'$.transform_code_version')!=? OR json_extract(r.spec_json,'$.renderer_version')!=?))
+        ORDER BY r.updated_at,r.request_id LIMIT ?) RETURNING request_id`).bind(await requestCatalogDigest(),TRANSFORM_CODE_VERSION,RENDERER_VERSION,limit).all<{request_id:string}>();
+    return result.results.length;
   }
   async queueResult(row: TriageQuestion, now: string): Promise<"complete" | "partial" | "no_data" | "gone" | "failed" | "pending"> {
     const result = await this.db.prepare(`SELECT j.status AS job_status,j.failure,r.coverage,r.expires_at FROM exploration_shared_jobs j LEFT JOIN exploration_shared_results r ON r.request_id=j.request_id WHERE j.request_id=?`).bind(row.exploration_request_id).first<{job_status:string;failure:string|null;coverage:string|null;expires_at:string|null}>();
