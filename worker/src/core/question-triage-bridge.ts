@@ -15,17 +15,18 @@ const seasons = new Set(catalog.coverage.map(row => row.season));
 export interface TriageCaller { service: string; capability: string }
 export interface TriageQuestion { request_id: string; locale: "en" | "es"; text: string; account_sub: string; status: string; attempt: number; lease_id: string | null; lease_owner: string | null; lease_expires_at: string | null; retry_after: string | null; revision: number; claimed_at: string | null; verdict_json: string | null; exploration_request_id: string | null }
 export interface TriageOperation { service: string; type: "claim" | "ack"; operation_id: string; body_hash: string; response: unknown; lease_id: string | null }
+export interface AnswerNowDraft { state: "confirmation_required" | "clarification_required" | "unsupported" | "unavailable"; specJson: string | null; snapshotId: string | null }
 export interface TriageStore {
   page(after: string | null, limit: number): Promise<TriageQuestion[]>;
   get(id: string): Promise<TriageQuestion | null>;
   operation(service: string, type: "claim" | "ack", id: string): Promise<TriageOperation | null>;
   claim(row: TriageQuestion, next: TriageQuestion, op: TriageOperation): Promise<boolean>;
-  ack(row: TriageQuestion, next: TriageQuestion, op: TriageOperation, admission: { requestId: string; requestJson: string; jobId: string; accountSub: string; createdAt: string } | null, now: string): Promise<boolean>;
+  ack(row: TriageQuestion, next: TriageQuestion, op: TriageOperation, admission: { requestId: string; requestJson: string; jobId: string; accountSub: string; createdAt: string } | null, now: string, answerNow?: AnswerNowDraft): Promise<boolean>;
   sweepRows(kind: "expired" | "triaged" | "queued", now: string, limit: number): Promise<TriageQuestion[]>;
   settle(row: TriageQuestion, next: TriageQuestion): Promise<boolean>;
   queueResult(row: TriageQuestion, now: string): Promise<"complete" | "partial" | "no_data" | "gone" | "failed" | "pending">;
 }
-export interface TriageDeps { store: TriageStore; now(): Date; newLeaseId(): string; cursorKey: Uint8Array }
+export interface TriageDeps { store: TriageStore; now(): Date; newLeaseId(): string; cursorKey: Uint8Array; answerNow?(row: TriageQuestion, verdict: unknown): Promise<AnswerNowDraft> }
 export type TriageError = "malformed" | "too_large" | "invalid_caller" | "invalid_cursor";
 export type TriageResult = { ok: true; body: string } | { ok: false; error: TriageError };
 const HASH = /^[0-9a-f]{64}$/;
@@ -128,17 +129,20 @@ export async function claimQuestion(deps: TriageDeps, caller: TriageCaller, raw:
 export async function ackQuestion(deps: TriageDeps, caller: TriageCaller, raw: unknown): Promise<TriageResult> {
   if (!callerOk(caller)) return bad("invalid_caller"); const p = envelope(raw, "ack"); if (isError(p)) return p;
   if (!closed(p, ["request_id", "attempt", "lease_id", "operation_id", "outcome"]) || typeof p.request_id !== "string" || !HASH.test(p.request_id) || !isInt(p.attempt, 1, 3) || typeof p.lease_id !== "string" || !ID.test(p.lease_id) || typeof p.operation_id !== "string" || !/^qt:[a-z0-9:_-]{1,92}$/.test(p.operation_id) || !object(p.outcome)) return bad("malformed");
-  const now = nowMs(deps), bodyHash = await hash(canonical(p)), prior = await deps.store.operation(caller.service, "ack", p.operation_id);
+  const now = nowMs(deps), bodyHash = await hash(canonical(deps.answerNow ? { answer_now: 1, payload: p } : p)), prior = await deps.store.operation(caller.service, "ack", p.operation_id);
   if (prior) return prior.body_hash === bodyHash ? reply("ack_result", { outcome: "replayed", response: prior.response }) : reply("ack_result", { outcome: "conflict" });
   const cur = await deps.store.get(p.request_id); if (!cur || cur.status !== "triaging" || cur.attempt !== p.attempt || cur.lease_id !== p.lease_id || cur.lease_owner !== caller.service || !cur.lease_expires_at || Date.parse(cur.lease_expires_at) <= now) return reply("ack_result", { outcome: "conflict" });
-  const outcome = p.outcome; let next: TriageQuestion; let admission: { requestId: string; requestJson: string; jobId: string; accountSub: string; createdAt: string } | null = null;
+  const outcome = p.outcome; let next: TriageQuestion; let answerNow: AnswerNowDraft | undefined; let admission: { requestId: string; requestJson: string; jobId: string; accountSub: string; createdAt: string } | null = null;
   if (closed(outcome, ["status", "reason"]) && outcome.status === "failed" && ["source_unavailable", "validation_failed", "publication_failed"].includes(String(outcome.reason))) {
     if (cur.attempt === 3) next = { ...cur, status: "triage_failed", retry_after: null, lease_expires_at: null, revision: cur.revision + 1 };
     else next = { ...cur, status: "received", retry_after: time(Math.min(now + ({ 1: 300, 2: 1800 }[cur.attempt] ?? 1800) * 1000, Date.parse(cur.claimed_at!) + 86400_000)), lease_expires_at: null, revision: cur.revision + 1 };
   } else if (closed(outcome, ["status", "verdict"]) && outcome.status === "verdict" && validateVerdict(outcome.verdict, cur.request_id)) {
     const verdict = outcome.verdict; const computed = cellStatus(verdict); const stored = { ...verdict, field_status: computed.fieldStatus };
     if (verdict.relevant === false) next = { ...cur, status: "junk", verdict_json: canonical(stored), lease_expires_at: null, retry_after: null, revision: cur.revision + 1 };
-    else if (verdict.families.includes("arrival_manager")) {
+    else if (deps.answerNow) {
+      answerNow = await deps.answerNow(cur, stored);
+      next = { ...cur, status: answerNow.state === "confirmation_required" ? "filled" : "no_data", verdict_json: canonical(stored), exploration_request_id: null, lease_expires_at: null, retry_after: null, revision: cur.revision + 2 };
+    } else if (verdict.families.includes("arrival_manager")) {
       const createdAt = time(now);
       const request = { academy_basis: "documented_first_team_promotion", as_of: createdAt.slice(0, 10), family: "arrival_manager", joining_basis: "effective_first_team_spell_entry", population: "first_team_available", version: 1, visualization: "table" };
       const requestJson = canonical(request), requestId = await hash(requestJson), jobId = await hash(`${requestId}\njob`);
@@ -148,7 +152,7 @@ export async function ackQuestion(deps: TriageDeps, caller: TriageCaller, raw: u
   } else return reply("ack_result", { outcome: "invalid_verdict" });
   const response = { outcome: "accepted", status: next.status };
   const op: TriageOperation = { service: caller.service, type: "ack", operation_id: p.operation_id, body_hash: bodyHash, response, lease_id: cur.lease_id };
-  return await deps.store.ack(cur, next, op, admission, time(now)) ? reply("ack_result", response) : reply("ack_result", { outcome: "conflict" });
+  return await deps.store.ack(cur, next, op, admission, time(now), answerNow) ? reply("ack_result", response) : reply("ack_result", { outcome: "conflict" });
 }
 
 export async function sweepQuestions(deps: TriageDeps, limit = 100, selected?: "expired" | "triaged" | "queued"): Promise<{ moved: number }> {
