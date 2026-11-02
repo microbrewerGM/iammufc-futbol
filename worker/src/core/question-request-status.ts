@@ -7,9 +7,10 @@ import { parseIntent, validateExecutionSupport } from "./validate-intent";
 import { Catalog } from "./feasibility";
 import { decodeCompiledCatalog } from "./catalog-contract";
 import compiled from "../generated/catalog.json";
+import {clarificationSchemaReady} from "./question-request-clarification";
 
 const catalog = new Catalog(decodeCompiledCatalog(compiled));
-type State = ResultState | "clarification_required" | "unsupported" | "unavailable" | "stale";
+type State = ResultState | "triaging" | "clarification_required" | "unsupported" | "unavailable" | "stale";
 export interface RequestStatusView {
   requestId: string; revision: number; state: State; personLabel?: string;
   intent?: QueryIntent; resultPath?: string; currentBinding?: boolean; clarificationAvailable?: boolean;
@@ -18,6 +19,7 @@ interface StatusRow {
   request_id: string; request_revision: number; parent_revision: number; revision: number; state: State;
   spec_json: string | null; verified_json: string | null; expires_at: string; parent_expires_at: string;
   response_deadline: string; db_now: string;
+  clarification_count:number;
 }
 
 /** Account filtering occurs in SQL, before any interpretation or identity lookup.
@@ -28,15 +30,18 @@ export async function readQuestionResultStatus(env: Env, account: string, reques
   // Other storage errors still propagate and fail closed in the route.
   const schema=await env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='question_request_results'").bind().first<{name:string}>();
   if (!schema) return undefined;
-  const row = await env.DB.prepare(`SELECT r.request_id,r.request_revision,q.revision AS parent_revision,r.revision,r.state,
+  const row = await env.DB.prepare(`SELECT r.request_id,r.request_revision,q.revision AS parent_revision,r.revision,r.state,r.clarification_count,
     r.spec_json,r.verified_json,r.expires_at,q.expires_at AS parent_expires_at,r.response_deadline,
     strftime('%Y-%m-%dT%H:%M:%SZ','now') AS db_now
     FROM question_request_results r JOIN question_requests q ON q.request_id=r.request_id
     WHERE r.request_id=? AND q.account_sub=?`).bind(requestId,account).first<StatusRow>();
   if (!row) return undefined;
   const view: RequestStatusView = {requestId,revision:row.revision,state:row.state,currentBinding:false,clarificationAvailable:false};
-  if (row.expires_at<=row.db_now || row.parent_expires_at<=row.db_now || ["confirmation_required","clarification_required"].includes(row.state) && row.response_deadline<=row.db_now) return {...view,state:"expired"};
+  if (row.expires_at<=row.db_now || row.parent_expires_at<=row.db_now || ["triaging","confirmation_required","clarification_required"].includes(row.state) && row.response_deadline<=row.db_now) return {...view,state:"expired"};
+  if (["expired","failed","unsupported","unavailable","stale"].includes(row.state)) return view;
+  if (row.state==="triaging") return {...view,state:row.parent_revision>=row.request_revision?"triaging":"stale"};
   if (row.request_revision!==row.parent_revision) return {...view,state:"stale"};
+  if (row.state==="clarification_required") return {...view,clarificationAvailable:row.clarification_count<3 && await clarificationSchemaReady(env)};
   if (row.spec_json===null) return view;
   let spec: RequestAcceptanceSpec;
   try { spec=JSON.parse(row.spec_json); } catch { return {...view,state:"stale"}; }

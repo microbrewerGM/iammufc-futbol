@@ -34,7 +34,11 @@ export async function storeQuestion(env: Env, account: string, text: string, loc
       .bind(account, day, hash).first<{ request_id: string }>();
     if (existing) return { kind: "duplicate", requestId: existing.request_id };
     const created = now.toISOString().replace(/\.\d{3}Z$/, "Z");
-    const pending = await env.DB.prepare("SELECT count(*) AS n FROM question_requests WHERE account_sub = ? AND status IN ('received','triaging','triaged','queued')")
+    const pending = await env.DB.prepare(`SELECT count(*) AS n FROM question_requests q LEFT JOIN question_request_results r ON r.request_id=q.request_id
+      WHERE q.account_sub=? AND q.expires_at>strftime('%Y-%m-%dT%H:%M:%SZ','now') AND
+      ((r.request_id IS NULL AND q.status IN ('received','triaging','triaged','queued'))
+      OR (r.state IN ('triaging','clarification_required','confirmation_required') AND r.response_deadline>strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+      OR r.state IN ('building','in_review'))`)
       .bind(account).first<{ n: number }>();
     if (!pending || !Number.isFinite(pending.n)) return { kind: "unavailable" };
     if (pending.n >= 20) return { kind: "pending_limit" };
