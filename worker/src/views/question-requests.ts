@@ -20,7 +20,13 @@ export interface QuestionResultView {
   currentBinding?: boolean;
   /** Explicitly disable the form until the clarification handler is available. */
   clarificationAvailable?: boolean;
+  /** Validated retained execution metadata; does not imply historical serving. */
+  executedSnapshotId?: string;
 }
+const PROVENANCE_STRINGS = {
+  en: { title: "Data provenance", snapshot: "Result data snapshot" },
+  es: { title: "Procedencia de los datos", snapshot: "Instantánea de datos del resultado" },
+} as const;
 const RESULT_STRINGS = {
   en: { triaging: "Reviewing your clarification", clarification_required: "Please clarify your question", confirmation_required: "Confirm your selection", building: "Preparing your result", in_review: "Checking your result", released: "Your result is ready", unsupported: "This request is not supported yet", unavailable: "The requested data is unavailable", failed: "We could not prepare this result", expired: "This request has expired", stale: "The data has changed; this result needs checking", clarifyLabel: "Your clarified question", clarify: "Send clarification", confirm: "Confirm selection", open: "View result", table: "Table", bar: "Bar chart", dot_plot: "Dot plot" },
   es: { triaging: "Revisando tu aclaración", clarification_required: "Aclara tu pregunta", confirmation_required: "Confirma tu selección", building: "Preparando tu resultado", in_review: "Comprobando tu resultado", released: "Tu resultado está listo", unsupported: "Esta solicitud aún no es compatible", unavailable: "Los datos solicitados no están disponibles", failed: "No pudimos preparar este resultado", expired: "Esta solicitud ha caducado", stale: "Los datos han cambiado; hay que comprobar este resultado", clarifyLabel: "Tu pregunta aclarada", clarify: "Enviar aclaración", confirm: "Confirmar selección", open: "Ver resultado", table: "Tabla", bar: "Gráfico de barras", dot_plot: "Gráfico de puntos" },
@@ -43,7 +49,11 @@ export function questionResultPanel(code: LocaleCode, result: QuestionResultView
     action = `<p><a href="${esc(result.resultPath)}">${esc(t.open)}</a></p>`;
   }
   const state = (result.state === "released" || result.state === "confirmation_required") && !action ? "stale" : result.state;
-  return `<section aria-labelledby="request-result-heading"><h2 id="request-result-heading">${esc(t[state])}</h2>${summary}${action}</section>`;
+  const snapshot = result.executedSnapshotId, provenanceText = PROVENANCE_STRINGS[code];
+  const provenance = (result.state === "released" || result.state === "stale")
+    && typeof snapshot === "string" && snapshot.length > 0 && snapshot.length <= 128 && !/[^A-Za-z0-9:_-]/.test(snapshot)
+    ? `<details><summary>${esc(provenanceText.title)}</summary><p>${esc(provenanceText.snapshot)}: <code>${snapshot.match(/.{1,16}/g)!.map(chunk => esc(chunk)).join("<wbr>")}</code></p></details>` : "";
+  return `<section aria-labelledby="request-result-heading"><h2 id="request-result-heading">${esc(t[state])}</h2>${summary}${action}${provenance}</section>`;
 }
 
 const STRINGS = {

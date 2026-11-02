@@ -14,12 +14,71 @@ type State = ResultState | "triaging" | "clarification_required" | "unsupported"
 export interface RequestStatusView {
   requestId: string; revision: number; state: State; personLabel?: string;
   intent?: QueryIntent; resultPath?: string; currentBinding?: boolean; clarificationAvailable?: boolean;
+  /** Retained executed provenance only; never grants a current result link. */
+  executedSnapshotId?: string;
 }
 interface StatusRow {
   request_id: string; request_revision: number; parent_revision: number; revision: number; state: State;
   spec_json: string | null; verified_json: string | null; expires_at: string; parent_expires_at: string;
   response_deadline: string; db_now: string;
-  clarification_count:number;
+  clarification_count:number; created_at:string;
+}
+
+function storedObject(raw: string | null, keys: readonly string[]): Record<string, unknown> | undefined {
+  if (typeof raw !== "string" || raw.length > 8192 || new TextEncoder().encode(raw).length > 8192) return;
+  try {
+    const value: unknown = JSON.parse(raw);
+    // Server writes use JSON.stringify; duplicate keys/noncanonical storage
+    // cannot establish historical evidence.
+    if (!value || typeof value !== "object" || Array.isArray(value) || JSON.stringify(value) !== raw) return;
+    if (Object.keys(value).length !== keys.length || !keys.every(key => Object.hasOwn(value, key))) return;
+    return value as Record<string, unknown>;
+  } catch { return; }
+}
+function safeSnapshot(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 128 && !/[^A-Za-z0-9:_-]/.test(value);
+}
+function hash(value: unknown): value is string {
+  return typeof value === "string" && value.length === 64 && /^[a-f0-9]+$/.test(value);
+}
+function timestamp(value: unknown): value is string {
+  return typeof value === "string" && value.length === 20 && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(value)
+    && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().replace(".000Z", "Z") === value;
+}
+
+/** Historical structural binding only. Current catalog/lineage checks below
+ * still decide release links; cleared evidence cannot establish history. */
+async function executedSnapshot(row: StatusRow, requestId: string): Promise<string | undefined> {
+  if (row.state !== "released" || row.request_revision !== row.parent_revision || row.request_id !== requestId
+    || !hash(requestId) || !Number.isSafeInteger(row.parent_revision) || row.parent_revision < 0
+    || !Number.isSafeInteger(row.revision) || row.revision < 1) return;
+  const spec = storedObject(row.spec_json, ["version", "request_id", "request_revision", "locale", "canonical_intent", "result_path", "data_snapshot_id", "catalog_digest", "transform_code_version", "renderer_version", "artifact_key", "expected_cell_state"]);
+  const evidence = storedObject(row.verified_json, ["artifact_key", "snapshot_id", "entity_id", "value", "attribution", "verified_at"]);
+  if (!spec || !evidence || spec.version !== 1 || typeof spec.request_revision !== "number"
+    || !Number.isSafeInteger(spec.request_revision) || spec.request_id !== requestId || spec.request_revision !== row.parent_revision
+    || typeof spec.locale !== "string" || !["en", "es"].includes(spec.locale) || !safeSnapshot(spec.data_snapshot_id)
+    || !hash(spec.catalog_digest) || !hash(spec.artifact_key) || typeof spec.canonical_intent !== "string"
+    || typeof spec.expected_cell_state !== "string" || !["available", "computable_now_queued"].includes(spec.expected_cell_state)) return;
+  for (const version of [spec.transform_code_version, spec.renderer_version]) {
+    if (typeof version !== "string" || version.length < 1 || version.length > 128 || /[^A-Za-z0-9._:-]/.test(version)) return;
+  }
+  let raw: unknown;
+  try { raw = JSON.parse(spec.canonical_intent); } catch { return; }
+  const parsed = parseIntent(raw);
+  if (!parsed.ok || validateExecutionSupport(parsed.intent) || canonicalize(parsed.intent) !== spec.canonical_intent
+    || parsed.intent.entity_type !== "player" || parsed.intent.entity_id === "all" || parsed.intent.limit !== 1
+    || spec.result_path !== requestResultPath(parsed.intent, spec.locale as "en" | "es")) return;
+  if (evidence.snapshot_id !== spec.data_snapshot_id || evidence.artifact_key !== spec.artifact_key
+    || evidence.entity_id !== parsed.intent.entity_id || typeof evidence.value !== "number" || !Number.isFinite(evidence.value)
+    || typeof evidence.attribution !== "string" || !evidence.attribution.trim() || evidence.attribution.length > 4096
+    || !timestamp(evidence.verified_at) || !timestamp(row.created_at) || evidence.verified_at < row.created_at
+    || evidence.verified_at > row.db_now || evidence.verified_at >= row.expires_at || evidence.verified_at >= row.parent_expires_at) return;
+  // artifactKey binds current code. History hashes the stored four-tuple
+  // without admitting it as a current execution or serving an old snapshot.
+  const material = [spec.canonical_intent, spec.data_snapshot_id, spec.transform_code_version, spec.renderer_version].join("|");
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(material));
+  const key = [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join("");
+  return key === spec.artifact_key ? spec.data_snapshot_id : undefined;
 }
 
 /** Account filtering occurs in SQL, before any interpretation or identity lookup.
@@ -31,7 +90,7 @@ export async function readQuestionResultStatus(env: Env, account: string, reques
   const schema=await env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='question_request_results'").bind().first<{name:string}>();
   if (!schema) return undefined;
   const row = await env.DB.prepare(`SELECT r.request_id,r.request_revision,q.revision AS parent_revision,r.revision,r.state,r.clarification_count,
-    r.spec_json,r.verified_json,r.expires_at,q.expires_at AS parent_expires_at,r.response_deadline,
+    r.spec_json,r.verified_json,r.created_at,r.expires_at,q.expires_at AS parent_expires_at,r.response_deadline,
     strftime('%Y-%m-%dT%H:%M:%SZ','now') AS db_now
     FROM question_request_results r JOIN question_requests q ON q.request_id=r.request_id
     WHERE r.request_id=? AND q.account_sub=?`).bind(requestId,account).first<StatusRow>();
@@ -42,23 +101,42 @@ export async function readQuestionResultStatus(env: Env, account: string, reques
   if (row.state==="triaging") return {...view,state:row.parent_revision>=row.request_revision?"triaging":"stale"};
   if (row.request_revision!==row.parent_revision) return {...view,state:"stale"};
   if (row.state==="clarification_required") return {...view,clarificationAvailable:row.clarification_count<3 && await clarificationSchemaReady(env)};
+  const historicalSnapshot = await executedSnapshot(row, requestId);
+  const withHistory = async (result: RequestStatusView, current?: string): Promise<RequestStatusView | undefined> => {
+    if (historicalSnapshot === undefined) return result;
+    const fresh = await env.DB.prepare(`SELECT r.request_id,r.request_revision,q.revision AS parent_revision,r.revision,r.state,
+      r.spec_json,r.verified_json,r.created_at,r.expires_at,q.expires_at AS parent_expires_at,r.response_deadline,
+      (SELECT snapshot_id FROM snapshots ORDER BY created_at DESC LIMIT 1) AS snapshot_id,
+      strftime('%Y-%m-%dT%H:%M:%SZ','now') AS db_now
+      FROM question_request_results r JOIN question_requests q ON q.request_id=r.request_id
+      WHERE r.request_id=? AND q.account_sub=?`).bind(requestId,account).first<StatusRow & {snapshot_id:string|null}>();
+    if (!fresh) return undefined;
+    if (fresh.expires_at<=fresh.db_now || fresh.parent_expires_at<=fresh.db_now) return {...view,state:"expired"};
+    if (fresh.request_id!==requestId || fresh.parent_revision!==row.parent_revision || fresh.request_revision!==row.request_revision
+      || fresh.revision!==row.revision || fresh.state!==row.state || fresh.spec_json!==row.spec_json
+      || fresh.verified_json!==row.verified_json || fresh.created_at!==row.created_at
+      || fresh.expires_at!==row.expires_at || fresh.parent_expires_at!==row.parent_expires_at) return {...view,state:"stale"};
+    const metadata = {executedSnapshotId:historicalSnapshot};
+    if (current !== undefined && fresh.snapshot_id !== current) return {...view,...metadata,state:"stale"};
+    return {...result,...metadata};
+  };
   if (row.spec_json===null) return view;
   let spec: RequestAcceptanceSpec;
-  try { spec=JSON.parse(row.spec_json); } catch { return {...view,state:"stale"}; }
-  if (!spec || spec.version!==1 || spec.request_id!==requestId || spec.request_revision!==row.parent_revision || !["en","es"].includes(spec.locale) || spec.catalog_digest!==await requestCatalogDigest() || spec.transform_code_version!==TRANSFORM_CODE_VERSION || spec.renderer_version!==RENDERER_VERSION) return {...view,state:"stale"};
+  try { spec=JSON.parse(row.spec_json); } catch { return withHistory({...view,state:"stale"}); }
+  if (!spec || spec.version!==1 || spec.request_id!==requestId || spec.request_revision!==row.parent_revision || !["en","es"].includes(spec.locale) || spec.catalog_digest!==await requestCatalogDigest() || spec.transform_code_version!==TRANSFORM_CODE_VERSION || spec.renderer_version!==RENDERER_VERSION) return withHistory({...view,state:"stale"});
   let raw: unknown;
-  try { raw=JSON.parse(spec.canonical_intent); } catch { return {...view,state:"stale"}; }
+  try { raw=JSON.parse(spec.canonical_intent); } catch { return withHistory({...view,state:"stale"}); }
   const parsed=parseIntent(raw);
-  if (!parsed.ok || validateExecutionSupport(parsed.intent) || canonicalize(parsed.intent)!==spec.canonical_intent || parsed.intent.entity_type!=="player" || parsed.intent.entity_id==="all" || parsed.intent.limit!==1) return {...view,state:"stale"};
+  if (!parsed.ok || validateExecutionSupport(parsed.intent) || canonicalize(parsed.intent)!==spec.canonical_intent || parsed.intent.entity_type!=="player" || parsed.intent.entity_id==="all" || parsed.intent.limit!==1) return withHistory({...view,state:"stale"});
   const intent=parsed.intent, snapshotId=await currentSnapshot(env);
   const feasibility=catalog.checkFeasibility(intent,spec.locale);
-  if (snapshotId===null || snapshotId!==spec.data_snapshot_id || spec.result_path!==requestResultPath(intent,spec.locale) || spec.artifact_key!==await artifactKey(intent,snapshotId) || spec.expected_cell_state!==feasibility.state || !["available","computable_now_queued"].includes(feasibility.state)) return {...view,state:"stale"};
+  if (snapshotId===null || snapshotId!==spec.data_snapshot_id || spec.result_path!==requestResultPath(intent,spec.locale) || spec.artifact_key!==await artifactKey(intent,snapshotId) || spec.expected_cell_state!==feasibility.state || !["available","computable_now_queued"].includes(feasibility.state)) return withHistory({...view,state:"stale"});
   const person=await resolvePlayerIdentity(env,intent.entity_id,intent.competition);
-  if (!person || person.person_id!==intent.entity_id) return {...view,state:"stale"};
+  if (!person || person.person_id!==intent.entity_id) return withHistory({...view,state:"stale"});
   if (row.state==="released") {
     let evidence: {artifact_key:string;snapshot_id:string;entity_id:string;value:number;attribution:string};
-    try { evidence=JSON.parse(row.verified_json ?? "null"); } catch { return {...view,state:"stale"}; }
-    if (!evidence || evidence.entity_id!==intent.entity_id || !await verifyQuestionResult(spec,{artifact_key:evidence.artifact_key,snapshot_id:evidence.snapshot_id,intent,feasibility,rows:[{route_key:evidence.entity_id,label:person.web_name,value:evidence.value}],attribution:[evidence.attribution]},{requestId,revision:row.parent_revision,snapshotId})) return {...view,state:"stale"};
+    try { evidence=JSON.parse(row.verified_json ?? "null"); } catch { return withHistory({...view,state:"stale"}); }
+    if (!evidence || evidence.entity_id!==intent.entity_id || !await verifyQuestionResult(spec,{artifact_key:evidence.artifact_key,snapshot_id:evidence.snapshot_id,intent,feasibility,rows:[{route_key:evidence.entity_id,label:person.web_name,value:evidence.value}],attribution:[evidence.attribution]},{requestId,revision:row.parent_revision,snapshotId})) return withHistory({...view,state:"stale"});
   }
   // Identity resolution and evidence hashing await other work. Re-read the
   // parent, sidecar, retention and snapshot together after all those awaits.
@@ -69,8 +147,8 @@ export async function readQuestionResultStatus(env: Env, account: string, reques
     WHERE r.request_id=? AND q.account_sub=?`).bind(requestId,account).first<StatusRow & {snapshot_id:string|null}>();
   if (!fresh) return undefined;
   if (fresh.expires_at<=fresh.db_now || fresh.parent_expires_at<=fresh.db_now || fresh.state==="confirmation_required" && fresh.response_deadline<=fresh.db_now) return {...view,state:"expired"};
-  if (fresh.parent_revision!==row.parent_revision || fresh.revision!==row.revision || fresh.state!==row.state || fresh.snapshot_id!==snapshotId) return {...view,state:"stale"};
-  return {...view,intent,personLabel:person.web_name,currentBinding:true,...(row.state==="released" ? {resultPath:requestResultPath(intent,locale)} : {})};
+  if (fresh.parent_revision!==row.parent_revision || fresh.revision!==row.revision || fresh.state!==row.state || fresh.snapshot_id!==snapshotId) return withHistory({...view,state:"stale"});
+  return withHistory({...view,intent,personLabel:person.web_name,currentBinding:true,...(row.state==="released" ? {resultPath:requestResultPath(intent,locale)} : {})},snapshotId);
 }
 
 /** Parent ownership is checked again by the atomic D1 mutation. */
