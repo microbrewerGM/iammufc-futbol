@@ -112,6 +112,7 @@ WHEN NEW.request_id IS NOT OLD.request_id OR NEW.request_revision IS NOT OLD.req
  OR (NEW.state='released' AND OLD.lease_expires_at<=strftime('%Y-%m-%dT%H:%M:%SZ','now'))
  OR (NEW.lease_expires_at IS NOT NULL AND NEW.lease_expires_at>NEW.expires_at)
  OR (NEW.state='in_review' AND NEW.lease_expires_at>strftime('%Y-%m-%dT%H:%M:%SZ','now','+900 seconds'))
+ OR (NEW.state='in_review' AND NEW.lease_expires_at<=strftime('%Y-%m-%dT%H:%M:%SZ','now'))
  OR NOT EXISTS(SELECT 1 FROM question_requests q WHERE q.request_id=NEW.request_id AND q.revision=NEW.request_revision)
  OR NOT coalesce(
    (OLD.state='confirmation_required' AND NEW.state='building' AND OLD.response_deadline>NEW.updated_at AND NEW.attempt=OLD.attempt AND NEW.lease_id IS OLD.lease_id AND NEW.lease_owner IS OLD.lease_owner)

@@ -73,6 +73,7 @@ describe("request result persistence foundation", () => {
   it("uses the database clock for lease duration and recovery, not future audit timestamps", () => {
     const db = fresh(); insert(db); db.exec("UPDATE question_request_results SET state='building',revision=2");
     const future = iso(Date.parse(now)+120_000);
+    expect(() => db.prepare("UPDATE question_request_results SET state='in_review',attempt=1,lease_id='valid',lease_owner='service',lease_expires_at=?,revision=3").run(now)).toThrow();
     expect(() => db.prepare("UPDATE question_request_results SET state='in_review',attempt=1,lease_id='valid',lease_owner='service',updated_at=?,lease_expires_at=?,revision=3").run(future,iso(Date.parse(now)+1020_000))).toThrow();
     db.prepare("UPDATE question_request_results SET state='in_review',attempt=1,lease_id='valid',lease_owner='service',lease_expires_at=?,revision=3").run(iso(Date.parse(now)+60_000));
     expect(() => db.prepare("UPDATE question_request_results SET state='building',lease_expires_at=NULL,updated_at=?,revision=4").run(future)).toThrow();
