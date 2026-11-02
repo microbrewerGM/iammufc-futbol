@@ -45,7 +45,7 @@ describe("question request intake", () => {
   });
 
   it("renders a plain bilingual form and localized status without JavaScript", async () => {
-    const db = { prepare: vi.fn(() => ({ bind: () => ({ first: async () => ({ status: "triage_failed" }) }) })) };
+    const db = { prepare: vi.fn((query: string) => ({ bind: () => ({ first: async () => query.startsWith("SELECT status") ? { status: "triage_failed" } : null }) })) };
     const app = appWith();
     const response = await app.request("https://site.invalid/es/requests?id=" + "a".repeat(64), { headers }, { ...accessEnv, DB: db } as never);
     const html = await response.text();
