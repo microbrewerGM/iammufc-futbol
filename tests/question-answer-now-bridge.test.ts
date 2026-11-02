@@ -30,10 +30,12 @@ function fixture(){
   const db:Db=new DatabaseSync(":memory:");db.exec("PRAGMA foreign_keys=ON");
   for(const name of ["0001_schema","0003_p16_dot_plot","0004_cache_slots","0005_account_question_history","0006_season_splits","0008_exploration_request_links","0009_manager_era_records","0010_question_requests","0011_opponent_labels","0012_cl_season_stage","0013_question_request_results"])db.exec(readFileSync(`infra/migrations/${name}.sql`,"utf8"));
   const now=stamp(Date.now()),expires=stamp(Date.parse(now)+90*86400_000);
+  let time=Date.parse(now);const clockDb=new DatabaseSync(":memory:");
+  db.function("strftime",{varargs:true},(...args:(string|number|null)[])=>{const bound=args.map(arg=>arg==="now"?stamp(time):arg);return clockDb.prepare(`SELECT strftime(${bound.map(()=>"?").join(",")}) AS value`).get(...bound).value;});
   db.prepare("INSERT INTO snapshots(snapshot_id,created_at,sources_json,row_counts) VALUES(?,?,'{}','{}')").run(snapshot,now);
   db.prepare("INSERT INTO question_requests(request_id,account_sub,text,locale,text_hash,status,created_at,updated_at,expires_at) VALUES(?,'owner','Show goals','en',?,'received',?,?,?)").run(id,snapshot,now,now,expires);
   const d1=new SqliteD1(db);
-  const deps:TriageDeps={store:new D1QuestionTriageStore(d1 as unknown as D1Database),now:()=>new Date(),newLeaseId:()=>"lease-1",cursorKey:new TextEncoder().encode("fixture")};
+  const deps:TriageDeps={store:new D1QuestionTriageStore(d1 as unknown as D1Database),now:()=>new Date(time),newLeaseId:()=>"lease-1",cursorKey:new TextEncoder().encode("fixture")};
   deps.answerNow=async(row,v)=>{
     const mapped=await mapQuestionVerdict(v,{requestId:row.request_id,revision:row.revision+2,locale:row.locale,snapshotId:snapshot,resolvePerson:async p=>p});
     if(mapped.kind==="ready")return {state:"confirmation_required",specJson:JSON.stringify(mapped.spec),snapshotId:snapshot};
@@ -43,7 +45,7 @@ function fixture(){
   };
   const claim=()=>claimQuestion(deps,caller,JSON.stringify({version:1,kind:"claim",payload:{request_id:id,expected_attempt:0,operation_id:"qt:claim"}}));
   const ack=(value=verdict())=>JSON.stringify({version:1,kind:"ack",payload:{request_id:id,attempt:1,lease_id:"lease-1",operation_id:"qt:ack",outcome:{status:"verdict",verdict:value}}});
-  return {db,d1,deps,claim,ack};
+  return {db,d1,deps,claim,ack,advance:(seconds:number)=>{time+=seconds*1000;}};
 }
 describe("answer-now triage transaction",()=>{
   it("atomically stores a confirmation proposal at the final parent revision",async()=>{
@@ -89,6 +91,13 @@ describe("answer-now triage transaction",()=>{
     if(!result.ok)throw new Error(result.error);
     expect(JSON.parse(result.body).payload.outcome).toBe("conflict");
   });
+  it("refuses a lease that expires immediately before the batch write",async()=>{
+    const x=fixture();await x.claim();x.d1.beforeBatch=()=>x.advance(901);
+    const result=await ackQuestion(x.deps,caller,x.ack());if(!result.ok)throw new Error(result.error);
+    expect(JSON.parse(result.body).payload.outcome).toBe("conflict");
+    expect(x.db.prepare("SELECT status FROM question_requests").get().status).toBe("triaging");
+    expect(x.db.prepare("SELECT count(*) n FROM question_request_results").get().n).toBe(0);
+  });
 });
 describe("answer-now context probe",()=>{
   it("denies an unrecognized caller before any database read",async()=>{
@@ -103,5 +112,10 @@ describe("answer-now context probe",()=>{
     const body=await response.json() as {payload:{people:unknown[];catalog_digest:string}};
     expect(body.payload.people).toEqual([]);expect(body.payload.catalog_digest).toMatch(/^[0-9a-f]{64}$/);
     expect(JSON.stringify(body)).not.toContain("Show goals");
+  });
+  it("accepts canonical Python-style key ordering",async()=>{
+    const x=fixture(),app=new Hono<QuestionTriageEnv>();app.route("/",createQuestionTriageBridgeRouter(()=>caller));
+    const response=await app.request("https://site.invalid/answer-now/context",{method:"POST",body:'{"kind":"context","payload":{},"version":1}'},{DB:x.d1,BRIDGE_CURSOR_KEY:"fixture"} as never);
+    expect(response.status).toBe(200);
   });
 });

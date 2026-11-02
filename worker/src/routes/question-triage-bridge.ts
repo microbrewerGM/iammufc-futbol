@@ -27,14 +27,16 @@ export function createQuestionTriageBridgeRouter(resolveCaller: (c: import("hono
     if (!body.ok) return c.json({ error: body.status === 413 ? "too_large" : "malformed" }, body.status);
     let request: unknown;
     try { request = JSON.parse(body.raw); } catch { return c.json({ error: "malformed" }, 400); }
-    if (!request || typeof request !== "object" || Array.isArray(request) || JSON.stringify(request) !== '{"version":1,"kind":"context","payload":{}}') return c.json({ error: "malformed" }, 400);
+    if (!request || typeof request !== "object" || Array.isArray(request)) return c.json({ error: "malformed" }, 400);
+    const envelope = request as Record<string, unknown>;
+    if (Object.keys(envelope).length !== 3 || !["version","kind","payload"].every(k=>Object.hasOwn(envelope,k)) || envelope.version !== 1 || envelope.kind !== "context" || !envelope.payload || typeof envelope.payload !== "object" || Array.isArray(envelope.payload) || Object.keys(envelope.payload).length !== 0) return c.json({ error: "malformed" }, 400);
     if (!c.env.BRIDGE_CURSOR_KEY) return c.text("Bridge unavailable.", 503);
     try {
       // Schema probe must succeed before a scheduled client claims any question.
       await c.env.DB.prepare("SELECT request_id FROM question_request_results LIMIT 1").all();
-      const result = await c.env.DB.prepare("SELECT i.person_id AS id,max(p.web_name) AS label FROM player_identities i JOIN players p ON p.player_id=i.player_id GROUP BY i.person_id ORDER BY i.person_id LIMIT 200").all<{ id: string; label: string }>();
-      const people = result.results.filter(p => p.id.length >= 1 && p.id.length <= 64 && /^[a-z0-9]/.test(p.id) && !/[^a-z0-9:_-]/.test(p.id) && p.label.length >= 1 && p.label.length <= 120 && !/[\p{Cc}\p{Cf}]/u.test(p.label));
-      return c.json({ version: 1, kind: "answer_now_context", payload: { catalog_digest: await requestCatalogDigest(), people } });
+      const result = await c.env.DB.prepare("SELECT i.person_id AS id,max(p.web_name) AS label FROM player_identities i JOIN players p ON p.player_id=i.player_id GROUP BY i.person_id ORDER BY i.person_id LIMIT 201").all<{ id: string; label: string }>();
+      const people = result.results.slice(0,200).filter(p => p.id.length >= 1 && p.id.length <= 64 && /^[a-z0-9]/.test(p.id) && !/[^a-z0-9:_-]/.test(p.id) && p.label.length >= 1 && p.label.length <= 120 && !/[\p{Cc}\p{Cf}]/u.test(p.label));
+      return c.json({ version: 1, kind: "answer_now_context", payload: { catalog_digest: await requestCatalogDigest(), people, has_more: result.results.length > 200 } });
     } catch { return c.text("Bridge unavailable.", 503); }
   });
   router.all("/answer-now/context", c => c.text("Method not allowed.", 405, { Allow: "POST" }));
