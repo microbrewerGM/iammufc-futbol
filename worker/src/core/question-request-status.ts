@@ -24,6 +24,10 @@ interface StatusRow {
  * No original question or model-authored text is read by this status projection.
  */
 export async function readQuestionResultStatus(env: Env, account: string, requestId: string, locale: "en" | "es"): Promise<RequestStatusView | undefined> {
+  // Additive rollout: keep existing intake/status usable until CI applies0013.
+  // Other storage errors still propagate and fail closed in the route.
+  const schema=await env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='question_request_results'").bind().first<{name:string}>();
+  if (!schema) return undefined;
   const row = await env.DB.prepare(`SELECT r.request_id,r.request_revision,q.revision AS parent_revision,r.revision,r.state,
     r.spec_json,r.verified_json,r.expires_at,q.expires_at AS parent_expires_at,r.response_deadline,
     strftime('%Y-%m-%dT%H:%M:%SZ','now') AS db_now

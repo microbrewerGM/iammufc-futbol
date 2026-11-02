@@ -12,9 +12,9 @@ async function fixture() {
   const mapped=await mapQuestionVerdict(verdict,{requestId:id,revision:4,locale:"en",snapshotId:snapshot,resolvePerson:async p=>p});
   if(mapped.kind!=="ready") throw new Error("fixture_not_ready");
   const row={request_id:id,request_revision:4,parent_revision:4,revision:1,state:"confirmation_required",spec_json:JSON.stringify(mapped.spec),verified_json:null as string|null,expires_at:"2027-01-01T00:00:00Z",parent_expires_at:"2027-01-01T00:00:00Z",response_deadline:"2026-11-03T00:00:00Z",db_now:"2026-11-02T00:00:00Z"};
-  const data={snapshot,row,person:{person_id:"fpl:code:1",web_name:"Server <Player>"},duringIdentity:null as (()=>void)|null};
+  const data={snapshot,row,schema:true,person:{person_id:"fpl:code:1",web_name:"Server <Player>"},duringIdentity:null as (()=>void)|null};
   const queries:{sql:string;args:unknown[]}[]=[];
-  const DB={prepare:(sql:string)=>{let args:unknown[]=[];const statement={bind:(...v:unknown[])=>{args=v;queries.push({sql,args});return statement;},first:async()=>sql.includes("FROM question_request_results") ? args[1]==="owner" ? {...data.row,snapshot_id:data.snapshot} : null : sql.includes("FROM snapshots") ? {snapshot_id:data.snapshot} : null,all:async()=>{data.duringIdentity?.();return {results:[data.person]};}};return statement;}};
+  const DB={prepare:(sql:string)=>{let args:unknown[]=[];const statement={bind:(...v:unknown[])=>{args=v;queries.push({sql,args});return statement;},first:async()=>sql.includes("sqlite_master") ? data.schema?{name:"question_request_results"}:null : sql.includes("FROM question_request_results") ? args[1]==="owner" ? {...data.row,snapshot_id:data.snapshot} : null : sql.includes("FROM snapshots") ? {snapshot_id:data.snapshot} : null,all:async()=>{data.duringIdentity?.();return {results:[data.person]};}};return statement;}};
   return {row,data,mapped,queries,env:{DB} as unknown as Env};
 }
 describe("account-owned request status projection",()=>{
@@ -22,11 +22,14 @@ describe("account-owned request status projection",()=>{
     const x=await fixture(),view=await readQuestionResultStatus(x.env,"owner",id,"es");
     expect(view).toMatchObject({requestId:id,revision:1,state:"confirmation_required",currentBinding:true,personLabel:"Server <Player>",intent:x.mapped.intent});
     expect(JSON.stringify(view)).not.toContain("Untrusted");
-    expect(x.queries[0]!.args).toEqual([id,"owner"]);
-    expect(x.queries[0]!.sql).not.toMatch(/q\.text|verdict_json|account_sub AS/);
+    expect(x.queries[1]!.args).toEqual([id,"owner"]);
+    expect(x.queries[1]!.sql).not.toMatch(/q\.text|verdict_json|account_sub AS/);
   });
   it("does not resolve identities or disclose another account's request",async()=>{
-    const x=await fixture();expect(await readQuestionResultStatus(x.env,"other",id,"en")).toBeUndefined();expect(x.queries).toHaveLength(1);
+    const x=await fixture();expect(await readQuestionResultStatus(x.env,"other",id,"en")).toBeUndefined();expect(x.queries).toHaveLength(2);
+  });
+  it("keeps legacy status available until the additive migration is applied",async()=>{
+    const x=await fixture();x.data.schema=false;expect(await readQuestionResultStatus(x.env,"owner",id,"en")).toBeUndefined();expect(x.queries).toHaveLength(1);
   });
   it.each(["generation","snapshot","catalog","renderer","path"])("suppresses actions for changed %s",async change=>{
     const x=await fixture();const spec={...x.mapped.spec};
