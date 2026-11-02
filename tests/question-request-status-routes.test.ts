@@ -16,7 +16,7 @@ describe("request confirmation endpoint",()=>{
     const r=await post();expect(r.status).toBe(303);expect(r.headers.get("location")).toBe(`/es/requests?id=${id}`);
     expect(readQuestionResultStatus).toHaveBeenCalledWith(expect.anything(),"owner",id,"es");expect(confirmQuestionResult).toHaveBeenCalledWith({marker:"serverdeps"},id,3,"owner");
   });
-  it.each(["expected_revision=3&expected_revision=3","expected_revision=3&text=ignored","expected_revision=03","expected_revision=3%0A","expected_revision=0","expected_revision=-1","expected_revision=9007199254740992","unexpected=3"])("refuses malformed/extra form fields: %s",async body=>{
+  it.each(["expected_revision=3&expected_revision=3","expected_revision=3&text=ignored","expected_revision=03","expected_revision=3%0A","expected_revision=3%0D","expected_revision=3%E2%80%A8","expected_revision=3%E2%80%A9","expected_revision=0","expected_revision=-1","expected_revision=9007199254740992","unexpected=3"])("refuses malformed/extra form fields: %s",async body=>{
     expect((await post(body)).status).toBe(400);expect(readQuestionResultStatus).not.toHaveBeenCalled();expect(confirmQuestionResult).not.toHaveBeenCalled();
   });
   it("bounds streaming input and declared length",async()=>{

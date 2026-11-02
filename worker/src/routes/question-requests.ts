@@ -82,7 +82,7 @@ export function createQuestionRequestsRouter() {
       const bytes=new Uint8Array(size); let offset=0; for (const chunk of chunks) {bytes.set(chunk,offset);offset+=chunk.byteLength;}
       const form=new URLSearchParams(new TextDecoder("utf-8",{fatal:true,ignoreBOM:false}).decode(bytes));
       const fields=[...form];
-      if (fields.length!==1 || fields[0]![0]!=="expected_revision" || !/^[1-9][0-9]{0,14}$/.test(fields[0]![1]) || fields[0]![1].includes("\n")) return c.text("Invalid request.",400);
+      if (fields.length!==1 || fields[0]![0]!=="expected_revision" || !/^[1-9][0-9]{0,14}$/.test(fields[0]![1]) || fields[0]![1].trim()!==fields[0]![1]) return c.text("Invalid request.",400);
       const revision=Number(fields[0]![1]);
       // Revalidate the current catalog and code versions before confirmation;
       // the storage adapter additionally fences snapshot/generation at write.
