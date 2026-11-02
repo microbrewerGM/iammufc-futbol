@@ -18,6 +18,8 @@ export interface QuestionResultView {
   resultPath?: string;
   /** Route must compare the stored acceptance with current catalog/snapshot. */
   currentBinding?: boolean;
+  /** Explicitly disable the form until the clarification handler is available. */
+  clarificationAvailable?: boolean;
 }
 const RESULT_STRINGS = {
   en: { clarification_required: "Please clarify your question", confirmation_required: "Confirm your selection", building: "Preparing your result", in_review: "Checking your result", released: "Your result is ready", unsupported: "This request is not supported yet", unavailable: "The requested data is unavailable", failed: "We could not prepare this result", expired: "This request has expired", stale: "The data has changed; this result needs checking", clarifyLabel: "Your clarified question", clarify: "Send clarification", confirm: "Confirm selection", open: "View result", table: "Table", bar: "Bar chart", dot_plot: "Dot plot" },
@@ -33,7 +35,7 @@ export function questionResultPanel(code: LocaleCode, result: QuestionResultView
   const summary = intent && metric && result.personLabel
     ? `<p>${esc(result.personLabel)} · ${esc(code === "es" ? metric.label_es : metric.label_en)} · ${esc(intent.season)} · ${esc(intent.competition)} · ${esc(t[intent.viz as "table" | "bar" | "dot_plot"])}</p>` : "";
   let action = "";
-  if (result.state === "clarification_required") {
+  if (result.state === "clarification_required" && result.clarificationAvailable !== false) {
     action = `<form method="post" action="/${code}/requests/${result.requestId}/clarify"><input type="hidden" name="expected_revision" value="${result.revision}"><label for="clarified-question">${esc(t.clarifyLabel)}</label><textarea id="clarified-question" name="text" maxlength="500" required></textarea><button type="submit">${esc(t.clarify)}</button></form>`;
   } else if (result.state === "confirmation_required" && summary && result.currentBinding === true) {
     action = `<form method="post" action="/${code}/requests/${result.requestId}/confirm"><input type="hidden" name="expected_revision" value="${result.revision}"><button type="submit">${esc(t.confirm)}</button></form>`;
