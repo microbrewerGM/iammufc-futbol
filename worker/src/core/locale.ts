@@ -179,6 +179,7 @@ export interface Locale {
     careerRecordFor: (season: string) => string;
     goalsPer90Col: string;
     assistsPer90Col: string;
+    sortPer90: (column: string, direction: "asc" | "desc") => string;
     careerRateExplainer: string;
     careerTableLabel: string;
     dashExplainer: string;
@@ -377,6 +378,7 @@ const EN: Locale = {
     careerRecordFor: (s) => `Manchester United output by season. Selected: ${s}.`,
     goalsPer90Col: "Goals / 90",
     assistsPer90Col: "Assists / 90",
+    sortPer90: (column, direction) => `Sort ${column} in ${direction === "asc" ? "ascending" : "descending"} order`,
     careerRateExplainer:
       "Per 90 = 90 × total ÷ minutes. A dash means a value is unavailable; missing data is not zero.",
     careerTableLabel: "Manchester United player output by season",
@@ -578,6 +580,7 @@ const ES: Locale = {
     careerRecordFor: (s) => `Producción del Manchester United por temporada. Seleccionada: ${s}.`,
     goalsPer90Col: "Goles / 90",
     assistsPer90Col: "Asistencias / 90",
+    sortPer90: (column, direction) => `Ordenar ${column} ${direction === "asc" ? "de menor a mayor" : "de mayor a menor"}`,
     careerRateExplainer:
       "Por 90 = 90 × total ÷ minutos. Un guion significa que un valor no está disponible; los datos ausentes no son cero.",
     careerTableLabel: "Producción del jugador del Manchester United por temporada",

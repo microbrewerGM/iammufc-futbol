@@ -548,6 +548,12 @@ ${attribution ? `<p class="tagline">${esc(attribution)}</p>` : ""}
 <p><a href="${base(locale)}/">${esc(t.backToMatrix)}</a></p>`;
 }
 
+export interface SeasonSquadOptions {
+  sort?: "goals_per90" | "assists_per90";
+  direction?: "asc" | "desc";
+  query?: string;
+}
+
 export function seasonPageBody(
   season: string,
   squad: SquadRow[],
@@ -556,6 +562,7 @@ export function seasonPageBody(
   locale: Locale,
   europeanRecord: SeasonRecord | null = null,
   comparison: SeasonComparison | null = null,
+  options: SeasonSquadOptions = {},
 ): string {
   const t = locale.strings;
   const comparisonMarkup = teamSeasonComparison(season, comparison, locale);
@@ -574,8 +581,19 @@ ${comparisonMarkup}
   }
 
   const feas = columnFeasibility(catalog, "player", season, "PL", locale.code);
+  const direction = options.direction ?? "desc";
+  const rateHeader = (metric: "goals_per90" | "assists_per90", label: string) => {
+    const active = options.sort === metric;
+    const next = active && direction === "desc" ? "asc" : "desc";
+    const query = new URLSearchParams(options.query);
+    query.set("sort", metric);
+    query.set("direction", next);
+    const href = `${base(locale)}/season/${encodeURIComponent(season)}?${query.toString()}`;
+    const state = active ? ` aria-sort="${direction === "asc" ? "ascending" : "descending"}"` : "";
+    return `<th scope="col" class="num"${state}><a href="${esc(href)}" aria-label="${esc(t.sortPer90(label, next))}">${esc(label)}</a></th>`;
+  };
   const head = metricHeadCells(catalog, feas, locale) +
-    `<th scope="col" class="num">${esc(t.goalsPer90Col)}</th><th scope="col" class="num">${esc(t.assistsPer90Col)}</th>`;
+    rateHeader("goals_per90", t.goalsPer90Col) + rateHeader("assists_per90", t.assistsPer90Col);
   const sum = (pick: (p: SquadRow) => number | null | undefined): number | null =>
     squad.reduce<number | null>((acc, p, i) => {
       const v = pick(p);
@@ -604,7 +622,19 @@ ${comparisonMarkup}
   const totalRow = `<tfoot><tr class="total"><th scope="row">${esc(totalLabel)}</th>` +
     `${metricValueCells(catalog, feas, totals, locale)}` +
     `${totalRate("goals")}${totalRate("assists")}<td></td></tr></tfoot>`;
-  const rows = squad
+  const orderedSquad = options.sort ? (() => {
+    const metric = options.sort === "goals_per90" ? "goals" : "assists";
+    const executable = isExecutable(feas.get(metric)) && isExecutable(feas.get("minutes"));
+    return squad.map((player, index) => ({
+      player, index, rate: executable ? per90(player[metric], player.minutes) : null,
+    })).sort((a, b) => {
+      if (a.rate === null) return b.rate === null ? a.index - b.index : 1;
+      if (b.rate === null) return -1;
+      const difference = direction === "asc" ? a.rate - b.rate : b.rate - a.rate;
+      return difference || a.index - b.index;
+    }).map(({ player }) => player);
+  })() : squad;
+  const rows = orderedSquad
     .map(
       (p) =>
         `<tr><td><a href="${base(locale)}/player/${encodeURIComponent(p.route_key)}/${esc(season)}">${esc(p.label)}</a></td>` +
