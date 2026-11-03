@@ -160,8 +160,10 @@ describe("requester-owned clarification",()=>{
   });
 });
 describe("clarification HTTP boundary",()=>{
-  it("suppresses the form and refuses writes when clarification schema is incomplete",async()=>{
-    const x=fixture();x.db.exec("DROP TRIGGER question_request_results_generation_transition");
+  it.each(["question_request_clarifications_insert","question_request_clarifications_update","question_request_clarifications_no_replace",
+    "question_request_clarifications_retention","question_requests_clarification_state_machine","question_requests_clarification_clock_update",
+    "question_request_results_generation_transition","question_request_results_spec_update"])("suppresses the form and writes without required trigger %s",async trigger=>{
+    const x=fixture();x.db.exec(`DROP TRIGGER ${trigger}`);
     for(const locale of ["en","es"] as const){
       const page=await app().request(`https://site.invalid/${locale}/requests?id=${id}`,{headers},{...x.env,...access} as never);
       expect(page.status).toBe(200);expect(await page.text()).not.toContain(`/requests/${id}/clarify`);
