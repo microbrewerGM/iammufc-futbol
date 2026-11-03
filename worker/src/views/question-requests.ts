@@ -11,7 +11,7 @@ const catalog = new Catalog(decodeCompiledCatalog(compiled));
 export interface QuestionResultView {
   requestId: string;
   revision: number;
-  state: "clarification_required" | "confirmation_required" | "building" | "in_review" | "released" | "unsupported" | "unavailable" | "failed" | "expired" | "stale";
+  state: "triaging" | "clarification_required" | "confirmation_required" | "building" | "in_review" | "released" | "unsupported" | "unavailable" | "failed" | "expired" | "stale";
   /** Resolved from the server-owned player identity table, never the model restatement. */
   personLabel?: string;
   intent?: QueryIntent;
@@ -22,8 +22,8 @@ export interface QuestionResultView {
   clarificationAvailable?: boolean;
 }
 const RESULT_STRINGS = {
-  en: { clarification_required: "Please clarify your question", confirmation_required: "Confirm your selection", building: "Preparing your result", in_review: "Checking your result", released: "Your result is ready", unsupported: "This request is not supported yet", unavailable: "The requested data is unavailable", failed: "We could not prepare this result", expired: "This request has expired", stale: "The data has changed; this result needs checking", clarifyLabel: "Your clarified question", clarify: "Send clarification", confirm: "Confirm selection", open: "View result", table: "Table", bar: "Bar chart", dot_plot: "Dot plot" },
-  es: { clarification_required: "Aclara tu pregunta", confirmation_required: "Confirma tu selección", building: "Preparando tu resultado", in_review: "Comprobando tu resultado", released: "Tu resultado está listo", unsupported: "Esta solicitud aún no es compatible", unavailable: "Los datos solicitados no están disponibles", failed: "No pudimos preparar este resultado", expired: "Esta solicitud ha caducado", stale: "Los datos han cambiado; hay que comprobar este resultado", clarifyLabel: "Tu pregunta aclarada", clarify: "Enviar aclaración", confirm: "Confirmar selección", open: "Ver resultado", table: "Tabla", bar: "Gráfico de barras", dot_plot: "Gráfico de puntos" },
+  en: { triaging: "Reviewing your clarification", clarification_required: "Please clarify your question", confirmation_required: "Confirm your selection", building: "Preparing your result", in_review: "Checking your result", released: "Your result is ready", unsupported: "This request is not supported yet", unavailable: "The requested data is unavailable", failed: "We could not prepare this result", expired: "This request has expired", stale: "The data has changed; this result needs checking", clarifyLabel: "Your clarified question", clarify: "Send clarification", confirm: "Confirm selection", open: "View result", table: "Table", bar: "Bar chart", dot_plot: "Dot plot" },
+  es: { triaging: "Revisando tu aclaración", clarification_required: "Aclara tu pregunta", confirmation_required: "Confirma tu selección", building: "Preparando tu resultado", in_review: "Comprobando tu resultado", released: "Tu resultado está listo", unsupported: "Esta solicitud aún no es compatible", unavailable: "Los datos solicitados no están disponibles", failed: "No pudimos preparar este resultado", expired: "Esta solicitud ha caducado", stale: "Los datos han cambiado; hay que comprobar este resultado", clarifyLabel: "Tu pregunta aclarada", clarify: "Enviar aclaración", confirm: "Confirmar selección", open: "Ver resultado", table: "Tabla", bar: "Gráfico de barras", dot_plot: "Gráfico de puntos" },
 } as const;
 
 export function questionResultPanel(code: LocaleCode, result: QuestionResultView): string {
