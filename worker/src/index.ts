@@ -1206,6 +1206,21 @@ function registerLocaleRoutes(code: LocaleCode) {
 
   app.get(`${p}/season/:season`, async (c) => {
     const season = c.req.param("season");
+    const url = new URL(c.req.url);
+    const sorts = url.searchParams.getAll("sort");
+    const directions = url.searchParams.getAll("direction");
+    const sort = sorts[0];
+    if (sorts.length > 1 || directions.length > 1 ||
+        (sort !== undefined && sort !== "goals_per90" && sort !== "assists_per90") ||
+        (directions[0] !== undefined && directions[0] !== "asc" && directions[0] !== "desc") ||
+        (sort === undefined && directions.length > 0)) {
+      return c.text("Invalid squad sort selection", 400);
+    }
+    const options = {
+      sort: sort as "goals_per90" | "assists_per90" | undefined,
+      direction: directions[0] === "asc" ? "asc" as const : "desc" as const,
+      query: url.searchParams.toString(),
+    };
     const eligibleSeasons = eligibleLeagueSeasons(catalog, season);
     // Champions League record fetched alongside the league one. Returns null
     // for every season United did not enter it, which is the common case and
@@ -1217,14 +1232,14 @@ function registerLocaleRoutes(code: LocaleCode) {
       seasonHistoryRows(c.env, eligibleSeasons),
     ]);
     const comparison = buildSeasonComparison(history, eligibleSeasons, catalog, code);
-    const seasonBody = seasonPageBody(season, squad, record, catalog, locale, europeanRecord, comparison);
+    const seasonBody = seasonPageBody(season, squad, record, catalog, locale, europeanRecord, comparison, options);
     const historyLink = `<p><a href="/${code}/seasons/champions-league">${locale.code === "es" ? "Historial de la Liga de Campeones" : "Champions League history"}</a></p>`;
     const body = `${seasonBody}${historyLink}`;
     const res = html(
       page(body, {
         title: `${season}`,
         locale,
-        unprefixedPath: `/season/${season}`,
+        unprefixedPath: `/season/${season}${url.search}`,
         snapshotId: await currentSnapshot(c.env),
       }),
     );
