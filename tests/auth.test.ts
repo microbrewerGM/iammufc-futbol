@@ -65,39 +65,79 @@ describe("compute GET registry", () => {
     });
     const { env } = setup();
     const headers = { "cf-access-jwt-assertion": "synthetic", Origin: "https://site.invalid" };
-    const queries = ["", "?seasons=2024-25&group_by=venue",
-      "?person_ids=fpl:code:1&person_ids=fpl:code:2&seasons=2024-25",
-      "?opponent_id=club:1001&seasons=2024-25"];
-    const assertRegistered = () => {
-      expect([...observed].filter(path => !isProtectedGetPath(path))).toEqual([]);
+    type Exercise = { path?: string; query: string; budget: boolean };
+    // Deliberately independent of the router and registry: every discovered GET
+    // needs a reviewed input and an explicit budget expectation. Never fall back
+    // to generic queries: they can stop at validation before reaching the budget.
+    const exercises: Record<string, Exercise[]> = {};
+    for (const path of ["/api/catalog", "/api/health", "/robots.txt", "/sitemap.xml", "/", "/q", "/data"]) {
+      exercises[path] = [{ query: "", budget: false }];
+    }
+    exercises["/:locale{en|es}/requests"] = [
+      { path: "/en/requests", query: "", budget: false },
+      { path: "/es/requests", query: "", budget: false },
+    ];
+    for (const prefix of ["", "/en", "/es"]) {
+      exercises[`${prefix}/player/:name/:season?`] = [{ path: `${prefix}/player/Alex/2024-25`, query: "", budget: false }];
+      exercises[`${prefix}/season/:season`] = [{ path: `${prefix}/season/2024-25`, query: "", budget: false }];
+    }
+    for (const locale of ["en", "es"]) {
+      for (const suffix of ["", "/", "/data", "/compare", "/history", "/seasons/champions-league"]) {
+        exercises[`/${locale}${suffix}`] = [{ query: "", budget: false }];
+      }
+      exercises[`/${locale}/discover/arrivals`] = [{
+        query: "?version=1&family=arrival_manager&as_of=2026-10-23&population=first_team_available&joining_basis=effective_first_team_spell_entry&academy_basis=documented_first_team_promotion&visualization=table",
+        budget: false,
+      }];
+      for (const [family, query] of [
+        ["q", ""],
+        ["seasons/explore", "?seasons=2024-25&group_by=venue"],
+        ["players/compare", "?person_ids=fpl:code:1&person_ids=fpl:code:2&seasons=2024-25"],
+        ["players/trends", "?person_ids=fpl:code:1&person_ids=fpl:code:2&seasons=2024-25"],
+        ["opponents/history", "?opponent_id=club:1001&seasons=2024-25"],
+      ] as const) {
+        exercises[`/${locale}/${family}`] = [{ query, budget: true }];
+      }
+    }
+    const audit = async (application: {
+      routes: { method: string; path: string }[];
+      request: (url: string, init: RequestInit, env: Env) => Response | Promise<Response>;
+    }) => {
+      observed.clear();
+      const paths = new Set(application.routes.filter(route => route.method === "GET").map(route => route.path));
+      for (const path of paths) {
+        const cases = exercises[path];
+        if (!cases?.length) throw new Error(`missing exercised GET coverage: ${path}`);
+        for (const exercise of cases) {
+          currentPath = exercise.path ?? path;
+          observed.delete(currentPath);
+          const response = await application.request(`https://site.invalid${currentPath}${exercise.query}`, { headers }, env);
+          expect(response.status, `valid audit input: ${currentPath}${exercise.query}`).not.toBe(400);
+          expect(response.status, `registered handler: ${currentPath}`).not.toBe(404);
+          expect(observed.has(currentPath), `budget expectation: ${currentPath}`).toBe(exercise.budget);
+        }
+      }
+      // Assert outside Hono: onError must not swallow the audit failure.
+      expect([...observed].filter(path => !isProtectedGetPath(path)), "unregistered budget callers").toEqual([]);
     };
     try {
-      // Enumerate the router at runtime rather than parsing source or selecting
-      // only registry members: a new bare GET budget caller is audited too.
-      const paths = new Set(app.routes.filter(route => route.method === "GET").map(route => route.path));
-      for (const path of paths) {
-        currentPath = path.replace(/:name/g, "Alex").replace(/:season\?/g, "2024-25").replace(/:season/g, "2024-25");
-        for (const query of queries) {
-          await app.request(`https://site.invalid${currentPath}${query}`, { headers }, env);
-        }
-      }
-      for (const locale of ["en", "es"]) {
-        for (const family of ["q", "seasons/explore", "players/compare", "players/trends", "opponents/history"]) {
-          expect(observed.has(`/${locale}/${family}`), `budget must be reached: /${locale}/${family}`).toBe(true);
-        }
-      }
-      assertRegistered();
+      await audit(app);
 
       const negative = new Hono<{ Bindings: Env }>();
       negative.get("/unregistered-compute", async c => {
+        if (c.req.query("metric") !== "x") return c.text("metric required", 400);
         await db.enforceBudget(c.env);
         return c.text("synthetic");
       });
-      currentPath = "/unregistered-compute";
-      await negative.request(`https://site.invalid${currentPath}`, {}, env);
-      expect(observed.has(currentPath)).toBe(true);
-      // Assert outside Hono: onError must not swallow the audit failure.
-      expect(assertRegistered).toThrow();
+      // The same discovery loop rejects missing coverage and invalid inputs,
+      // then a valid parameter-dependent fixture exposes the unregistered caller.
+      await expect(audit(negative)).rejects.toThrow("missing exercised GET coverage");
+      exercises["/unregistered-compute"] = [{ query: "", budget: true }];
+      await expect(audit(negative)).rejects.toThrow("valid audit input");
+      expect(observed.size).toBe(0);
+      exercises["/unregistered-compute"] = [{ query: "?metric=x", budget: true }];
+      await expect(audit(negative)).rejects.toThrow("unregistered budget callers");
+      expect(observed.has("/unregistered-compute")).toBe(true);
     } finally {
       for (const spy of [budget, snapshot, cache, aggregate, capability, jwt]) spy.mockRestore();
     }
