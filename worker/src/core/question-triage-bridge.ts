@@ -21,6 +21,7 @@ export interface TriageStore {
   page(after: string | null, limit: number): Promise<TriageQuestion[]>;
   get(id: string): Promise<TriageQuestion | null>;
   operation(service: string, type: "claim" | "ack", id: string, requestId: string): Promise<TriageOperation | null>;
+  answerNowReplay?(service: string, id: string, requestId: string, bodyHash: string, leaseId: string, attempt: number): Promise<TriageOperation | null>;
   claim(row: TriageQuestion, next: TriageQuestion, op: TriageOperation): Promise<boolean>;
   ack(row: TriageQuestion, next: TriageQuestion, op: TriageOperation, admission: { requestId: string; requestJson: string; jobId: string; accountSub: string; createdAt: string } | null, now: string, answerNow?: AnswerNowDraft): Promise<boolean>;
   sweepRows(kind: "expired" | "triaged" | "queued", now: string, limit: number): Promise<TriageQuestion[]>;
@@ -196,6 +197,13 @@ export async function ackQuestion(deps: TriageDeps, caller: TriageCaller, raw: u
     || typeof p.operation_id!=="string" || !/^qt:[a-z0-9:_-]{1,92}$/.test(p.operation_id) || p.operation_id.trim()!==p.operation_id || !object(p.outcome)
     || v2 && (!isInt(p.expected_revision,1,Number.MAX_SAFE_INTEGER-2) || !isInt(p.expected_generation,0,3))) return bad("malformed");
   const now=nowMs(deps), bodyHash=await hash(canonical(v2 ? {protocol:2,kind:"ack",payload:p} : deps.answerNow ? {answer_now:1,payload:p} : p));
+  if (!v2 && deps.answerNow && deps.store.answerNowReplay) {
+    const initial = await deps.store.answerNowReplay(caller.service,p.operation_id,p.request_id,bodyHash,p.lease_id,p.attempt);
+    if (initial) {
+      if (initial.body_hash!==bodyHash || initial.receipt) return reply(deps,"ack_result",{outcome:"conflict"});
+      return reply(deps,"ack_result",{outcome:"replayed",response:initial.response});
+    }
+  }
   const prior=await deps.store.operation(caller.service,"ack",p.operation_id,p.request_id), cur=await deps.store.get(p.request_id);
   if (prior) {
     if (prior.body_hash!==bodyHash || !cur || (v2 ? !receiptMatches(prior.receipt,cur,p,now) || prior.receipt!.lease_id!==p.lease_id : !!prior.receipt || !!cur.managed)) return reply(deps,"ack_result",{outcome:"conflict"});
@@ -237,11 +245,19 @@ export async function ackQuestion(deps: TriageDeps, caller: TriageCaller, raw: u
 }
 
 export async function sweepQuestions(deps: TriageDeps, limit = 100, selected?: "expired" | "triaged" | "queued"): Promise<{ moved: number }> {
-  const now = nowMs(deps), stamp = time(now); let moved = deps.protocol===2 && deps.store.maintainResults ? await deps.store.maintainResults(limit) : 0;
+  const now = nowMs(deps), stamp = time(now); let moved = 0;
+  if (deps.protocol===2 && deps.store.maintainResults) {
+    try { moved = await deps.store.maintainResults(limit); }
+    catch { /* Maintenance failure must not strand unrelated recoverable leases. */ }
+  }
   for (const kind of (selected ? [selected] : ["expired", "triaged", "queued"] as const)) {
     const rows = await deps.store.sweepRows(kind, stamp, limit);
     for (const row of rows) {
-      if (!eligible(deps,row,now)) continue;
+      const expiredManaged = deps.protocol===2 && kind==="expired" && row.managed && row.status==="triaging"
+        && row.result_state==="expired" && isInt(generation(row),1,3) && row.clarification_valid===1
+        && row.lease_id?.startsWith("q2:") && typeof row.lease_expires_at==="string"
+        && Date.parse(row.lease_expires_at)<=now;
+      if (!eligible(deps,row,now) && !expiredManaged) continue;
       try {
         let next: TriageQuestion | null = null;
         if (kind === "expired") next = row.attempt >= 3 ? { ...row, status: "triage_failed", lease_expires_at: null, retry_after: null, revision: row.revision + 1 } : { ...row, status: "received", lease_expires_at: null, retry_after: time(Math.min(now + ({ 1: 300, 2: 1800 }[row.attempt] ?? 1800) * 1000, Date.parse(row.claimed_at!) + 86400_000)), revision: row.revision + 1 };

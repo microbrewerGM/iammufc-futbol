@@ -19,6 +19,12 @@ const V2_SCOPE=`(q.status!='triaging' OR substr(q.lease_id,1,3)='q2:') AND (NOT 
     AND c.generation=r.clarification_count AND c.parent_revision=r.request_revision AND q.revision>=r.request_revision
     AND r.response_deadline>strftime('%Y-%m-%dT%H:%M:%SZ','now')))`;
 type SweepKind="expired"|"triaged"|"queued";
+// Cleanup never reopens the expired sidecar or extends either retention clock.
+const EXPIRED_MANAGED_SCOPE=`q.status='triaging' AND substr(q.lease_id,1,3)='q2:'
+  AND EXISTS(SELECT 1 FROM question_request_results r JOIN question_request_clarifications c ON c.request_id=r.request_id
+    WHERE r.request_id=q.request_id AND r.state='expired' AND r.clarification_count BETWEEN 1 AND 3
+    AND c.generation=r.clarification_count AND c.parent_revision=r.request_revision AND q.revision>=r.request_revision
+    AND r.expires_at=q.expires_at)`;
 const lastSweepAt:Record<1|2,number|null>={1:null,2:null};
 const nextSweep:Record<1|2,SweepKind>={1:"expired",2:"expired"};
 let queuedSweepCursor:string|null=null;
@@ -63,7 +69,7 @@ function operationJSON(op:TriageOperation):string{
 export class D1QuestionTriageStore implements TriageStore{
   constructor(private readonly db:DB,private readonly protocol:1|2=1){}
   private scope():string{return this.protocol===2?V2_SCOPE:V1_SCOPE;}
-  private fence():string{return this.scope()+(this.protocol===2?` AND coalesce((SELECT clarification_count FROM question_request_results WHERE request_id=q.request_id),0)=?
+  private fence(scope=this.scope()):string{return scope+(this.protocol===2?` AND coalesce((SELECT clarification_count FROM question_request_results WHERE request_id=q.request_id),0)=?
     AND coalesce((SELECT revision FROM question_request_results WHERE request_id=q.request_id),0)=?`:"");}
   private fenceValues(row:TriageQuestion):unknown[]{return this.protocol===2?[row.generation ?? 0,row.result_revision ?? 0]:[];}
   async page(after:string|null,limit:number):Promise<TriageQuestion[]>{
@@ -90,6 +96,30 @@ export class D1QuestionTriageStore implements TriageStore{
     return this.db.prepare(`INSERT INTO exploration_bridge_operations(service,scope_key,operation_type,operation_id,body_hash,response_json,lease_id,created_at,expires_at)
       SELECT ?,?,?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%SZ','now'),strftime('%Y-%m-%dT%H:%M:%SZ','now','+30 days') WHERE changes()=1`)
       .bind(op.service,op.service,op.type,op.operation_id,op.body_hash,operationJSON(op),op.lease_id);
+  }
+  async answerNowReplay(service:string,id:string,requestId:string,bodyHash:string,leaseId:string,attempt:number):Promise<TriageOperation|null>{
+    if(this.protocol!==1)return null;
+    const row=await this.db.prepare(`SELECT o.service,o.operation_type,o.operation_id,o.body_hash,o.response_json,o.lease_id,q.status AS parent_status
+      FROM exploration_bridge_operations o JOIN question_requests q ON q.request_id=?
+      JOIN question_request_results r ON r.request_id=q.request_id
+      WHERE o.service=? AND o.scope_key=o.service AND o.operation_type='ack' AND o.operation_id=? AND o.body_hash=?
+      AND o.expires_at>strftime('%Y-%m-%dT%H:%M:%SZ','now') AND q.expires_at>strftime('%Y-%m-%dT%H:%M:%SZ','now')
+      AND r.expires_at=q.expires_at AND q.lease_id=o.lease_id AND q.lease_id=? AND q.lease_owner=o.service AND q.attempt=?
+      AND substr(q.lease_id,1,3)!='q2:' AND r.revision=1 AND r.clarification_count=0 AND r.request_revision=q.revision
+      AND NOT EXISTS(SELECT 1 FROM question_request_clarifications c WHERE c.request_id=q.request_id)
+      AND ((q.status='filled' AND r.state='confirmation_required' AND r.response_deadline>strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+        OR (q.status='no_data' AND r.state='clarification_required' AND r.response_deadline>strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+        OR (q.status='no_data' AND r.state IN ('unsupported','unavailable')))`)
+      .bind(requestId,service,id,bodyHash,leaseId,attempt).first<OpRow & {parent_status:string}>();
+    if(!row)return null;
+    let value:unknown;try{value=JSON.parse(row.response_json);}catch{return null;}
+    if(!value || typeof value!=="object" || Array.isArray(value))return null;
+    const env=value as Record<string,unknown>,payload=env.payload;
+    if(Object.keys(env).length!==3 || env.version!==1 || env.kind!=="ack_result"
+      || !payload || typeof payload!=="object" || Array.isArray(payload))return null;
+    const response=payload as Record<string,unknown>;
+    if(Object.keys(response).length!==2 || response.outcome!=="accepted" || response.status!==row.parent_status)return null;
+    return {service:row.service,type:"ack",operation_id:row.operation_id,body_hash:row.body_hash,response,lease_id:row.lease_id};
   }
   async claim(row:TriageQuestion,next:TriageQuestion,op:TriageOperation):Promise<boolean>{
     const update=this.db.prepare(`UPDATE question_requests AS q SET status=?,attempt=?,lease_id=?,lease_owner=?,lease_expires_at=?,claimed_at=?,retry_after=NULL,revision=?,
@@ -157,14 +187,17 @@ export class D1QuestionTriageStore implements TriageStore{
       return rows;
     }
     const where=kind==="expired"?"q.status='triaging' AND q.lease_expires_at<=? AND q.lease_expires_at<=strftime('%Y-%m-%dT%H:%M:%SZ','now')":"q.status='triaged'";
-    return (await this.db.prepare(`${SELECT} WHERE ${where} AND ${this.scope()} ORDER BY q.updated_at,q.request_id LIMIT ?`).bind(...(kind==="expired"?[now,limit]:[limit])).all<TriageQuestion>()).results;
+    const scope=this.protocol===2 && kind==="expired"?`(${this.scope()} OR (${EXPIRED_MANAGED_SCOPE}))`:this.scope();
+    return (await this.db.prepare(`${SELECT} WHERE ${where} AND ${scope} ORDER BY q.updated_at,q.request_id LIMIT ?`).bind(...(kind==="expired"?[now,limit]:[limit])).all<TriageQuestion>()).results;
   }
   async settle(row:TriageQuestion,next:TriageQuestion,now:string):Promise<boolean>{
+    const expiredManaged=this.protocol===2 && !!row.managed && row.result_state==="expired";
     const update=this.db.prepare(`UPDATE question_requests AS q SET status=?,lease_expires_at=?,retry_after=?,revision=?,updated_at=max(updated_at,strftime('%Y-%m-%dT%H:%M:%SZ','now'))
       WHERE q.request_id=? AND q.status=? AND q.revision=? AND q.lease_id IS ? AND q.lease_owner IS ?
-      AND (q.status!='triaging' OR q.lease_expires_at<=strftime('%Y-%m-%dT%H:%M:%SZ','now')) AND ${this.fence()} RETURNING request_id`)
-      .bind(next.status,next.lease_expires_at,next.retry_after,next.revision,row.request_id,row.status,row.revision,row.lease_id,row.lease_owner,...this.fenceValues(row));
-    if(this.protocol===2 && row.managed && next.status==="triage_failed"){
+      AND q.account_sub=? AND q.attempt=?
+      AND (q.status!='triaging' OR q.lease_expires_at<=strftime('%Y-%m-%dT%H:%M:%SZ','now')) AND ${this.fence(expiredManaged?EXPIRED_MANAGED_SCOPE:this.scope())} RETURNING request_id`)
+      .bind(next.status,next.lease_expires_at,next.retry_after,next.revision,row.request_id,row.status,row.revision,row.lease_id,row.lease_owner,row.account_sub,row.attempt,...this.fenceValues(row));
+    if(this.protocol===2 && row.managed && next.status==="triage_failed" && !expiredManaged){
       const result=await this.db.batch([update,this.remap(row,next,{state:"failed",specJson:null,snapshotId:null},now)]);
       return result[0]!.results.length===1;
     }
