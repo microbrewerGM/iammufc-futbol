@@ -43,7 +43,7 @@ class SqliteStatement {
 class SqliteD1 {
   afterQuestionRead?: () => void | Promise<void>;
   constructor(private readonly db: InstanceType<typeof DatabaseSync>) {}
-  prepare(sql: string) { return new SqliteStatement(this.db, sql, sql.includes("FROM question_requests WHERE request_id=?") ? () => { const hook = this.afterQuestionRead; this.afterQuestionRead = undefined; return hook?.(); } : undefined); }
+  prepare(sql: string) { return new SqliteStatement(this.db, sql, sql.startsWith("SELECT q.request_id") && sql.includes("WHERE q.request_id=?") ? () => { const hook = this.afterQuestionRead; this.afterQuestionRead = undefined; return hook?.(); } : undefined); }
   async batch(statements: SqliteStatement[]) {
     this.db.exec("BEGIN");
     try { const result = []; for (const statement of statements) result.push(await statement.all()); this.db.exec("COMMIT"); return result; }
@@ -52,7 +52,7 @@ class SqliteD1 {
 }
 function sqliteForBridge() {
   const db = new DatabaseSync(":memory:"); db.exec("PRAGMA foreign_keys=ON");
-  for (const name of ["0001_schema.sql", "0003_p16_dot_plot.sql", "0004_cache_slots.sql", "0005_account_question_history.sql", "0006_season_splits.sql", "0008_exploration_request_links.sql", "0009_manager_era_records.sql", "0010_question_requests.sql"]) db.exec(readFileSync(`infra/migrations/${name}`, "utf8"));
+  for (const name of ["0001_schema.sql", "0003_p16_dot_plot.sql", "0004_cache_slots.sql", "0005_account_question_history.sql", "0006_season_splits.sql", "0008_exploration_request_links.sql", "0009_manager_era_records.sql", "0010_question_requests.sql","0013_question_request_results.sql","0014_question_request_clarifications.sql"]) db.exec(readFileSync(`infra/migrations/${name}`, "utf8"));
   const created = new Date(), createdAt = created.toISOString().replace(/\.\d{3}Z$/, "Z"), expires = new Date(created.getTime() + 90 * 86_400_000).toISOString().replace(/\.\d{3}Z$/, "Z");
   db.prepare(`INSERT INTO question_requests(request_id,account_sub,text,locale,text_hash,status,created_at,updated_at,expires_at) VALUES(?,?,?,?,?,'received',?,?,?)`).run(id,"stored-account-sub","How many goals?","en","b".repeat(64),createdAt,createdAt,expires);
   return { db, d1: new SqliteD1(db) };
@@ -75,7 +75,7 @@ function addPublishedQueue(db: InstanceType<typeof DatabaseSync>, questionId: st
   const publication = JSON.stringify({ artifact_key: "a".repeat(64), request_id: requestId, validation_record_id: "validation-1", publication_id: "publication-1", loaded_snapshot_id: "snapshot-1", coverage_record_id: "coverage-1", loaded_at: created, lineage: ["lineage-1"] });
   db.prepare(`INSERT INTO exploration_shared_jobs(job_id,request_id,status,attempt,lease_id,lease_owner,claimed_at,publication_json,admitted_at,created_at,updated_at,expires_at) VALUES(?,?,'published',1,'lease-a','runner-a',?,?,?, ?,?,?)`).run(jobId, requestId, created, publication, created, created, created, expires);
   db.prepare(`INSERT INTO exploration_shared_results(request_id,snapshot_id,artifact_key,transform_code_version,renderer_version,roster_snapshot_id,feasibility,coverage,population_count,assigned_json,unknown_json,lineage_json,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,0,'[]','[]','[]',?,?)`).run(requestId, "snapshot-1", "a".repeat(64), "transform-v1", "renderer-v1", coverage === "missing" ? null : "roster-1", coverage === "missing" ? "no_data" : "available", coverage, created, expires);
-  db.exec("DROP TRIGGER IF EXISTS question_requests_state_machine;");
+  db.exec("DROP TRIGGER IF EXISTS question_requests_state_machine; DROP TRIGGER IF EXISTS question_requests_clarification_state_machine;");
   const questionVerdict = JSON.stringify(verdict({ request_id: questionId, tables: [{ fields: ["goals"], filters: { season: ["2010-11"], competition: ["PL"], opponent_id: [], person_id: [] } }] }));
   db.prepare("UPDATE question_requests SET status='queued',attempt=1,lease_id='lease-a',lease_owner='runner-a',lease_expires_at=NULL,claimed_at=?,verdict_json=?,exploration_request_id=?,revision=3 WHERE request_id=?").run(created, questionVerdict, requestId, questionId);
 }
@@ -194,7 +194,7 @@ describe("question triage service bridge", () => {
 
     const raceId = "e".repeat(64); addQuestion(db, raceId, "triaging", 900);
     const racingDeps = sqliteDeps(d1, new Date(Date.now() + 60_000).toISOString());
-    db.exec("DROP TRIGGER question_requests_state_machine");
+    db.exec("DROP TRIGGER IF EXISTS question_requests_state_machine; DROP TRIGGER IF EXISTS question_requests_clarification_state_machine");
     const racedExpiry = new Date(Date.now() + 30_000).toISOString().replace(/\.\d{3}Z$/, "Z");
     d1.afterQuestionRead = () => { db.prepare("UPDATE question_requests SET lease_expires_at=? WHERE request_id=?").run(racedExpiry, raceId); };
     const raced = await ackQuestion(racingDeps, service, envelope("ack", { request_id: raceId, attempt: 1, lease_id: "lease-a", operation_id: "qt:sql-lease-fence", outcome: { status: "failed", reason: "source_unavailable" } }));
@@ -212,7 +212,13 @@ describe("question triage service bridge", () => {
 
   it("ack races an expired-lease sweep after reading a live lease", async () => {
     const { db, d1 } = sqliteForBridge();
-    db.exec("DROP TRIGGER question_requests_state_machine");
+    const clockDb = new DatabaseSync(":memory:");
+    let databaseNow = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+    db.function("strftime", { varargs: true }, (...args: (string | number | null)[]) => {
+      const bound = args.map(value => value === "now" ? databaseNow : value);
+      return clockDb.prepare(`SELECT strftime(${bound.map(() => "?").join(",")}) AS value`).get(...bound).value;
+    });
+    db.exec("DROP TRIGGER IF EXISTS question_requests_state_machine; DROP TRIGGER IF EXISTS question_requests_clarification_state_machine");
     const requestId = "8".repeat(64);
     addQuestion(db, requestId, "triaging", 900);
     const beforeExpiry = new Date(Date.now() + 30_000);
@@ -222,6 +228,7 @@ describe("question triage service bridge", () => {
     const leaseExpired = new Date(afterExpiry.getTime() - 1_000).toISOString().replace(/\.\d{3}Z$/, "Z");
     const stillLive = new Date(afterExpiry.getTime() + 30_000).toISOString().replace(/\.\d{3}Z$/, "Z");
     d1.afterQuestionRead = async () => {
+      databaseNow = afterExpiry.toISOString().replace(/\.\d{3}Z$/, "Z");
       db.prepare("UPDATE question_requests SET lease_expires_at=? WHERE request_id=?").run(leaseExpired, requestId);
       expect(await sweepQuestions(sweepDeps, 100, "expired")).toEqual({ moved: 1 });
       db.prepare("UPDATE question_requests SET status='triaging',lease_expires_at=?,retry_after=NULL WHERE request_id=?").run(stillLive, requestId);
@@ -233,11 +240,12 @@ describe("question triage service bridge", () => {
     expect(await ackDeps.store.get(requestId)).toMatchObject({ status: "triaging", lease_expires_at: stillLive, revision: 3 });
     expect(db.prepare("SELECT count(*) AS n FROM exploration_bridge_operations WHERE operation_id='qt:live-lease-race'").get()).toEqual({ n: 0 });
     db.close();
+    clockDb.close();
   });
 
   it("no_shared_rows_when_status_update_missed", async () => {
     const { db, d1 } = sqliteForBridge();
-    db.exec("DROP TRIGGER question_requests_state_machine");
+    db.exec("DROP TRIGGER IF EXISTS question_requests_state_machine; DROP TRIGGER IF EXISTS question_requests_clarification_state_machine");
     const requestId = "9".repeat(64); addQuestion(db, requestId, "triaging", 900);
     const deps = sqliteDeps(d1, new Date(Date.now() + 60_000).toISOString());
     const racedExpiry = new Date(Date.now() + 30_000).toISOString().replace(/\.\d{3}Z$/, "Z");
@@ -287,7 +295,7 @@ describe("question triage service bridge", () => {
 
   it("rotates queued SQLite sweep pages so rows past the first 100 are reached", async () => {
     const { db, d1 } = sqliteForBridge();
-    db.exec("DROP TRIGGER question_requests_state_machine");
+    db.exec("DROP TRIGGER IF EXISTS question_requests_state_machine; DROP TRIGGER IF EXISTS question_requests_clarification_state_machine");
     const firstId = (n: number) => n.toString(16).padStart(64, "0");
     for (let n = 1; n <= 102; n++) {
       const requestId = firstId(n); addQuestion(db, requestId, "triaging", 900);

@@ -28,7 +28,7 @@ const stamp=(ms:number)=>new Date(Math.floor(ms/1000)*1000).toISOString().replac
 function verdict(){return {version:1,request_id:id,relevant:true,junk_reason:null,restated_question:"Show goals",tables:[{fields:["goals"],filters:{season:["2024-25"],competition:["PL"],person_id:["fpl:code:1"],opponent_id:[]}}],visuals:[{kind:"bar",table_index:0}],field_status:[],families:[] as string[]};}
 function fixture(){
   const db:Db=new DatabaseSync(":memory:");db.exec("PRAGMA foreign_keys=ON");
-  for(const name of ["0001_schema","0003_p16_dot_plot","0004_cache_slots","0005_account_question_history","0006_season_splits","0008_exploration_request_links","0009_manager_era_records","0010_question_requests","0011_opponent_labels","0012_cl_season_stage","0013_question_request_results"])db.exec(readFileSync(`infra/migrations/${name}.sql`,"utf8"));
+  for(const name of ["0001_schema","0003_p16_dot_plot","0004_cache_slots","0005_account_question_history","0006_season_splits","0008_exploration_request_links","0009_manager_era_records","0010_question_requests","0011_opponent_labels","0012_cl_season_stage","0013_question_request_results","0014_question_request_clarifications"])db.exec(readFileSync(`infra/migrations/${name}.sql`,"utf8"));
   const now=stamp(Date.now()),expires=stamp(Date.parse(now)+90*86400_000);
   let time=Date.parse(now);const clockDb=new DatabaseSync(":memory:");
   db.function("strftime",{varargs:true},(...args:(string|number|null)[])=>{const bound=args.map(arg=>arg==="now"?stamp(time):arg);return clockDb.prepare(`SELECT strftime(${bound.map(()=>"?").join(",")}) AS value`).get(...bound).value;});
