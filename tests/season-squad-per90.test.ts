@@ -16,7 +16,7 @@ const render = (minutes: number, locale: "en" | "es", cat = catalog) =>
 const cells = (html: string) =>
   [...html.match(/<tbody><tr>.*?<\/tr>/s)![0].matchAll(/<td[^>]*>.*?<\/td>/gs)].map((m) => m[0]);
 const heads = (html: string) =>
-  [...html.match(/<thead>.*?<\/thead>/s)![0].matchAll(/<th\b[^>]*>(.*?)<\/th>/g)].map((m) => m[1]!.replace(/<[^>]+>/g, ""));
+  [...html.match(/<thead>.*?<\/thead>/s)![0].matchAll(/<th\b[^>]*>(?:<a\b[^>]*>)?([^<]*)(?:<\/a>)?<\/th>/g)].map((m) => m[1]);
 const dashCell = new RegExp(`^<td class="num no" title="[^"]+">${DASH}</td>$`);
 
 describe("season squad per-90 columns", () => {
