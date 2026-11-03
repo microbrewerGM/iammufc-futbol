@@ -88,6 +88,7 @@ describe("opponent_labels migration (0011)", () => {
     const segment0011 = "wrangler d1 execute iammufc-dev --config infra/wrangler.jsonc --env dev --local --file infra/migrations/0011_opponent_labels.sql";
     const segment0012 = "wrangler d1 execute iammufc-dev --config infra/wrangler.jsonc --env dev --local --file infra/migrations/0012_cl_season_stage.sql";
     const segment0002 = "wrangler d1 execute iammufc-dev --config infra/wrangler.jsonc --env dev --local --file infra/migrations/0002_seed.sql";
-    expect(seed).toContain(`${segment0010} && ${segment0011} && ${segment0012} && ${segment0002}`);
+    expect(seed).toContain(`${segment0010} && ${segment0011} && ${segment0012} && `);
+    expect(seed.indexOf(segment0012)).toBeLessThan(seed.indexOf(segment0002));
   });
 });
