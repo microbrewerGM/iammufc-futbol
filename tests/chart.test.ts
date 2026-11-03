@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { barChartSvg, buildAltText, dotPlotSvg } from "../worker/src/core/chart";
 import type { ResultRow } from "../worker/src/core/db";
+import { Catalog, type CompiledCatalog, type FeasibilityResult } from "../worker/src/core/feasibility";
+import { withDefaults } from "../worker/src/core/intent";
+import { LOCALES } from "../worker/src/core/locale";
+import { resultPanel } from "../worker/src/views/pages";
+import compiled from "../worker/src/generated/catalog.json" with { type: "json" };
 
 const rows: ResultRow[] = [
   { label: "Negative", value: -2 },
@@ -18,6 +23,28 @@ const options = {
 } as const;
 
 describe("server-rendered charts", () => {
+  it.each([
+    ["en", ["Rank", "Player", "Pos", "Goals"]],
+    ["es", ["Puesto", "Jugador", "Pos", "Goles"]],
+  ] as const)("marks every player result column as a named column header in %s", (language, headings) => {
+    const catalog = new Catalog(compiled as unknown as CompiledCatalog);
+    const feasible: FeasibilityResult = { state: "computable_now_queued", reason: "fixture", cost_class: "cheap" };
+    for (const viz of ["table", "bar", "dot_plot"] as const) {
+      const markup = resultPanel(
+        { ...withDefaults({ metric: "goals", entity_type: "player", entity_id: "all", season: "2025-26", competition: "PL", limit: 4 }), viz },
+        feasible, rows, catalog, "headers-fixture", LOCALES[language],
+      );
+      const header = markup.match(/<table><thead><tr>([\s\S]*?)<\/tr><\/thead>/)?.[1];
+      expect(header).toBeDefined();
+      const cells = [...header!.matchAll(/<(th|td)\b([^>]*)>([\s\S]*?)<\/\1>/g)];
+      expect(cells.map((cell) => cell[3])).toEqual(headings);
+      for (const cell of cells) {
+        expect(cell[1]).toBe("th");
+        expect(cell[2]).toMatch(/\bscope="col"/);
+      }
+    }
+  });
+
   it("renders a deterministic dot plot across negative, zero, positive and null values", () => {
     const markup = dotPlotSvg(rows, options);
     expect(dotPlotSvg(rows, options)).toBe(markup);
