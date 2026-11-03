@@ -1,9 +1,108 @@
 import { describe, expect, it, vi } from "vitest";
+
+vi.mock("jose", async original => {
+  const actual = await original<typeof import("jose")>();
+  return { ...actual, jwtVerify: vi.fn(actual.jwtVerify) };
+});
 import { Hono } from "hono";
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from "jose";
+import * as jose from "jose";
+import * as db from "../worker/src/core/db";
+import { Catalog } from "../worker/src/core/feasibility";
+import { COMPUTE_GET_ROUTES, computeGetPath } from "../worker/src/core/compute-routes";
 import app from "../worker/src/index";
 import type { Env } from "../worker/src/core/db";
-import { accessGate, accessIdentity, type AccessEnv, verifyAccess } from "../worker/src/security/auth";
+import { accessGate, accessIdentity, isProtectedGetPath, type AccessEnv, verifyAccess } from "../worker/src/security/auth";
+
+describe("compute GET registry", () => {
+  it("preserves exactly the existing protected path families and registered locale routes", () => {
+    // Independent fixture: changing the registry must not silently change the boundary.
+    const families = ["/q", "/players/compare", "/players/trends", "/opponents/history",
+      "/seasons/explore", "/seasons/champions-league", "/discover/arrivals"];
+    expect(Object.values(COMPUTE_GET_ROUTES).sort()).toEqual([...families].sort());
+    for (const family of families) {
+      for (const prefix of ["", "/en", "/es"]) {
+        for (const slash of ["", "/"]) {
+          const path = `${prefix}${family}${slash}`;
+          expect(isProtectedGetPath(path), path).toBe(true);
+          for (const invalid of [`${path}/`, `${path}/extra`, `/fr${path}`, path.toUpperCase()]) {
+            // A single slash is already covered above; double slashes are not.
+            if (invalid === `${prefix}${family}/`) continue;
+            expect(isProtectedGetPath(invalid), invalid).toBe(false);
+          }
+        }
+      }
+    }
+    const registered = new Set(app.routes.filter(route => route.method === "GET").map(route => route.path));
+    for (const route of Object.keys(COMPUTE_GET_ROUTES) as (keyof typeof COMPUTE_GET_ROUTES)[]) {
+      for (const locale of ["en", "es"] as const) {
+        expect(registered.has(computeGetPath(route, locale))).toBe(true);
+      }
+    }
+    for (const path of ["/", "/en", "/compare", "/en/compare", "/api/query", "/en/player/Alex/2024-25",
+      "/en/season/2024-25", "/en/players%2Fcompare", "/en/players/%2563ompare"]) {
+      expect(isProtectedGetPath(path), path).toBe(false);
+    }
+  });
+
+  it("audits actual budget calls at runtime, including an unregistered negative control", async () => {
+    let currentPath = "";
+    const observed = new Set<string>();
+    // Return false to stop at the budget boundary, before any compute/data read.
+    const budget = vi.spyOn(db, "enforceBudget").mockImplementation(async () => {
+      observed.add(currentPath);
+      return false;
+    });
+    const snapshot = vi.spyOn(db, "currentSnapshot").mockResolvedValue("a".repeat(64));
+    const cache = vi.spyOn(db, "readQueryCache").mockResolvedValue({ result: null, outcome: "miss" });
+    const aggregate = vi.spyOn(db, "logQueryAggregate").mockResolvedValue(undefined);
+    const capability = vi.spyOn(Catalog.prototype, "outputCapability").mockReturnValue("clear");
+    // Only this audit replaces signature verification; the JWT tests below use real keys.
+    const jwt = vi.spyOn(jose, "jwtVerify").mockResolvedValue({
+      payload: { sub: "audit-owner", email: "owner@example.invalid" },
+      protectedHeader: { alg: "RS256" },
+      key: new Uint8Array(),
+    });
+    const { env } = setup();
+    const headers = { "cf-access-jwt-assertion": "synthetic", Origin: "https://site.invalid" };
+    const queries = ["", "?seasons=2024-25&group_by=venue",
+      "?person_ids=fpl:code:1&person_ids=fpl:code:2&seasons=2024-25",
+      "?opponent_id=club:1001&seasons=2024-25"];
+    const assertRegistered = () => {
+      expect([...observed].filter(path => !isProtectedGetPath(path))).toEqual([]);
+    };
+    try {
+      // Enumerate the router at runtime rather than parsing source or selecting
+      // only registry members: a new bare GET budget caller is audited too.
+      const paths = new Set(app.routes.filter(route => route.method === "GET").map(route => route.path));
+      for (const path of paths) {
+        currentPath = path.replace(/:name/g, "Alex").replace(/:season\?/g, "2024-25").replace(/:season/g, "2024-25");
+        for (const query of queries) {
+          await app.request(`https://site.invalid${currentPath}${query}`, { headers }, env);
+        }
+      }
+      for (const locale of ["en", "es"]) {
+        for (const family of ["q", "seasons/explore", "players/compare", "players/trends", "opponents/history"]) {
+          expect(observed.has(`/${locale}/${family}`), `budget must be reached: /${locale}/${family}`).toBe(true);
+        }
+      }
+      assertRegistered();
+
+      const negative = new Hono<{ Bindings: Env }>();
+      negative.get("/unregistered-compute", async c => {
+        await db.enforceBudget(c.env);
+        return c.text("synthetic");
+      });
+      currentPath = "/unregistered-compute";
+      await negative.request(`https://site.invalid${currentPath}`, {}, env);
+      expect(observed.has(currentPath)).toBe(true);
+      // Assert outside Hono: onError must not swallow the audit failure.
+      expect(assertRegistered).toThrow();
+    } finally {
+      for (const spy of [budget, snapshot, cache, aggregate, capability, jwt]) spy.mockRestore();
+    }
+  });
+});
 
 function setup() {
   const env = {

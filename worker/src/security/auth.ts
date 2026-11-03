@@ -2,6 +2,7 @@ import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from "jose";
 import { createMiddleware } from "hono/factory";
 import type { Context } from "hono";
 import type { Env } from "../core/db";
+import { isComputeGetPath } from "../core/compute-routes";
 
 interface AccessConfig { issuer: string; audience: string; owners: string[]; serviceClientIds?: string[] }
 export type AccessIdentity = { sub: string; email: string } | { sub: ""; serviceClientId: string };
@@ -14,7 +15,7 @@ type AccessVerifier = (token: string, config: AccessConfig) => Promise<AccessIde
 const resolvers = new Map<string, JWTVerifyGetKey>();
 
 export function isProtectedGetPath(path: string): boolean {
-  return /^\/(?:en\/|es\/)?(?:q|players\/(?:compare|trends)|opponents\/history|seasons\/(?:explore|champions-league)|discover\/arrivals)\/?$/.test(path);
+  return isComputeGetPath(path);
 }
 
 export async function verifyAccess(token: string, config: AccessConfig, keys?: JWTVerifyGetKey): Promise<AccessIdentity> {
