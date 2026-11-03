@@ -42,4 +42,23 @@ describe("request result status views",()=>{
     expect(questionRequestPage("en","filled",undefined,result)).toContain(`/es/requests?id=${result.requestId}`);
     expect(questionRequestPage("es","filled",undefined,result)).toContain(`/en/requests?id=${result.requestId}`);
   });
+  it.each(["en","es"] as const)("puts native snapshot disclosure after result actions in %s",code=>{
+    const html=questionResultPanel(code,{...view("released"),resultPath:requestResultPath(intent,code),executedSnapshotId:"snapshot_2026-11-02"});
+    expect(html).toContain(code==="es"?"Procedencia de los datos":"Data provenance");
+    expect(html).toContain(code==="es"?"Instantánea de datos del resultado":"Result data snapshot");
+    expect(html).toContain("<details><summary>");expect(html.indexOf("</a>")).toBeLessThan(html.indexOf("<details>"));
+    expect(html).not.toContain("tabindex=");expect(html).not.toContain("<script");
+  });
+  it("keeps stale retained provenance without a result link and wraps long IDs",()=>{
+    const html=questionResultPanel("en",{...view("stale"),currentBinding:false,executedSnapshotId:"s".repeat(128)});
+    expect(html).toContain("Data provenance");expect(html).not.toContain("<a href=");
+    expect(html.match(/<wbr>/g)).toHaveLength(7);
+  });
+  it.each(["triaging","confirmation_required","building","in_review","clarification_required","failed","expired"] as const)("never labels %s proposals as executed",state=>{
+    expect(questionResultPanel("en",{...view(state),executedSnapshotId:"snapshot"})).not.toContain("Data provenance");
+  });
+  it.each(["snapshot\n","snapshot\u0000","<img src=x>","/private","https://evil.test","x".repeat(129)])("refuses unsafe metadata %j",value=>{
+    const html=questionResultPanel("en",{...view("released"),executedSnapshotId:value});
+    expect(html).not.toContain("Data provenance");expect(html).not.toContain(value);
+  });
 });
