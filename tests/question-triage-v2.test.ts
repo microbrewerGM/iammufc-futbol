@@ -101,6 +101,21 @@ describe("generation-fenced triage v2",()=>{
     expect(body(await claimQuestion(x.legacy,caller,claimRequest)).payload.outcome).toBe("not_found");expect(body(await ackQuestion(x.legacy,caller,ackRequest)).payload.outcome).toBe("conflict");
     const v2ack=JSON.parse(ackRequest);v2ack.version=2;Object.assign(v2ack.payload,{expected_revision:2,expected_generation:0});expect(body(await ackQuestion(x.deps,caller,JSON.stringify(v2ack))).payload.outcome).toBe("conflict");
   });
+  it("does not replay the initial v1 answer-now receipt after a clarification generation",async()=>{
+    const x=fixture(),answerNow:TriageDeps={...x.deps,protocol:1,store:x.legacyStore};
+    const c=body(await claimQuestion(answerNow,caller,wire("claim",{request_id:id,expected_attempt:0,operation_id:"qt:initial-claim"},1))).payload.question;
+    const ack=wire("ack",{request_id:id,attempt:c.attempt,lease_id:c.lease_id,operation_id:"qt:initial-ack",outcome:{status:"verdict",verdict:verdict(true)}},1);
+    expect(body(await ackQuestion(answerNow,caller,ack)).payload.outcome).toBe("accepted");
+    x.requeue();const parent=x.q(),result=x.r();
+    expect(body(await ackQuestion(answerNow,caller,ack)).payload.outcome).toBe("conflict");expect(x.q()).toEqual(parent);expect(x.r()).toEqual(result);
+  });
+  it("does not replay a v2 receipt through the initial v1 answer-now exception",async()=>{
+    const x=fixture(),c=await x.claim();await x.ack(c.question);
+    const request=JSON.parse(x.ackBody(c.question));request.version=1;delete request.payload.expected_revision;delete request.payload.expected_generation;
+    const parent=x.q(),result=x.r(),answerNow:TriageDeps={...x.deps,protocol:1,store:x.legacyStore};
+    expect(body(await ackQuestion(answerNow,caller,JSON.stringify(request))).payload.outcome).toBe("conflict");
+    expect(x.q()).toEqual(parent);expect(x.r()).toEqual(result);
+  });
   it("excludes managed rows at SQL write and sweep boundaries even with stale caller metadata",async()=>{
     const x=fixture();await x.clarify();const row=(await x.store.get(id))!,fake={...row,managed:0};
     const next={...fake,status:"triaging",attempt:1,lease_id:"legacy-lease",lease_owner:caller.service,claimed_at:x.now(),lease_expires_at:stamp(Date.parse(x.now())+900_000),revision:fake.revision+1};
@@ -134,9 +149,72 @@ describe("generation-fenced triage v2",()=>{
   });
   it("expires abandoned null-spec generations after an outage longer than a day",async()=>{
     const x=fixture();await x.clarify();await x.claim();x.advance(86401);
-    expect(await sweepQuestions(x.deps,10,"expired")).toEqual({moved:1});expect(x.r()).toMatchObject({state:"expired",spec_json:null,lease_expires_at:null});
+    expect(await sweepQuestions(x.deps,10,"expired")).toEqual({moved:2});expect(x.r()).toMatchObject({state:"expired",spec_json:null,lease_expires_at:null});
+    expect(x.q()).toMatchObject({status:"received",attempt:1,lease_expires_at:null});
     expect(body(await readQuestions(x.deps,caller,wire("read",{cursor:null,limit:10}))).payload.questions).toEqual([]);
     expect(await sweepQuestions(x.deps,10,"expired")).toEqual({moved:0});
+  });
+  it.each([1,2,3])("recovers newly and already expired managed attempt%s without changing the expired result",async attempt=>{
+    for(const alreadyExpired of [false,true]){
+      const x=fixture();await x.clarify();
+      for(let previous=1;previous<attempt;previous++){
+        const c=await x.claim();await ackQuestion(x.deps,caller,x.ackBody(c.question,{status:"failed",reason:"source_unavailable"}));
+        x.advance(previous===1?300:1800);
+      }
+      const leased=await x.claim(),parent=x.q();x.advance(86401);
+      if(alreadyExpired)expect(await x.store.maintainResults(10)).toBe(1);
+      const sidecar=x.r();
+      expect(await sweepQuestions(x.deps,10,"expired")).toEqual({moved:alreadyExpired?1:2});
+      expect(x.q()).toMatchObject({status:attempt===3?"triage_failed":"received",attempt,
+        revision:parent.revision+1,lease_id:parent.lease_id,lease_owner:parent.lease_owner,
+        account_sub:parent.account_sub,expires_at:parent.expires_at,lease_expires_at:null});
+      expect(x.q().retry_after).toBe(attempt===3?null:stamp(Date.parse(parent.claimed_at)+86400_000));
+      expect(x.r()).toEqual({...sidecar,state:"expired",revision:sidecar.revision+(alreadyExpired?0:1),updated_at:x.now()});
+      const settled=x.q(),expired=x.r();
+      expect(body(await readQuestions(x.deps,caller,wire("read",{cursor:null,limit:10}))).payload.questions).toEqual([]);
+      expect(body(await claimQuestion(x.deps,caller,wire("claim",{request_id:id,expected_revision:settled.revision,
+        expected_generation:expired.clarification_count,expected_attempt:Math.min(attempt,2),operation_id:"qt:expired-no-renew"}))).payload.outcome).not.toBe("claimed");
+      expect(body(await x.ack(leased.question)).payload.outcome).toBe("conflict");
+      expect(await sweepQuestions(x.deps,10,"expired")).toEqual({moved:0});
+      expect(x.q()).toEqual(settled);expect(x.r()).toEqual(expired);
+    }
+  });
+  it("recovers an expired parent after retention without renewing its sidecar",async()=>{
+    const x=fixture();await x.clarify();await x.claim();const expiry=x.q().expires_at;x.advance(91*86400);
+    expect(await sweepQuestions(x.deps,10,"expired")).toEqual({moved:2});
+    expect(x.q()).toMatchObject({status:"received",expires_at:expiry});expect(x.r()).toMatchObject({state:"expired",expires_at:expiry});
+    expect(body(await readQuestions(x.deps,caller,wire("read",{cursor:null,limit:10}))).payload.questions).toEqual([]);
+  });
+  it("keeps live managed leases fenced by database time after the sidecar expires",async()=>{
+    const x=fixture();await x.clarify();x.advance(86350);await x.claim();x.advance(60);
+    expect(await sweepQuestions(x.deps,10,"expired")).toEqual({moved:1});expect(x.r().state).toBe("expired");
+    const live=x.q(),row=(await x.store.get(id))!,fast=stamp(Date.parse(x.now())+901_000);
+    expect(await sweepQuestions({...x.deps,now:()=>new Date(fast)},10,"expired")).toEqual({moved:0});
+    expect(await x.store.settle(row,{...row,status:"received",revision:row.revision+1,lease_expires_at:null,retry_after:fast},fast)).toBe(false);
+    expect(x.q()).toEqual(live);x.advance(841);
+    expect(await sweepQuestions(x.deps,10,"expired")).toEqual({moved:1});expect(x.q().status).toBe("received");
+  });
+  it("checks every parent and sidecar snapshot fence for expired cleanup",async()=>{
+    const x=fixture();await x.clarify();await x.claim();x.advance(86401);expect(await x.store.maintainResults(10)).toBe(1);
+    const row=(await x.store.get(id))!,before=x.q();
+    const next={...row,status:"received",lease_expires_at:null,retry_after:stamp(Date.parse(row.claimed_at!)+86400_000),revision:row.revision+1};
+    for(const change of [{revision:row.revision+1},{attempt:row.attempt+1},{account_sub:"other"},
+      {lease_id:"q2:other"},{lease_owner:"other"},{result_revision:row.result_revision!+1},{generation:row.generation!+1}]){
+      expect(await x.store.settle({...row,...change},next,x.now())).toBe(false);expect(x.q()).toEqual(before);
+    }
+    expect(await x.store.settle(row,next,x.now())).toBe(true);expect(x.r().state).toBe("expired");
+  });
+  it("continues unrelated recovery after maintenance aborts and retries maintenance later",async()=>{
+    const x=fixture();await x.clarify();await x.claim();x.advance(86401);const other="c".repeat(64);
+    x.db.prepare("INSERT INTO question_requests(request_id,account_sub,text,locale,text_hash,status,created_at,updated_at,expires_at)VALUES(?,'other','Other question','en',?,'received',?,?,?)")
+      .run(other,snapshot,x.now(),x.now(),stamp(Date.parse(x.now())+90*86400_000));
+    expect(body(await claimQuestion(x.deps,caller,wire("claim",{request_id:other,expected_revision:1,expected_generation:0,expected_attempt:0,operation_id:"qt:other"}))).payload.outcome).toBe("claimed");
+    x.advance(901);x.db.exec("CREATE TEMP TRIGGER abort_result_maintenance BEFORE UPDATE ON question_request_results BEGIN SELECT RAISE(ABORT,'fixture maintenance abort');END");
+    expect(await sweepQuestions(x.deps,10,"expired")).toEqual({moved:1});
+    expect(x.db.prepare("SELECT status FROM question_requests WHERE request_id=?").get(other).status).toBe("received");
+    expect(x.q().status).toBe("triaging");expect(x.r().state).toBe("triaging");
+    x.db.exec("DROP TRIGGER abort_result_maintenance");
+    expect(await sweepQuestions(x.deps,10,"expired")).toEqual({moved:2});expect(x.q().status).toBe("received");expect(x.r().state).toBe("expired");
   });
   it("closes stale confirmed work after a publication rather than repeatedly offering execution",async()=>{
     const x=fixture(),c=await x.claim();await x.ack(c.question);x.db.exec("UPDATE question_request_results SET state='building',revision=revision+1");
