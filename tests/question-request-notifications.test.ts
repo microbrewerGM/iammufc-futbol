@@ -7,6 +7,7 @@ import {Hono} from "hono";
 import {handleNotification,type NotificationOperation} from "../worker/src/core/question-request-notifications";
 import {createQuestionTriageBridgeRouter,type QuestionTriageEnv} from "../worker/src/routes/question-triage-bridge";
 import {TRIAGE_CAPABILITY} from "../worker/src/core/question-triage-bridge";
+import {accessGate,type AccessIdentity} from "../worker/src/security/auth";
 import type {Env} from "../worker/src/core/db";
 import {mapQuestionVerdict} from "../worker/src/core/question-request-intent";
 import {Catalog} from "../worker/src/core/feasibility";
@@ -242,6 +243,10 @@ describe("authoritative durable notification service",()=>{
 });
 
 const localFields=(grant:any)=>({request_id:id,expected_revision:grant.revision,lease_id:grant.lease_id,payload_revision:grant.payload_revision});
+const notificationState=(x:ReturnType<typeof fixture>)=>Object.fromEntries(
+  ["question_requests","question_request_local_notifications","question_request_notifications","question_request_results"].map(table=>[
+    table,x.db.prepare(`SELECT * FROM ${table} ORDER BY request_id`).all(),
+  ]));
 const receiptFor=async(p:any)=>Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(JSON.stringify(["question-request-local-v2",p.request_id,p.status,p.revision,p.result_path])))),b=>b.toString(16).padStart(2,"0")).join("");
 async function localGrant(x:ReturnType<typeof fixture>){
   const read=await x.http("read",{limit:10});expect(read.status).toBe(200);
@@ -249,6 +254,69 @@ async function localGrant(x:ReturnType<typeof fixture>){
   return (await x.http("prepare",{request_id:id,expected_revision:item.revision})).payload;
 }
 describe("local notification v2 through the HTTP boundary and migrations through 0018",()=>{
+  it.each(["prepare","bind","ack"] as const)("refuses anonymous and human-only %s without changing any persisted state",async kind=>{
+    const x=fixture(1,true);await x.release();const grant=await localGrant(x),receipt=await receiptFor(grant.payload);
+    let fields=localFields(grant);
+    if(kind==="ack"){
+      const bound=await x.http("bind",{...fields,receipt});expect(bound.payload.outcome).toBe("accepted");
+      fields={...fields,expected_revision:bound.payload.revision};
+    }
+    const payload=kind==="prepare"?{request_id:id,expected_revision:grant.payload_revision}:
+      {...fields,receipt,...(kind==="ack"?{outcome:"delivered"}:{})};
+    for(const identity of [null,{service:"human",capability:"human" as typeof TRIAGE_CAPABILITY}]){
+      const before=notificationState(x);
+      expect(await x.http(kind,payload,2,identity)).toMatchObject({status:403,error:"invalid_caller"});
+      expect(notificationState(x)).toEqual(before);
+    }
+  });
+  it("uses the production caller resolver after Access verification to refuse humans and unlisted services",async()=>{
+    const x=fixture(1,true);await x.release();const grant=await localGrant(x),receipt=await receiptFor(grant.payload);
+    const bound=await x.http("bind",{...localFields(grant),receipt});expect(bound.payload.outcome).toBe("accepted");
+    let identity:AccessIdentity={sub:"test-owner",email:"owner@example.invalid"},verified=0;
+    const app=new Hono<QuestionTriageEnv>();
+    app.use("*",accessGate(async()=>{verified++;return identity;}));
+    app.route("/",createQuestionTriageBridgeRouter());
+    const env={...x.env,ACCESS_ISSUER:"https://example.cloudflareaccess.com",ACCESS_AUD:"a".repeat(64),
+      ACCESS_OWNER_EMAILS:"owner@example.invalid",ACCESS_SERVICE_CLIENT_IDS:"notify.service"};
+    const request=(kind:NotificationOperation,payload:unknown)=>app.request(`https://site.invalid/answer-now/notifications/${kind}`,{
+      method:"POST",headers:{Origin:"https://site.invalid"},body:JSON.stringify({version:2,kind:"notify_"+kind,payload}),
+    },env as never);
+    for(const candidate of [{sub:"test-owner",email:"owner@example.invalid"},{sub:"",serviceClientId:"unlisted.service"}] as AccessIdentity[]){
+      identity=candidate;
+      for(const kind of ["prepare","bind","ack"] as const){
+        const payload=kind==="prepare"?{request_id:id,expected_revision:grant.payload_revision}:
+          {...localFields(grant),expected_revision:kind==="ack"?bound.payload.revision:grant.revision,receipt,...(kind==="ack"?{outcome:"delivered"}:{})};
+        const before=notificationState(x),response=await request(kind,payload);
+        expect(response.status).toBe(403);expect(await response.json()).toEqual({error:"invalid_caller"});
+        expect(notificationState(x)).toEqual(before);
+      }
+    }
+    expect(verified).toBe(6);
+    identity={sub:"",serviceClientId:"notify.service"};
+    const accepted=await request("check",{...localFields(grant),expected_revision:bound.payload.revision});
+    expect(accepted.status).toBe(200);expect(await accepted.json()).toMatchObject({payload:{outcome:"accepted"}});
+    expect(verified).toBe(7);
+  });
+  it.each(["SELECT request_id FROM question_request_notifications LIMIT 0","SELECT name FROM sqlite_master"])("fails closed over HTTP when readiness query throws: %s",async query=>{
+    const x=fixture(1,true);await x.release();const grant=await localGrant(x),receipt=await receiptFor(grant.payload);
+    const bound=await x.http("bind",{...localFields(grant),receipt});expect(bound.payload.outcome).toBe("accepted");
+    let failures=0;x.after(sql=>{if(sql.startsWith(query)){failures++;throw new Error("injected_readiness_failure");}});
+    const operations=[
+      ["read",{limit:10}],["prepare",{request_id:id,expected_revision:grant.payload_revision}],
+      ["check",{...localFields(grant),expected_revision:bound.payload.revision}],
+      ["bind",{...localFields(grant),receipt}],
+      ["ack",{...localFields(grant),expected_revision:bound.payload.revision,receipt,outcome:"delivered"}],
+    ] as const;
+    for(const [kind,payload] of operations){
+      const before=notificationState(x);
+      expect(await x.http(kind,payload)).toMatchObject({status:503,error:"notification_unavailable"});
+      expect(notificationState(x)).toEqual(before);
+    }
+    const before=notificationState(x);
+    expect(await x.http("read",{limit:10},1)).toMatchObject({status:503,error:"notification_unavailable"});
+    expect(notificationState(x)).toEqual(before);expect(failures).toBe(6);
+    x.after(null);expect((await x.http("read",{limit:10},1)).status).toBe(200);
+  });
   it("replays the sorted full chain on populated released, clarification and legacy bound data",async()=>{
     const x=fixture(3),legacy=await x.prepare();await x.bind(legacy,101);
     await x.release();await x.release("1".padStart(64,"0"),true,false,"clarification_required");
