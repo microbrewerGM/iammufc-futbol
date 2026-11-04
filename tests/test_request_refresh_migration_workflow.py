@@ -118,7 +118,8 @@ class RequestRefreshWorkflowTests(unittest.TestCase):
             self.assertEqual(command[:-1], prefix)
         self.assertEqual(local[-1][-1], "infra/migrations/0002_seed.sql")
         names = deployed_chain()
-        self.assertEqual(names[-3:], ["0015_question_request_notifications.sql", REFRESH, NULL_CHECKS])
+        self.assertEqual(names[-4:], ["0015_question_request_notifications.sql", REFRESH, NULL_CHECKS,
+                                     "0018_question_request_local_notifications.sql"])
         self.assertEqual(len(names), len(set(names)))
         self.assertNotIn("0007_exploration_requests.sql", names)
         for job in workflow()["jobs"].values():
