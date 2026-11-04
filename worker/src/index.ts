@@ -17,6 +17,7 @@
  */
 
 import { Hono } from "hono";
+import { computeGetPath } from "./core/compute-routes";
 
 import compiledCatalog from "./generated/catalog.json";
 import {
@@ -394,7 +395,7 @@ function registerLocaleRoutes(code: LocaleCode) {
   const locale = LOCALES[code];
   const p = `/${code}`;
 
-  app.get(`${p}/discover/arrivals`, async (c) => {
+  app.get(computeGetPath("arrivals", code), async (c) => {
     const invalid = code === "es" ? "Solicitud de llegada no válida." : "Invalid arrival question.";
     const params = new URL(c.req.url).searchParams;
     const fields = ["academy_basis", "as_of", "family", "joining_basis", "population", "version", "visualization"];
@@ -482,7 +483,7 @@ function registerLocaleRoutes(code: LocaleCode) {
     return res;
   });
 
-  app.get(`${p}/seasons/explore`, async (c) => {
+  app.get(computeGetPath("seasonExploration", code), async (c) => {
     const url = new URL(c.req.url);
     const rawQuery = url.search;
     if (new TextEncoder().encode(rawQuery).byteLength > 2048) return html("Invalid season selection.", 400);
@@ -654,7 +655,7 @@ function registerLocaleRoutes(code: LocaleCode) {
     );
   });
 
-  app.get(`${p}/players/compare`, async (c) => {
+  app.get(computeGetPath("playerComparison", code), async (c) => {
     const query = new URL(c.req.url).search;
     const MAX_COMPARE_QUERY_BYTES = 2048;
     if (new TextEncoder().encode(query).byteLength > MAX_COMPARE_QUERY_BYTES) {
@@ -755,7 +756,7 @@ function registerLocaleRoutes(code: LocaleCode) {
     return html(page(body, { title: locale.strings.playerRangeLink, locale, unprefixedPath: canonicalPath, snapshotId: snapshot }), status);
   });
 
-  app.get(`${p}/players/trends`, async (c) => {
+  app.get(computeGetPath("playerTrends", code), async (c) => {
     const t = locale.strings;
     const invalid = t.playerTrendsInvalid;
     const unavailable = t.playerTrendsUnavailable;
@@ -854,7 +855,7 @@ function registerLocaleRoutes(code: LocaleCode) {
     }
   });
 
-  app.get(`${p}/opponents/history`, async (c) => {
+  app.get(computeGetPath("opponentHistory", code), async (c) => {
     const t = locale.strings;
     const invalid = t.opponentHistoryInvalid;
     const unavailable = t.opponentHistoryUnavailable;
@@ -1124,7 +1125,7 @@ function registerLocaleRoutes(code: LocaleCode) {
   });
 
   /** Direct intent entry -- the "show this instead" path from a refusal. */
-  app.get(`${p}/q`, async (c) => {
+  app.get(computeGetPath("query", code), async (c) => {
     const parameters = new URL(c.req.url).searchParams;
     const allowed = new Set([
       "metric",
@@ -1205,6 +1206,21 @@ function registerLocaleRoutes(code: LocaleCode) {
 
   app.get(`${p}/season/:season`, async (c) => {
     const season = c.req.param("season");
+    const url = new URL(c.req.url);
+    const sorts = url.searchParams.getAll("sort");
+    const directions = url.searchParams.getAll("direction");
+    const sort = sorts[0];
+    if (sorts.length > 1 || directions.length > 1 ||
+        (sort !== undefined && sort !== "goals_per90" && sort !== "assists_per90") ||
+        (directions[0] !== undefined && directions[0] !== "asc" && directions[0] !== "desc") ||
+        (sort === undefined && directions.length > 0)) {
+      return c.text("Invalid squad sort selection", 400);
+    }
+    const options = {
+      sort: sort as "goals_per90" | "assists_per90" | undefined,
+      direction: directions[0] === "asc" ? "asc" as const : "desc" as const,
+      query: url.searchParams.toString(),
+    };
     const eligibleSeasons = eligibleLeagueSeasons(catalog, season);
     // Champions League record fetched alongside the league one. Returns null
     // for every season United did not enter it, which is the common case and
@@ -1216,14 +1232,14 @@ function registerLocaleRoutes(code: LocaleCode) {
       seasonHistoryRows(c.env, eligibleSeasons),
     ]);
     const comparison = buildSeasonComparison(history, eligibleSeasons, catalog, code);
-    const seasonBody = seasonPageBody(season, squad, record, catalog, locale, europeanRecord, comparison);
+    const seasonBody = seasonPageBody(season, squad, record, catalog, locale, europeanRecord, comparison, options);
     const historyLink = `<p><a href="/${code}/seasons/champions-league">${locale.code === "es" ? "Historial de la Liga de Campeones" : "Champions League history"}</a></p>`;
     const body = `${seasonBody}${historyLink}`;
     const res = html(
       page(body, {
         title: `${season}`,
         locale,
-        unprefixedPath: `/season/${season}`,
+        unprefixedPath: `/season/${season}${url.search}`,
         snapshotId: await currentSnapshot(c.env),
       }),
     );
@@ -1239,7 +1255,7 @@ function registerLocaleRoutes(code: LocaleCode) {
     return res;
   });
 
-  app.get(`${p}/seasons/champions-league`, async (c) => {
+  app.get(computeGetPath("championsLeague", code), async (c) => {
     const url = new URL(c.req.url);
     const csvRequested = url.searchParams.get("format") === "csv" && url.searchParams.size === 1;
     if ((url.search && !csvRequested) || url.pathname.endsWith("/")) return c.redirect(`/${code}/seasons/champions-league`, 301);
@@ -1408,7 +1424,7 @@ app.get("/sitemap.xml", async (c) => {
 // temporary redirect -- search engines should consolidate ranking signal onto
 // the canonical /en/ URL rather than treating the two as separate pages.
 app.get("/", (c) => c.redirect("/en", 301));
-app.get("/q", (c) => c.redirect(`/en/q?${new URL(c.req.url).searchParams.toString()}`, 301));
+app.get(computeGetPath("query"), (c) => c.redirect(`/en/q?${new URL(c.req.url).searchParams.toString()}`, 301));
 app.get("/data", (c) => c.redirect("/en/data", 301));
 app.get("/player/:name/:season?", (c) => c.redirect(`/en${new URL(c.req.url).pathname}`, 301));
 app.get("/season/:season", (c) => c.redirect(`/en${new URL(c.req.url).pathname}`, 301));
