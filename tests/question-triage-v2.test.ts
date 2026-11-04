@@ -5,7 +5,7 @@ import {readFileSync} from "node:fs";
 import {DatabaseSync} from "node:sqlite";
 import {Hono} from "hono";
 import {ackQuestion,claimQuestion,readQuestions,sweepQuestions,TRIAGE_CAPABILITY,type TriageDeps,type TriageResult} from "../worker/src/core/question-triage-bridge";
-import {mapQuestionVerdict} from "../worker/src/core/question-request-intent";
+import {mapQuestionVerdict,requestCatalogDigest} from "../worker/src/core/question-request-intent";
 import {D1QuestionTriageStore,resetQuestionSweepForTest,sweepQuestionBeforeRequest} from "../worker/src/routes/question-triage-sweep";
 import {createQuestionTriageBridgeRouter,type QuestionTriageEnv} from "../worker/src/routes/question-triage-bridge";
 type DB=InstanceType<typeof DatabaseSync>;
@@ -22,7 +22,8 @@ class SqliteD1{
 }
 const id="a".repeat(64),snapshot="b".repeat(64),caller={service:"triage_service",capability:TRIAGE_CAPABILITY};
 const stamp=(ms:number)=>new Date(Math.floor(ms/1000)*1000).toISOString().replace(".000Z","Z");
-const wire=(kind:string,payload:unknown,version=2)=>JSON.stringify({version,kind,payload});
+const metadata={catalog_digest:await requestCatalogDigest(),data_snapshot_id:snapshot};
+const wire=(kind:string,payload:unknown,version=2)=>JSON.stringify({version,kind,payload:version===2 && ["claim","ack"].includes(kind)?{...metadata,...payload as object}:payload});
 function body(result:TriageResult){if(!result.ok)throw new Error(result.error);return JSON.parse(result.body);}
 function verdict(missing=false){return {version:1,request_id:id,relevant:true,junk_reason:null as string|null,restated_question:"Show goals",tables:[{fields:["goals"],filters:{season:["2024-25"],competition:["PL"],person_id:missing?[]:["fpl:code:1"],opponent_id:[]}}],visuals:[{kind:"bar",table_index:0}],field_status:[],families:[]};}
 function fixture(){
@@ -32,7 +33,7 @@ function fixture(){
   db.prepare("INSERT INTO snapshots(snapshot_id,created_at,sources_json,row_counts)VALUES(?,?,'{}','{}')").run(snapshot,stamp(now));
   db.prepare("INSERT INTO question_requests(request_id,account_sub,text,locale,text_hash,status,created_at,updated_at,expires_at)VALUES(?,'owner','Original question','en',?,'received',?,?,?)").run(id,snapshot,stamp(now),stamp(now),stamp(now+90*86400_000));
   const d1=new SqliteD1(db),store=new D1QuestionTriageStore(d1 as unknown as D1Database,2),legacyStore=new D1QuestionTriageStore(d1 as unknown as D1Database,1);
-  const deps:TriageDeps={protocol:2,store,now:()=>new Date(now),newLeaseId:()=>"lease-"+(++lease),cursorKey:new TextEncoder().encode("fixture")};
+  const deps:TriageDeps={protocol:2,store,currentContext:async()=>({...metadata,data_snapshot_id:db.prepare("SELECT snapshot_id FROM snapshots ORDER BY created_at DESC LIMIT 1").get()?.snapshot_id??null}),now:()=>new Date(now),newLeaseId:()=>"lease-"+(++lease),cursorKey:new TextEncoder().encode("fixture")};
   deps.answerNow=async(row,value)=>{const mapped=await mapQuestionVerdict(value,{requestId:id,revision:row.revision+2,locale:row.locale,snapshotId:snapshot,resolvePerson:async p=>p});if(mapped.kind==="ready")return {state:"confirmation_required",specJson:JSON.stringify(mapped.spec),snapshotId:snapshot};if(mapped.kind==="clarification_required")return {state:mapped.kind,specJson:null,snapshotId:null};if(mapped.kind==="unsupported"||mapped.kind==="unavailable")return {state:mapped.kind,specJson:null,snapshotId:null};throw new Error("bad_fixture");};
   const legacy:TriageDeps={...deps,protocol:1,store:legacyStore,answerNow:undefined};
   const q=()=>db.prepare("SELECT * FROM question_requests WHERE request_id=?").get(id),r=()=>db.prepare("SELECT * FROM question_request_results WHERE request_id=?").get(id);
@@ -52,6 +53,56 @@ function fixture(){
   return {db,d1,deps,legacy,store,legacyStore,q,r,advance,claim,ack,ackBody,requeue,clarify,now:()=>stamp(now)};
 }
 describe("generation-fenced triage v2",()=>{
+  it("requires exact deployed metadata before claim or ack work",async()=>{
+    const x=fixture(),p={request_id:id,expected_revision:1,expected_generation:0,expected_attempt:0,operation_id:"qt:metadata"};
+    const missing=JSON.stringify({version:2,kind:"claim",payload:p});
+    expect(await claimQuestion(x.deps,caller,missing)).toEqual({ok:false,error:"malformed"});
+    for(const change of [{catalog_digest:"f".repeat(64)},{data_snapshot_id:"other"}])expect(body(await claimQuestion(x.deps,caller,wire("claim",{...p,...change}))).payload.outcome).toBe("conflict");
+    expect(x.q().status).toBe("received");expect(x.db.prepare("SELECT count(*) n FROM exploration_bridge_operations").get().n).toBe(0);
+    const c=await x.claim(),ack=JSON.parse(x.ackBody(c.question));ack.payload.catalog_digest="f".repeat(64);
+    expect(body(await ackQuestion(x.deps,caller,JSON.stringify(ack))).payload.outcome).toBe("conflict");expect(x.q().status).toBe("triaging");
+  });
+  it("fences publication at the first claim write",async()=>{
+    const x=fixture();x.d1.beforeBatch=()=>x.db.prepare("INSERT INTO snapshots(snapshot_id,created_at,sources_json,row_counts) VALUES(?,?,'{}','{}')").run("new-snapshot",stamp(Date.parse(x.now())+1000));
+    const p={request_id:id,expected_revision:1,expected_generation:0,expected_attempt:0,operation_id:"qt:claim-race"};
+    expect(body(await claimQuestion(x.deps,caller,wire("claim",p))).payload.outcome).toBe("conflict");expect(x.q().status).toBe("received");
+    expect(x.db.prepare("SELECT count(*) n FROM exploration_bridge_operations").get().n).toBe(0);
+  });
+  it("fences publication at every ack outcome, including clarification and failure",async()=>{
+    for(const outcome of [{status:"verdict",verdict:verdict()},{status:"verdict",verdict:verdict(true)},{status:"failed",reason:"source_unavailable"}]){
+      const x=fixture(),c=await x.claim();x.d1.beforeBatch=()=>x.db.prepare("INSERT INTO snapshots(snapshot_id,created_at,sources_json,row_counts) VALUES(?,?,'{}','{}')").run("new-snapshot",stamp(Date.parse(x.now())+1000));
+      expect(body(await ackQuestion(x.deps,caller,x.ackBody(c.question,outcome))).payload.outcome).toBe("conflict");
+      expect(x.q().status).toBe("triaging");expect(x.r()).toBeUndefined();expect(x.db.prepare("SELECT count(*) n FROM exploration_bridge_operations WHERE operation_type='ack'").get().n).toBe(0);
+    }
+  });
+  it("refuses claim and ack replay after deployed metadata changes",async()=>{
+    const x=fixture(),c=await x.claim();const ack=x.ackBody(c.question);await ackQuestion(x.deps,caller,ack);
+    x.deps.currentContext=async()=>({...metadata,catalog_digest:"f".repeat(64)});
+    expect(body(await claimQuestion(x.deps,caller,c.request)).payload.outcome).toBe("conflict");expect(body(await ackQuestion(x.deps,caller,ack)).payload.outcome).toBe("conflict");
+    const receipt=JSON.parse(x.db.prepare("SELECT response_json FROM exploration_bridge_operations WHERE operation_type='ack'").get().response_json).payload.receipt;
+    expect(receipt).toMatchObject(metadata);expect(JSON.stringify(receipt)).not.toContain("Original question");
+  });
+  it("does not rebind old model work to a newer claim context",async()=>{
+    const x=fixture(),c=await x.claim();x.db.prepare("INSERT INTO snapshots(snapshot_id,created_at,sources_json,row_counts) VALUES(?,?,'{}','{}')").run("new-snapshot",stamp(Date.parse(x.now())+1000));
+    const request=JSON.parse(x.ackBody(c.question,{status:"failed",reason:"source_unavailable"}));request.payload.data_snapshot_id="new-snapshot";
+    expect(body(await ackQuestion(x.deps,caller,JSON.stringify(request))).payload.outcome).toBe("conflict");expect(x.q().status).toBe("triaging");
+  });
+  it("rechecks metadata after awaited claim or ack receipt reads",async()=>{
+    for(const kind of ["claim","ack"] as const){
+      const x=fixture(),c=await x.claim(),ack=x.ackBody(c.question);if(kind==="ack")await ackQuestion(x.deps,caller,ack);
+      const get=x.store.get.bind(x.store);x.store.get=async requestId=>{const row=await get(requestId);x.db.prepare("INSERT INTO snapshots(snapshot_id,created_at,sources_json,row_counts) VALUES(?,?,'{}','{}')").run("new-snapshot",stamp(Date.parse(x.now())+1000));return row;};
+      const result=kind==="claim"?await claimQuestion(x.deps,caller,c.request):await ackQuestion(x.deps,caller,ack);
+      expect(body(result).payload.outcome).toBe("conflict");
+    }
+  });
+  it("uses fresh lease and retention clocks after replay metadata awaits",async()=>{
+    const x=fixture(),c=await x.claim();let calls=0;const context=x.deps.currentContext!;
+    x.deps.currentContext=async()=>{const value=await context();if(++calls===2)x.advance(901);return value;};
+    expect(body(await claimQuestion(x.deps,caller,c.request)).payload.outcome).toBe("conflict");
+    const y=fixture(),claimed=await y.claim(),ack=y.ackBody(claimed.question);await ackQuestion(y.deps,caller,ack);let reads=0;const current=y.deps.currentContext!;
+    y.deps.currentContext=async()=>{const value=await current();if(++reads===2)y.advance(91*86400);return value;};
+    expect(body(await ackQuestion(y.deps,caller,ack)).payload.outcome).toBe("conflict");
+  });
   it("reads and claims initial generation with bounded text-free receipts",async()=>{
     const x=fixture(),read=body(await readQuestions(x.deps,caller,wire("read",{cursor:null,limit:10})));
     expect(read.version).toBe(2);expect(read.payload.questions).toEqual([{request_id:id,locale:"en",text:"Original question",revision:1,generation:0,attempt:0}]);expect(JSON.stringify(read)).not.toContain("owner");
@@ -99,7 +150,7 @@ describe("generation-fenced triage v2",()=>{
     await ackQuestion(x.legacy,caller,ackRequest);
     x.db.prepare("INSERT INTO question_request_results(request_id,request_revision,state,created_at,updated_at,response_deadline,expires_at)SELECT request_id,revision,'clarification_required',updated_at,updated_at,min(expires_at,strftime('%Y-%m-%dT%H:%M:%SZ',updated_at,'+1 day')),expires_at FROM question_requests").run();
     expect(body(await claimQuestion(x.legacy,caller,claimRequest)).payload.outcome).toBe("not_found");expect(body(await ackQuestion(x.legacy,caller,ackRequest)).payload.outcome).toBe("conflict");
-    const v2ack=JSON.parse(ackRequest);v2ack.version=2;Object.assign(v2ack.payload,{expected_revision:2,expected_generation:0});expect(body(await ackQuestion(x.deps,caller,JSON.stringify(v2ack))).payload.outcome).toBe("conflict");
+    const v2ack=JSON.parse(ackRequest);v2ack.version=2;Object.assign(v2ack.payload,{...metadata,expected_revision:2,expected_generation:0});expect(body(await ackQuestion(x.deps,caller,JSON.stringify(v2ack))).payload.outcome).toBe("conflict");
   });
   it("does not replay the initial v1 answer-now receipt after a clarification generation",async()=>{
     const x=fixture(),answerNow:TriageDeps={...x.deps,protocol:1,store:x.legacyStore};
@@ -111,7 +162,7 @@ describe("generation-fenced triage v2",()=>{
   });
   it("does not replay a v2 receipt through the initial v1 answer-now exception",async()=>{
     const x=fixture(),c=await x.claim();await x.ack(c.question);
-    const request=JSON.parse(x.ackBody(c.question));request.version=1;delete request.payload.expected_revision;delete request.payload.expected_generation;
+    const request=JSON.parse(x.ackBody(c.question));request.version=1;delete request.payload.expected_revision;delete request.payload.expected_generation;delete request.payload.catalog_digest;delete request.payload.data_snapshot_id;
     const parent=x.q(),result=x.r(),answerNow:TriageDeps={...x.deps,protocol:1,store:x.legacyStore};
     expect(body(await ackQuestion(answerNow,caller,JSON.stringify(request))).payload.outcome).toBe("conflict");
     expect(x.q()).toEqual(parent);expect(x.r()).toEqual(result);
@@ -247,7 +298,7 @@ describe("generation-fenced triage v2",()=>{
     expect(x.r().state).toBe("unsupported");expect(x.db.prepare("SELECT count(*) n FROM exploration_shared_jobs").get().n).toBe(0);
   });
   it("refuses malformed receipt result metadata instead of returning stored text",async()=>{
-    const x=fixture(),c=await x.claim();const response={version:1,kind:"claim_result",payload:{receipt:{protocol:2,request_id:id,generation:0,input_revision:1,applied_revision:2,lease_id:c.question.lease_id},result:{outcome:"claimed",question:{...c.question,text:"Do not leak"}}}};
+    const x=fixture(),c=await x.claim();const response={version:1,kind:"claim_result",payload:{receipt:{...metadata,protocol:2,request_id:id,generation:0,input_revision:1,applied_revision:2,lease_id:c.question.lease_id},result:{outcome:"claimed",question:{...c.question,text:"Do not leak"}}}};
     x.db.prepare("INSERT INTO exploration_bridge_operations(service,scope_key,operation_type,operation_id,body_hash,response_json,lease_id,created_at,expires_at)VALUES(?,?,'claim','qt:malformed',?,?,?,?,?)").run(caller.service,caller.service,snapshot,JSON.stringify(response),c.question.lease_id,x.now(),stamp(Date.parse(x.now())+30*86400_000));
     await expect(x.store.operation(caller.service,"claim","qt:malformed",id)).rejects.toThrow("invalid triage receipt");
   });

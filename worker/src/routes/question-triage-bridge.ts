@@ -1,4 +1,6 @@
 import { Hono } from "hono";
+import compiledCatalog from "../generated/catalog.json";
+import { readQuestionGlossary } from "../core/question-request-glossary";
 import {handleNotification} from "../core/question-request-notifications";
 import { currentSnapshot, resolvePlayerIdentity, type Env } from "../core/db";
 import { mapQuestionVerdict, requestCatalogDigest } from "../core/question-request-intent";
@@ -51,10 +53,27 @@ export function createQuestionTriageBridgeRouter(resolveCaller: (c: import("hono
       if (!await answerNowSchemaReady(c.env)) return c.text("Bridge unavailable.",503);
       const result = await c.env.DB.prepare("SELECT i.person_id AS id,max(p.web_name) AS label FROM player_identities i JOIN players p ON p.player_id=i.player_id GROUP BY i.person_id ORDER BY i.person_id LIMIT 201").all<{ id: string; label: string }>();
       const people = result.results.slice(0,200).filter(p => p.id.length >= 1 && p.id.length <= 64 && /^[a-z0-9]/.test(p.id) && !/[^a-z0-9:_-]/.test(p.id) && p.label.length >= 1 && p.label.length <= 120 && !/[\p{Cc}\p{Cf}]/u.test(p.label));
-      return c.json({ version: 1, kind: "answer_now_context", payload: { triage_protocol:2,catalog_digest: await requestCatalogDigest(), people, has_more: result.results.length > 200 } });
+      const catalogJson=JSON.stringify(compiledCatalog),snapshot=await currentSnapshot(c.env);
+      if(new TextEncoder().encode(catalogJson).byteLength>65536 || !snapshot)return c.text("Bridge unavailable.",503);
+      const response=JSON.stringify({ version: 1, kind: "answer_now_context", payload: { triage_protocol:2,glossary_protocol:1,catalog_json:catalogJson,snapshot_id:snapshot,catalog_digest: await requestCatalogDigest(), people, has_more: result.results.length > 200 } });
+      if(new TextEncoder().encode(response).byteLength>128*1024)return c.text("Bridge unavailable.",503);
+      return new Response(response,{headers:{"Content-Type":"application/json; charset=utf-8"}});
     } catch { return c.text("Bridge unavailable.", 503); }
   });
   router.all("/answer-now/context", c => c.text("Method not allowed.", 405, { Allow: "POST" }));
+  router.post("/answer-now/glossary",async c=>{
+    const caller=resolveCaller(c);
+    if(!caller || caller.capability!==TRIAGE_CAPABILITY)return c.json({error:"invalid_caller"},403);
+    const body=await readBody(c.req.raw,4096);
+    if(!body.ok)return c.json({error:body.status===413?"too_large":"malformed"},body.status);
+    if(!c.env.BRIDGE_CURSOR_KEY)return c.text("Bridge unavailable.",503);
+    try{
+      if(!await answerNowSchemaReady(c.env))return c.text("Bridge unavailable.",503);
+      const result=await readQuestionGlossary(c.env,caller,new TextEncoder().encode(c.env.BRIDGE_CURSOR_KEY),body.raw);
+      return result.ok?new Response(result.body,{headers:{"Content-Type":"application/json; charset=utf-8"}}):c.json({error:result.error},result.status);
+    }catch{return c.text("Bridge unavailable.",503);}
+  });
+  router.all("/answer-now/glossary",c=>c.text("Method not allowed.",405,{Allow:"POST"}));
   for (const kind of ["execute","results"] as const) {
     router.post(`/answer-now/${kind}`,async c=>{
       const caller=resolveCaller(c);
@@ -111,6 +130,7 @@ async function handle(c: import("hono").Context<QuestionTriageEnv>, resolve: (c:
   if(requestedProtocol==="auto"){try{if(JSON.parse(raw)?.version===2)protocol=2;}catch{/* closed core decoder returns malformed */}}
   const store = new D1QuestionTriageStore(c.env.DB,protocol);
   const deps: TriageDeps = { protocol,store, cursorKey: new TextEncoder().encode(c.env.BRIDGE_CURSOR_KEY), now: c.env.BRIDGE_NOW ?? (() => new Date()), newLeaseId: c.env.BRIDGE_NEW_LEASE_ID ?? (() => crypto.randomUUID()) };
+  if(protocol===2)deps.currentContext=async()=>({catalog_digest:await requestCatalogDigest(),data_snapshot_id:await currentSnapshot(c.env)});
   if (answerNow) deps.answerNow = async (row, verdict) => {
     const mapped = await mapQuestionVerdict(verdict, { requestId: row.request_id, revision: row.revision+2, locale: row.locale, snapshotId: await currentSnapshot(c.env), resolvePerson: async (id, competition) => (await resolvePlayerIdentity(c.env,id,competition))?.person_id ?? null });
     if (mapped.kind === "ready") return { state: "confirmation_required", specJson: JSON.stringify(mapped.spec), snapshotId: mapped.spec.data_snapshot_id };
