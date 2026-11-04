@@ -234,6 +234,12 @@ export class D1QuestionTriageStore implements TriageStore{
     // Never log caught errors, which may carry question text or account identifiers.
     try{const deleted=await collectQuestionRequestRetention(this.db);console.info("retention",{deleted,failed:0});}
     catch{console.info("retention",{deleted:0,failed:1});}
+    try{
+      const {collectExplorationRetention}=await import("../core/exploration-retention");
+      const deleted=await collectExplorationRetention({DB:this.db as D1Database});
+      console.info("exploration_retention",{deleted,failed:0});
+    }
+    catch{console.info("exploration_retention",{deleted:0,failed:1});}
   }
   async queueResult(row: TriageQuestion, now: string): Promise<"complete" | "partial" | "no_data" | "gone" | "failed" | "pending"> {
     const result = await this.db.prepare(`SELECT j.status AS job_status,j.failure,r.coverage,r.expires_at FROM exploration_shared_jobs j LEFT JOIN exploration_shared_results r ON r.request_id=j.request_id WHERE j.request_id=?`).bind(row.exploration_request_id).first<{job_status:string;failure:string|null;coverage:string|null;expires_at:string|null}>();

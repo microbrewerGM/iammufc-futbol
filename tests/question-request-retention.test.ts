@@ -12,7 +12,7 @@ const opened: Db[] = [];
 afterEach(() => { for (const db of opened.splice(0)) db.close(); vi.restoreAllMocks(); resetQuestionSweepForTest(); });
 const id = (n: number) => n.toString(16).padStart(64, "0");
 const iso = (ms: number) => new Date(ms).toISOString().replace(".000Z", "Z");
-const migrations = ["0001_schema", "0003_p16_dot_plot", "0004_cache_slots", "0005_account_question_history", "0006_season_splits", "0008_exploration_request_links", "0009_manager_era_records", "0010_question_requests", "0011_opponent_labels", "0012_cl_season_stage", "0013_question_request_results", "0014_question_request_clarifications", "0015_question_request_notifications", "0016_question_request_refresh", "0017_exploration_null_checks", "0018_question_request_local_notifications"];
+const migrations = ["0001_schema", "0003_p16_dot_plot", "0004_cache_slots", "0005_account_question_history", "0006_season_splits", "0008_exploration_request_links", "0009_manager_era_records", "0010_question_requests", "0011_opponent_labels", "0012_cl_season_stage", "0013_question_request_results", "0014_question_request_clarifications", "0015_question_request_notifications", "0016_question_request_refresh", "0017_exploration_null_checks", "0018_question_request_local_notifications", "0019_exploration_live_question_refs"];
 const children = ["question_request_results", "question_request_clarifications", "question_request_refresh_counts", "question_request_result_refreshes", "question_request_confirmation_context", "question_request_confirmations", "question_request_notifications", "question_request_local_notifications"];
 function fixture() {
   const db: Db = new DatabaseSync(":memory:"), clockDb: Db = new DatabaseSync(":memory:");
@@ -94,7 +94,7 @@ describe("request retention maintenance", () => {
     expect(x.db.prepare("SELECT request_id FROM question_requests").all()).toEqual([{ request_id: id(101) }]);
     expect(await collectQuestionRequestRetention(x.d1)).toBe(1);
   });
-  it("protocol-2 maintenance preserves exploration links, requests and tombstones, including expired rows", async () => {
+  it("protocol-2 maintenance collects expired exploration rows and preserves live links", async () => {
     const x = fixture(); x.add(1, true); x.setClock(x.expires);
     const shared = JSON.stringify({ version: 1, family: "arrival_manager", as_of: "2026-11-04", population: "first_team_available", joining_basis: "effective_first_team_spell_entry", academy_basis: "documented_first_team_promotion", visualization: "table" });
     for (const [n, created] of [[900, "2026-11-04T00:00:00Z"], [901, x.expires]] as const) {
@@ -105,12 +105,11 @@ describe("request retention maintenance", () => {
     // An orphan is eligible for the exploration collector even without an expired link.
     x.db.prepare("INSERT INTO exploration_shared_requests VALUES(?,1,?,?)").run(id(902), shared, "2026-11-04T00:00:00Z");
     const tables = ["exploration_request_links", "exploration_shared_requests", "exploration_shared_job_tombstones"];
-    const before = tables.map(table => x.db.prepare(`SELECT * FROM ${table} ORDER BY request_id`).all());
     const log = vi.spyOn(console, "info").mockImplementation(() => {});
     expect(await sweepQuestions(depsFor(x.d1), 100, "expired")).toEqual({ moved: 1 });
     expect(x.db.prepare("SELECT count(*) n FROM question_requests").get().n).toBe(0);
-    expect(tables.map(table => x.db.prepare(`SELECT * FROM ${table} ORDER BY request_id`).all())).toEqual(before);
-    expect(log.mock.calls).toEqual([["retention", { deleted: 1, failed: 0 }]]);
+    for (const table of tables) expect(x.db.prepare(`SELECT request_id FROM ${table}`).all()).toEqual([{ request_id: id(901) }]);
+    expect(log.mock.calls).toEqual([["retention", { deleted: 1, failed: 0 }], ["exploration_retention", { deleted: 3, failed: 0 }]]);
   });
   it("isolates a question retention failure from triage", async () => {
     const x = fixture();
@@ -124,7 +123,21 @@ describe("request retention maintenance", () => {
     expect(await sweepQuestionBeforeRequest(deps)).toBe(true);
     expect(rows).toHaveBeenCalledOnce();
     expect(prepared.mock.calls.some(([sql]) => sql.startsWith("DELETE FROM question_requests"))).toBe(true);
-    expect(log.mock.calls).toEqual([["retention", { deleted: 0, failed: 1 }]]);
+    expect(log.mock.calls).toEqual([["retention", { deleted: 0, failed: 1 }], ["exploration_retention", { deleted: 0, failed: 0 }]]);
+  });
+  it("isolates an exploration retention failure while question retention and triage proceed", async () => {
+    const x = fixture(); x.add(1); x.setClock(x.expires);
+    const original = x.d1.prepare.bind(x.d1);
+    vi.spyOn(x.d1, "prepare").mockImplementation(sql => {
+      if (sql.startsWith("DELETE FROM exploration_request_links")) throw new Error("private identity must not be logged");
+      return original(sql);
+    });
+    const log = vi.spyOn(console, "info").mockImplementation(() => {});
+    const deps = depsFor(x.d1), rows = vi.spyOn(deps.store, "sweepRows");
+    expect(await sweepQuestionBeforeRequest(deps)).toBe(true);
+    expect(rows).toHaveBeenCalledOnce();
+    expect(x.db.prepare("SELECT count(*) n FROM question_requests").get().n).toBe(0);
+    expect(log.mock.calls).toEqual([["retention", { deleted: 1, failed: 0 }], ["exploration_retention", { deleted: 0, failed: 1 }]]);
   });
   it("runs retention even when result maintenance fails and isolates an unexpected collector rejection", async () => {
     const x = fixture(), deps = depsFor(x.d1);
