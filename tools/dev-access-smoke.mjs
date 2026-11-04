@@ -642,6 +642,7 @@ export async function oracleSmoke(env, request = fetch) {
     const before = await read(triageContextPath, true);
     if (validateTriageContextPayload(before) !== 'ready') return unresolvedOracle('context');
     const context = before.payload;
+    if (!/^[A-Za-z0-9._-]{1,128}$/.test(context.snapshot_id)) return unresolvedOracle('snapshot_changed');
     contextRecords.push({ oracle_context: { has_more: context.has_more, people: context.people.length } });
     const catalog = JSON.parse(context.catalog_json);
     // Only attribution already present in this reviewed public checkout may leave.

@@ -95,6 +95,17 @@ test('pilot oracle projects only five fixed selections and the exact closed fiel
   }
 });
 
+test('pilot oracle refuses workflow commands in snapshots without echoing them', async () => {
+  const injectedSnapshot = 'aaaaaaaaaaaa::error::injected';
+  const fixture = oracleFixture({ context: value => { value.payload.snapshot_id = injectedSnapshot; } });
+  const records = await oracleSmoke(env, fixture.request);
+  assert.deepEqual(records, [1, 2, 3, 4, 9].map(case_id =>
+    ({ case_id, oracle_state: 'unresolved', oracle_reason: 'snapshot_changed' })));
+  assert.ok(!JSON.stringify(records).includes(injectedSnapshot));
+  assert.ok(!JSON.stringify(records).includes('::'));
+  assert.equal(fixture.calls.length, 1);
+});
+
 test('pilot oracle failures emit only finite unresolved markers without diagnostic bodies', async () => {
   const failures = [
     ['error', { error: true }], ['context', { status: 503 }], ['context', { status: 302 }],
