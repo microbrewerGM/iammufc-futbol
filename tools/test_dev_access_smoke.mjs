@@ -2,11 +2,18 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { denialSmoke, runSmoke, smoke, validateChatPayload,
   snapshotContinuitySmoke, validateHealthPayload, validateQueryPayload,
-  validateSnapshotMatch, classifySeasonExplore, classifyOpponentHistory } from './dev-access-smoke.mjs';
+  validateSnapshotMatch, validateTriageContextPayload, classifySeasonExplore, classifyOpponentHistory } from './dev-access-smoke.mjs';
 
 const env = { CF_ACCESS_CLIENT_ID: 'synthetic-id', CF_ACCESS_CLIENT_SECRET: 'synthetic-secret' };
 const snapshot = 'a'.repeat(64);
 const expectedSnapshot = 'b'.repeat(64);
+const contextPath = '/internal/question-triage-bridge/answer-now/context';
+const validContext = {
+  version: 1, kind: 'answer_now_context', payload: {
+    triage_protocol: 2, catalog_digest: 'd'.repeat(64),
+    people: [{ id: 'fpl:code:1', label: 'Fixture <Mañana>' }], has_more: false,
+  },
+};
 const retrieved = '2026-09-23T12:00:00.000Z';
 const observed = (id, coverage = '2025-26') => ({
   id, status: 'observed', coverage_through: coverage, source_as_of: null, retrieved_at: retrieved,
@@ -139,6 +146,9 @@ test('fixed dev origin, manual redirects, private response and all checks', asyn
     const chat = path === '/api/chat';
     const query = path === '/api/query';
     const rejected = chat && init.body.includes('per 90');
+    if (path === contextPath) return new Response(JSON.stringify(validContext), { headers: {
+      'cache-control': 'private, no-store', 'content-type': 'application/json; charset=UTF-8',
+    } });
     if (new URL(url).pathname.includes('/players/compare')) {
       const locale = new URL(url).pathname.startsWith('/es/') ? 'es' : 'en';
       const params = new URL(url).searchParams;
@@ -172,7 +182,18 @@ test('fixed dev origin, manual redirects, private response and all checks', asyn
       ...((health || chat || query) ? { 'content-type': 'application/json; charset=UTF-8' } : {}),
       ...(['/en/opponents/history', '/es/opponents/history'].includes(pathname) ? { 'cache-control': 'private, no-store' } : {}) } });
   });
-  assert.equal(calls.length, 31);
+  assert.equal(calls.length, 32);
+  const contextCalls = calls.filter(({ url }) => new URL(url).pathname === contextPath);
+  assert.equal(contextCalls.length, 1);
+  assert.equal(contextCalls[0].init.method, 'POST');
+  assert.equal(contextCalls[0].init.headers['Content-Type'], 'application/json');
+  assert.deepEqual(JSON.parse(contextCalls[0].init.body), { version: 1, kind: 'context', payload: {} });
+  assert.ok(contextCalls[0].init.signal instanceof AbortSignal);
+  assert.equal(contextCalls[0].init.signal.aborted, false);
+  assert.equal(calls.some(({ url }) => /\/(?:read|claim|ack)$/.test(new URL(url).pathname)), false);
+  assert.deepEqual(results.find(row => row.path === contextPath), {
+    path: contextPath, status: 200, pass: true, triage_state: 'ready',
+  });
   for (const locale of ['en', 'es']) {
     const call = calls.find(({ url }) => new URL(url).pathname === `/${locale}/opponents/history`);
     const url = new URL(call.url);
@@ -536,6 +557,9 @@ test('combined smoke requires authenticated success and denial success', async (
     const chat = path === '/api/chat';
     const query = path === '/api/query';
     const rejected = chat && init.body.includes('per 90');
+    if (path === contextPath) return new Response(JSON.stringify(validContext), { headers: {
+      'cache-control': 'private, no-store', 'content-type': 'application/json',
+    } });
     if (path.includes('/players/trends')) {
       const params = new URL(url).searchParams;
       assert.equal(params.get('person_ids'), 'fpl:code:1');
@@ -568,6 +592,157 @@ test('combined smoke requires authenticated success and denial success', async (
     { status: rejected ? 422 : 200, headers: { 'cache-control': 'private, no-store',
       ...((health || chat || query) ? { 'content-type': 'application/json' } : {}) } });
   });
-  assert.equal(results.length, 92);
+  assert.equal(results.length, 93);
   assert.ok(results.every((result) => result.pass), JSON.stringify(results.filter((result) => !result.pass)));
+});
+
+test('triage context validates the outer v1 envelope and nested v2 contract', () => {
+  assert.equal(validateTriageContextPayload(validContext), 'ready');
+  for (const people of [[], Array.from({ length: 200 }, (_, i) => ({ id: `p:${i}`, label: 'Fixture' }))]) {
+    for (const has_more of [false, true]) assert.equal(validateTriageContextPayload({
+      ...validContext, payload: { ...validContext.payload, people, has_more },
+    }), 'ready');
+  }
+  for (const value of [null, [], {}, { ...validContext, version: 2 }, { ...validContext, version: '1' },
+    { ...validContext, version: true }, { ...validContext, kind: 'context' }, { ...validContext, extra: true },
+    { ...validContext, payload: null }, { ...validContext, payload: [] }]) {
+    assert.equal(validateTriageContextPayload(value), null);
+  }
+  for (const payload of [null, [], {}, { ...validContext.payload, extra: true },
+    { ...validContext.payload, triage_protocol: 1 }, { ...validContext.payload, triage_protocol: '2' },
+    { ...validContext.payload, triage_protocol: true }, { ...validContext.payload, has_more: 1 },
+    { ...validContext.payload, people: {} }, { ...validContext.payload, people: Array(201).fill(validContext.payload.people[0]) }]) {
+    assert.equal(validateTriageContextPayload({ ...validContext, payload }), null);
+  }
+  for (const key of ['version', 'kind', 'payload']) {
+    const value = structuredClone(validContext); delete value[key];
+    assert.equal(validateTriageContextPayload(value), null);
+  }
+  for (const key of Object.keys(validContext.payload)) {
+    const value = structuredClone(validContext); delete value.payload[key];
+    assert.equal(validateTriageContextPayload(value), null);
+  }
+});
+
+test('triage metadata uses exact route bounds and strict lowercase hex', () => {
+  for (const digest of ['', 'a'.repeat(63), 'a'.repeat(65), 'A'.repeat(64), 'a'.repeat(63) + '\n', 'a'.repeat(64) + '\n', null, 7]) {
+    assert.equal(validateTriageContextPayload({ ...validContext, payload: { ...validContext.payload, catalog_digest: digest } }), null);
+  }
+  const withPerson = person => ({ ...validContext, payload: { ...validContext.payload, people: [person] } });
+  for (const id of ['a', 'a'.repeat(64), '0:route_id-valid']) {
+    assert.equal(validateTriageContextPayload(withPerson({ id, label: 'Fixture' })), 'ready');
+  }
+  for (const id of ['', 'a'.repeat(65), ':a', 'A', 'a/b', 'a b', 'a\n', 'a\0', null, 1]) {
+    assert.equal(validateTriageContextPayload(withPerson({ id, label: 'Fixture' })), null);
+  }
+  for (const label of ['ñ'.repeat(120), '😀'.repeat(60), '<b>Fixture</b>', ' '.repeat(120)]) {
+    assert.equal(validateTriageContextPayload(withPerson({ id: 'a', label })), 'ready');
+  }
+  for (const label of ['', 'a'.repeat(121), '😀'.repeat(61), 'a\n', 'a\0', 'a\u200b', 'a\u202e', null, 1]) {
+    assert.equal(validateTriageContextPayload(withPerson({ id: 'a', label })), null);
+  }
+  for (const person of [null, [], { id: 'a' }, { label: 'Fixture' }, { id: 'a', label: 'Fixture', extra: true }]) {
+    assert.equal(validateTriageContextPayload(withPerson(person)), null);
+  }
+});
+
+async function contextRow(response, fail = null) {
+  let calls = 0;
+  const rows = await smoke(env, async url => {
+    if (new URL(url).pathname === contextPath) {
+      calls++;
+      if (fail) throw fail;
+      return response;
+    }
+    return new Response('irrelevant', { headers: { 'cache-control': 'private, no-store' } });
+  });
+  assert.equal(calls, 1);
+  const matching = rows.filter(row => row.path === contextPath);
+  assert.equal(matching.length, 1);
+  return matching[0];
+}
+
+function contextStream(chunks, options = {}) {
+  const state = { reads: 0, cancellations: 0, releases: 0 };
+  const reader = {
+    async read() {
+      state.reads++;
+      if (options.readError) throw new Error('PRIVATE_READ_ERROR');
+      return state.reads <= chunks.length ? { done: false, value: chunks[state.reads - 1] } : { done: true };
+    },
+    async cancel() { state.cancellations++; if (options.cancelError) throw new Error('PRIVATE_CANCEL_ERROR'); },
+    releaseLock() { state.releases++; },
+  };
+  return { state, response: {
+    status: options.status ?? 200,
+    headers: new Headers({ 'content-type': 'application/json', 'cache-control': 'private, no-store', ...options.headers }),
+    body: { getReader: () => reader, cancel: () => reader.cancel() },
+    text: () => { throw new Error('unbounded text reader used'); },
+    json: () => { throw new Error('unbounded JSON reader used'); },
+  } };
+}
+
+test('triage response counts streaming bytes before buffering and cancels overflow', async () => {
+  const limit = 128 * 1024, encoded = new Uint8Array(limit).fill(32);
+  encoded.set(new TextEncoder().encode(JSON.stringify(validContext)));
+  const exact = contextStream([encoded]);
+  assert.equal((await contextRow(exact.response)).triage_state, 'ready');
+  assert.deepEqual(exact.state, { reads: 2, cancellations: 0, releases: 1 });
+  for (const cancelError of [false, true]) {
+    for (const chunks of [[new Uint8Array(limit + 1)], [encoded, Uint8Array.of(32), Uint8Array.of(32)]]) {
+      const oversized = contextStream(chunks, { cancelError, headers: { 'content-length': '1' } });
+      assert.deepEqual(await contextRow(oversized.response), { path: contextPath, status: 200, pass: false, triage_state: 'invalid' });
+      assert.equal(oversized.state.reads, chunks.length === 1 ? 1 : 2);
+      assert.equal(oversized.state.cancellations, 1); assert.equal(oversized.state.releases, 1);
+    }
+  }
+});
+
+test('triage decoding is fatal UTF8 and accepts split multibyte labels', async () => {
+  const value = structuredClone(validContext); value.payload.people[0].label = 'ø';
+  const bytes = new TextEncoder().encode(JSON.stringify(value)), offset = bytes.indexOf(0xc3);
+  const valid = contextStream([bytes.slice(0, offset + 1), bytes.slice(offset + 1)]);
+  assert.equal((await contextRow(valid.response)).triage_state, 'ready');
+  const malformed = bytes.slice(); malformed[offset + 1] = 0x28;
+  for (const chunks of [[malformed], [new TextEncoder().encode('{private invalid JSON')], [Uint8Array.of(0xc3)]]) {
+    assert.equal((await contextRow(contextStream(chunks).response)).triage_state, 'invalid');
+  }
+  const failed = contextStream([], { readError: true, cancelError: true });
+  const result = await contextRow(failed.response);
+  assert.equal(result.triage_state, 'invalid'); assert.equal(failed.state.cancellations, 1);
+  assert.ok(!JSON.stringify(result).includes('PRIVATE'));
+});
+
+test('triage HTTP readiness requires 200 JSON and an exact no-store directive', async () => {
+  const bytes = new TextEncoder().encode(JSON.stringify(validContext));
+  for (const options of [{ status: 302 }, { status: 403 }, { status: 503 },
+    { headers: { 'content-type': 'text/html' } }, { headers: { 'content-type': 'application/json-evil' } },
+    { headers: { 'cache-control': 'private' } }, { headers: { 'cache-control': 'private, x-no-store' } },
+    { headers: { 'cache-control': 'private, no-store=1' } }]) {
+    const streamed = contextStream([bytes], options);
+    const result = await contextRow(streamed.response);
+    assert.equal(result.pass, false); assert.equal(result.triage_state, 'invalid');
+    assert.equal(streamed.state.reads, 0); assert.equal(streamed.state.cancellations, 1);
+  }
+  assert.equal((await contextRow(contextStream([bytes], { headers: {
+    'cache-control': 'private, NO-STORE', 'content-type': 'application/json; charset=utf-8',
+  } }).response)).triage_state, 'ready');
+  assert.equal((await contextRow(new Response(null, { headers: {
+    'cache-control': 'no-store', 'content-type': 'application/json',
+  } }))).triage_state, 'invalid');
+});
+
+test('triage output contains only finite readiness, never context or error details', async () => {
+  const value = structuredClone(validContext);
+  value.payload.people = [{ id: 'private-context-id', label: 'PRIVATE_CONTEXT_LABEL' }];
+  const row = await contextRow(contextStream([new TextEncoder().encode(JSON.stringify(value))]).response);
+  assert.deepEqual(row, { path: contextPath, status: 200, pass: true, triage_state: 'ready' });
+  assert.ok(!JSON.stringify(row).includes(value.payload.catalog_digest));
+  assert.ok(!JSON.stringify(row).includes('private-context-id'));
+  assert.ok(!JSON.stringify(row).includes('PRIVATE_CONTEXT_LABEL'));
+  const failure = await contextRow(null, new Error('PRIVATE_THROWN_ERROR'));
+  assert.deepEqual(failure, { path: contextPath, pass: false, error_class: 'Error', triage_state: 'invalid' });
+  for (const missing of [{ CF_ACCESS_CLIENT_ID: env.CF_ACCESS_CLIENT_ID }, { CF_ACCESS_CLIENT_SECRET: env.CF_ACCESS_CLIENT_SECRET }]) {
+    await assert.rejects(smoke(missing, () => { throw new Error('must not request'); }), /Missing dev/);
+  }
 });
