@@ -605,18 +605,17 @@ const oracleCases = [
   { case_id: 4, season: '2024-25', metric: 'goals' },
   { case_id: 9, season: '2025-26', metric: 'goals' },
 ];
-const oracleLabels = ['Bruno Fernandes', 'B.Fernandes'];
-// /en/q uses parseIntent (worker/src/index.ts:1143); its maximum is 50
-// (worker/src/core/validate-intent.ts:32). A full page cannot prove uniqueness.
-const oracleLeaderboardLimit = 50;
+// pipeline/sources/run.py:454 derives this stable ID from the FPL person code.
+const oraclePersonId = 'fpl:code:141746';
 const oracleEscape = text => text.replaceAll('&', '&amp;').replaceAll('<', '&lt;')
   .replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
-const unresolvedOracle = oracle_reason => oracleCases.map(({ case_id }) =>
-  ({ case_id, oracle_state: 'unresolved', oracle_reason }));
 
 /** Optional bounded disclosure; never contributes to smoke assertions or exits. */
 export async function oracleSmoke(env, request = fetch) {
   let reason = 'error';
+  const contextRecords = [];
+  const unresolvedOracle = oracle_reason => [...contextRecords, ...oracleCases.map(({ case_id }) =>
+    ({ case_id, oracle_state: 'unresolved', oracle_reason }))];
   try {
     if (!env.CF_ACCESS_CLIENT_ID || !env.CF_ACCESS_CLIENT_SECRET) return unresolvedOracle('credentials');
     const headers = { 'CF-Access-Client-Id': env.CF_ACCESS_CLIENT_ID,
@@ -643,38 +642,7 @@ export async function oracleSmoke(env, request = fetch) {
     const before = await read(triageContextPath, true);
     if (validateTriageContextPayload(before) !== 'ready') return unresolvedOracle('context');
     const context = before.payload;
-    const matches = context.people.filter(person => oracleLabels.includes(person.label));
-    let person = matches[0];
-    // A truncated or differently labelled context needs the bounded leaderboard.
-    if (context.has_more || matches.length !== 1 ||
-        context.people.filter(candidate => candidate.id === person.id).length !== 1) {
-      const path = '/en/q?' + new URLSearchParams({ metric: 'goals', entity_type: 'player',
-        entity_id: 'all', season: '2025-26', competition: 'PL', viz: 'table', limit: String(oracleLeaderboardLimit) });
-      const body = await read(path);
-      const tables = [...body.matchAll(/<tbody>([\s\S]*?)<\/tbody>/g)];
-      if (!body.includes('<html lang="en">') ||
-          !body.includes(`<link rel="canonical" href="${oracleEscape(path)}">`) || tables.length !== 1) {
-        return unresolvedOracle('page_shape');
-      }
-      const pattern = /<tr><td class="num">([1-9]\d*)<\/td><td><a href="\/en\/player\/([^"<>]*)\/2025-26">([^<>]*)<\/a><\/td><td>[^<>]*<\/td><td class="num">(?:0|[1-9]\d{0,2}(?:,\d{3})*)<\/td><\/tr>/g;
-      const entries = [...tables[0][1].matchAll(pattern)];
-      if (entries.length >= oracleLeaderboardLimit) return unresolvedOracle('truncated');
-      if (entries.map(entry => entry[0]).join('') !== tables[0][1] ||
-          entries.some((entry, index) => Number(entry[1]) !== index + 1)) return unresolvedOracle('page_shape');
-      const identities = [];
-      for (const entry of entries) {
-        const id = decodeURIComponent(entry[2]);
-        if (!/^[a-z0-9][a-z0-9:_-]{0,63}$/.test(id) || encodeURIComponent(id) !== entry[2]) {
-          return unresolvedOracle('page_shape');
-        }
-        if (oracleLabels.includes(entry[3])) identities.push({ id, label: entry[3] });
-      }
-      if (identities.length !== 1) return unresolvedOracle(identities.length ? 'identity_ambiguous' : 'identity_none');
-      person = identities[0];
-      if (entries.filter(entry => entry[2] === encodeURIComponent(person.id)).length !== 1) {
-        return unresolvedOracle('identity_ambiguous');
-      }
-    }
+    contextRecords.push({ oracle_context: { has_more: context.has_more, people: context.people.length } });
     const catalog = JSON.parse(context.catalog_json);
     // Only attribution already present in this reviewed public checkout may leave.
     const local = JSON.parse(readFileSync(new URL('../worker/src/generated/catalog.json', import.meta.url), 'utf8'));
@@ -690,10 +658,10 @@ export async function oracleSmoke(env, request = fetch) {
             known.season === selection.season && known.competition === 'PL' && known.granularity === 'box_score' &&
             known.source_id === cell.source_id && known.attribution_text === cell.attribution_text)) return unresolvedOracle('catalog');
       const path = '/en/q?' + new URLSearchParams({ metric: selection.metric, entity_type: 'player',
-        entity_id: person.id, season: selection.season, competition: 'PL', viz: 'table', limit: '1' });
+        entity_id: oraclePersonId, season: selection.season, competition: 'PL', viz: 'table', limit: '1' });
       const body = await read(path);
       const canonical = `<link rel="canonical" href="${oracleEscape(path)}">`;
-      const href = `/en/player/${encodeURIComponent(person.id)}/${selection.season}`;
+      const href = `/en/player/${encodeURIComponent(oraclePersonId)}/${selection.season}`;
       const tableRows = [...body.matchAll(/<tbody>([\s\S]*?)<\/tbody>/g)];
       const pattern = /^<tr><td class="num">1<\/td><td><a href="([^"<>]*)">([^<>]*)<\/a><\/td><td>[^<>]*<\/td><td class="num">([^<>]*)<\/td><\/tr>$/;
       const row = tableRows.length === 1 ? pattern.exec(tableRows[0][1]) : null;
@@ -702,8 +670,12 @@ export async function oracleSmoke(env, request = fetch) {
       const value = typeof numeric === 'string' && /^(?:0|[1-9]\d{0,2}(?:,\d{3})*)$/.test(numeric)
         ? Number(numeric.replaceAll(',', '')) : NaN;
       const footers = [...body.matchAll(/<footer>([\s\S]*?)<\/footer>/g)];
-      if (!body.includes('<html lang="en">') || !body.includes(canonical) || !row ||
-          row[1] !== href || row[2] !== oracleEscape(person.label)) return unresolvedOracle('page_shape');
+      if (!body.includes('<html lang="en">') || !body.includes(canonical) || !row) return unresolvedOracle('page_shape');
+      if (row[1] !== href) return unresolvedOracle('person_mismatch');
+      const player = row[2].replace(/&(?:amp|lt|gt|quot|#39);/g, entity =>
+        ({ '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'" })[entity]);
+      if (player.length < 1 || player.length > 120 || /[\p{Cc}\p{Cf}]/u.test(player) ||
+          oracleEscape(player) !== row[2]) return unresolvedOracle('page_shape');
       if (!Number.isSafeInteger(value)) return unresolvedOracle('value');
       if (footers.length !== 1 || !footers[0][1].includes(`<p>${oracleEscape(cell.attribution_text)}</p>`)) {
         return unresolvedOracle('attribution');
@@ -711,8 +683,8 @@ export async function oracleSmoke(env, request = fetch) {
       if (!footers[0][1].includes(`<p>Data snapshot ${oracleEscape(context.snapshot_id.slice(0, 12))} — every figure on this page can be regenerated from it.</p>`)) {
         return unresolvedOracle('snapshot_changed');
       }
-      rows.push({ case_id: selection.case_id, snapshot_id: context.snapshot_id, person_id: person.id,
-        player: person.label, season: selection.season, competition: 'PL', metric: selection.metric, value,
+      rows.push({ case_id: selection.case_id, snapshot_id: context.snapshot_id, person_id: oraclePersonId,
+        player, season: selection.season, competition: 'PL', metric: selection.metric, value,
         attribution: cell.attribution_text });
     }
     const after = await read(triageContextPath, true);
@@ -721,7 +693,7 @@ export async function oracleSmoke(env, request = fetch) {
         after.payload.catalog_digest !== context.catalog_digest ||
         JSON.stringify(after.payload.people) !== JSON.stringify(context.people) || after.payload.has_more !== context.has_more ||
         JSON.stringify({ ...rows[0], case_id: 9 }) !== JSON.stringify(rows[4])) return unresolvedOracle('snapshot_changed');
-    return rows;
+    return [...contextRecords, ...rows];
   } catch { return unresolvedOracle(reason); }
 }
 
