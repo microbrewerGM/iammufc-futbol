@@ -605,7 +605,10 @@ const oracleCases = [
   { case_id: 4, season: '2024-25', metric: 'goals' },
   { case_id: 9, season: '2025-26', metric: 'goals' },
 ];
-const oracleLabels = ['Bruno Fernandes', 'B.Fernandes', 'Fernandes'];
+const oracleLabels = ['Bruno Fernandes', 'B.Fernandes'];
+// /en/q uses parseIntent (worker/src/index.ts:1143); its maximum is 50
+// (worker/src/core/validate-intent.ts:32). A full page cannot prove uniqueness.
+const oracleLeaderboardLimit = 50;
 const oracleEscape = text => text.replaceAll('&', '&amp;').replaceAll('<', '&lt;')
   .replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 const unresolvedOracle = oracle_reason => oracleCases.map(({ case_id }) =>
@@ -646,7 +649,7 @@ export async function oracleSmoke(env, request = fetch) {
     if (context.has_more || matches.length !== 1 ||
         context.people.filter(candidate => candidate.id === person.id).length !== 1) {
       const path = '/en/q?' + new URLSearchParams({ metric: 'goals', entity_type: 'player',
-        entity_id: 'all', season: '2025-26', competition: 'PL', viz: 'table', limit: '25' });
+        entity_id: 'all', season: '2025-26', competition: 'PL', viz: 'table', limit: String(oracleLeaderboardLimit) });
       const body = await read(path);
       const tables = [...body.matchAll(/<tbody>([\s\S]*?)<\/tbody>/g)];
       if (!body.includes('<html lang="en">') ||
@@ -655,7 +658,7 @@ export async function oracleSmoke(env, request = fetch) {
       }
       const pattern = /<tr><td class="num">([1-9]\d*)<\/td><td><a href="\/en\/player\/([^"<>]*)\/2025-26">([^<>]*)<\/a><\/td><td>[^<>]*<\/td><td class="num">(?:0|[1-9]\d{0,2}(?:,\d{3})*)<\/td><\/tr>/g;
       const entries = [...tables[0][1].matchAll(pattern)];
-      if (entries.length > 25) return unresolvedOracle('truncated');
+      if (entries.length >= oracleLeaderboardLimit) return unresolvedOracle('truncated');
       if (entries.map(entry => entry[0]).join('') !== tables[0][1] ||
           entries.some((entry, index) => Number(entry[1]) !== index + 1)) return unresolvedOracle('page_shape');
       const identities = [];

@@ -100,9 +100,9 @@ test('pilot oracle failures emit only finite unresolved markers without diagnost
     ['identity_none', { context: value => { value.payload.people = []; },
       leaderboard: body => body.replace('>Bruno Fernandes</a>', '>PRIVATE_LABEL</a>') }],
     ['identity_ambiguous', { context: value => { value.payload.has_more = true; },
-      leaderboard: body => body.replace('</tbody>', '<tr><td class="num">2</td><td><a href="/en/player/fpl%3Acode%3A149/2025-26">Fernandes</a></td><td>MF</td><td class="num">1</td></tr></tbody>') }],
+      leaderboard: body => body.replace('</tbody>', '<tr><td class="num">2</td><td><a href="/en/player/fpl%3Acode%3A149/2025-26">B.Fernandes</a></td><td>MF</td><td class="num">1</td></tr></tbody>') }],
     ['truncated', { context: value => { value.payload.has_more = true; },
-      leaderboard: body => body.replace('</tbody>', Array.from({ length: 25 }, (_, i) =>
+      leaderboard: body => body.replace('</tbody>', Array.from({ length: 50 }, (_, i) =>
         `<tr><td class="num">${i + 2}</td><td><a href="/en/player/fpl%3Acode%3A149/2025-26">Other</a></td><td>MF</td><td class="num">1</td></tr>`).join('') + '</tbody>') }],
     ['context', { context: value => { value.payload.extra = 'PRIVATE_EXTRA_FIELD'; } }],
     ['snapshot_changed', { context: (value, index) => { if (index) value.payload.snapshot_id = expectedSnapshot; } }],
@@ -139,12 +139,12 @@ test('pilot oracle failures emit only finite unresolved markers without diagnost
 });
 
 test('pilot oracle discovers identity through one fixed leaderboard read for missing, ambiguous or truncated context', async () => {
-  for (const label of ['Bruno Fernandes', 'B.Fernandes', 'Fernandes']) {
+  for (const label of ['Bruno Fernandes', 'B.Fernandes']) {
     for (const context of [
       value => { value.payload.people = []; },
       value => { value.payload.people[0].label = 'Different label'; },
       value => { value.payload.has_more = true; },
-      value => { value.payload.people.push({ id: 'fpl:code:149', label: 'Fernandes' }); },
+      value => { value.payload.people.push({ id: 'fpl:code:149', label: 'B.Fernandes' }); },
       value => { value.payload.people.push({ id: 'fpl:code:148', label: 'Other' }); },
     ]) {
       const fixture = oracleFixture({ context, html: body => body.replaceAll('Bruno Fernandes', label) });
@@ -157,7 +157,7 @@ test('pilot oracle discovers identity through one fixed leaderboard read for mis
       assert.equal(target.origin, 'https://iammufc-dev.aaron-cf2.workers.dev');
       assert.equal(target.pathname, '/en/q');
       assert.deepEqual(Object.fromEntries(target.searchParams), { metric: 'goals', entity_type: 'player',
-        entity_id: 'all', season: '2025-26', competition: 'PL', viz: 'table', limit: '25' });
+        entity_id: 'all', season: '2025-26', competition: 'PL', viz: 'table', limit: '50' });
       assert.equal(discovery.init.method, 'GET');
       assert.equal(discovery.init.redirect, 'manual');
       assert.equal(discovery.init.body, undefined);
@@ -166,6 +166,44 @@ test('pilot oracle discovers identity through one fixed leaderboard read for mis
       assert.ok(!JSON.stringify(rows).includes('PRIVATE'));
     }
   }
+});
+
+test('pilot oracle rejects a visible namesake when the intended player is beyond the window', async () => {
+  const wholeSeason = Array.from({ length: 51 }, (_, i) =>
+    `<tr><td class="num">${i + 1}</td><td><a href="/en/player/fpl%3Acode%3A${i === 50 ? 148 : i + 200}/2025-26">${i === 0 || i === 50 ? 'Bruno Fernandes' : 'Other'}</a></td><td>MF</td><td class="num">1</td></tr>`);
+  const fixture = oracleFixture({ context: value => { value.payload.people = []; },
+    leaderboard: body => body.replace(/<tbody>.*?<\/tbody>/, `<tbody>${wholeSeason.slice(0, 50).join('')}</tbody>`) });
+  assert.deepEqual(await oracleSmoke(env, fixture.request), [1, 2, 3, 4, 9].map(case_id =>
+    ({ case_id, oracle_state: 'unresolved', oracle_reason: 'truncated' })));
+  assert.equal(fixture.calls.length, 2);
+});
+
+test('pilot oracle accepts only a leaderboard strictly below the maximum limit', async () => {
+  for (const count of [49, 50]) {
+    const fixture = oracleFixture({ context: value => { value.payload.has_more = true; },
+      leaderboard: body => body.replace('</tbody>', Array.from({ length: count - 1 }, (_, i) =>
+        `<tr><td class="num">${i + 2}</td><td><a href="/en/player/fpl%3Acode%3A${i + 200}/2025-26">Other</a></td><td>MF</td><td class="num">1</td></tr>`).join('') + '</tbody>') });
+    const rows = await oracleSmoke(env, fixture.request);
+    if (count === 49) assert.ok(rows.every(row => row.person_id === 'fpl:code:148'));
+    else assert.deepEqual(rows, [1, 2, 3, 4, 9].map(case_id =>
+      ({ case_id, oracle_state: 'unresolved', oracle_reason: 'truncated' })));
+  }
+});
+
+test('pilot oracle rejects both accepted labels on different stable identities', async () => {
+  const fixture = oracleFixture({ context: value => { value.payload.people = []; },
+    leaderboard: body => body.replace('</tbody>', '<tr><td class="num">2</td><td><a href="/en/player/fpl%3Acode%3A149/2025-26">B.Fernandes</a></td><td>MF</td><td class="num">1</td></tr></tbody>') });
+  assert.deepEqual(await oracleSmoke(env, fixture.request), [1, 2, 3, 4, 9].map(case_id =>
+    ({ case_id, oracle_state: 'unresolved', oracle_reason: 'identity_ambiguous' })));
+  assert.equal(fixture.calls.length, 2);
+});
+
+test('pilot oracle leaves surname-only identities unresolved in context and leaderboard', async () => {
+  const fixture = oracleFixture({ context: value => { value.payload.people[0].label = 'Fernandes'; },
+    html: body => body.replaceAll('Bruno Fernandes', 'Fernandes') });
+  assert.deepEqual(await oracleSmoke(env, fixture.request), [1, 2, 3, 4, 9].map(case_id =>
+    ({ case_id, oracle_state: 'unresolved', oracle_reason: 'identity_none' })));
+  assert.equal(fixture.calls.length, 2);
 });
 
 test('pilot oracle rejects malformed leaderboard rows without disclosing input', async () => {
