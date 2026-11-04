@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { denialSmoke, runSmoke, smoke, validateChatPayload,
   snapshotContinuitySmoke, validateHealthPayload, validateQueryPayload,
   validateSnapshotMatch, validateTriageContextPayload, classifySeasonExplore, classifyOpponentHistory, oracleSmoke } from './dev-access-smoke.mjs';
@@ -108,12 +110,19 @@ test('pilot oracle failures emit only finite unresolved markers without diagnost
       value.payload.catalog_json = JSON.stringify(catalog);
       value.payload.catalog_digest = catalogDigest(value.payload.catalog_json);
     } }],
+    ['attribution', { context: value => {
+      const catalog = JSON.parse(value.payload.catalog_json);
+      for (const cell of catalog.coverage) cell.attribution_text = 'Source ::error::injected';
+      value.payload.catalog_json = JSON.stringify(catalog);
+      value.payload.catalog_digest = catalogDigest(value.payload.catalog_json);
+    } }],
     ...['NaN', 'Infinity', '1e309', '-1', '7.5', 'PRIVATE_NUMBER', ''].map(number =>
       ['value', { html: body => body.replace('>7</td>', `>${number}</td>`) }]),
     ['person_mismatch', { html: body => body.replace('/en/player/fpl%3Acode%3A141746', '/en/player/fpl%3Acode%3A149') }],
     ['person_mismatch', { html: body => body.replace('/en/player/fpl%3Acode%3A141746', '/en/player/fpl:code:141746') }],
     ['page_shape', { html: body => body.replace('>Bruno Fernandes</a>', '></a>') }],
-    ['page_shape', { html: body => body.replace('>Bruno Fernandes</a>', `>${'x'.repeat(121)}</a>`) }],
+    ...['::error::injected', 'Bad\nLabel', 'Bad\n', 'x'.repeat(65), 'A &amp; B'].map(label =>
+      ['page_shape', { html: body => body.replace('>Bruno Fernandes</a>', `>${label}</a>`) }]),
     ['page_shape', { html: body => body.replace('>Bruno Fernandes</a>', '>Bad\u200bLabel</a>') }],
     ['page_shape', { html: body => body.replace(/<tbody>.*?<\/tbody>/, '<tbody></tbody>') }],
     ['attribution', { html: body => body.replace('<footer>', '<aside>').replace('</footer>', '</aside>') }],
@@ -140,7 +149,7 @@ test('pilot oracle failures emit only finite unresolved markers without diagnost
 });
 
 test('pilot oracle pins identity regardless of context labels, omissions or truncation', async () => {
-  for (const label of ['Bruno Fernandes', 'B.Fernandes', 'Fernandes', 'A &amp; B']) {
+  for (const label of ['Bruno Fernandes', 'B.Fernandes', 'Fernandes', 'O&#39;Shea-Núñez Jr.', 'A'.repeat(64)]) {
     for (const context of [
       value => { value.payload.people = []; },
       value => { value.payload.people[0].label = 'Different label'; },
@@ -156,7 +165,7 @@ test('pilot oracle pins identity regardless of context labels, omissions or trun
         has_more: expected.payload.has_more, people: expected.payload.people.length,
       } });
       assert.equal(rows.length, 5);
-      assert.ok(rows.every(row => row.person_id === 'fpl:code:141746' && row.player === label.replace('&amp;', '&')));
+      assert.ok(rows.every(row => row.person_id === 'fpl:code:141746' && row.player === label.replace('&#39;', "'")));
       assert.equal(fixture.calls.length, 7);
       assert.ok(fixture.calls.filter(call => new URL(call.url).pathname === '/en/q')
         .every(call => new URL(call.url).searchParams.get('entity_id') === 'fpl:code:141746'));
@@ -164,6 +173,31 @@ test('pilot oracle pins identity regardless of context labels, omissions or trun
         [contextPath, '/en/q', '/en/q', '/en/q', '/en/q', '/en/q', contextPath]);
       assert.ok(!JSON.stringify(rows).includes('PRIVATE'));
     }
+  }
+});
+
+test('pilot oracle refuses workflow commands even in matching local catalog attribution', async t => {
+  const catalog = structuredClone(oracleCatalog);
+  for (const cell of catalog.coverage) cell.attribution_text = 'Source ::error::injected';
+  const catalogText = JSON.stringify(catalog);
+  const originalRead = fs.readFileSync;
+  t.mock.method(fs, 'readFileSync', (path, ...args) =>
+    path instanceof URL && path.href.endsWith('/worker/src/generated/catalog.json')
+      ? catalogText : originalRead(path, ...args));
+  syncBuiltinESMExports();
+  try {
+    const fixture = oracleFixture({ context: value => {
+      value.payload.catalog_json = catalogText;
+      value.payload.catalog_digest = catalogDigest(catalogText);
+    } });
+    const [contextRecord, ...rows] = await oracleSmoke(env, fixture.request);
+    assert.deepEqual(contextRecord, { oracle_context: { has_more: false, people: 1 } });
+    assert.deepEqual(rows, [1, 2, 3, 4, 9].map(case_id =>
+      ({ case_id, oracle_state: 'unresolved', oracle_reason: 'attribution' })));
+    assert.equal(fixture.calls.length, 1);
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
   }
 });
 

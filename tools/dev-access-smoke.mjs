@@ -652,6 +652,7 @@ export async function oracleSmoke(env, request = fetch) {
         cell?.entity_type === 'player' && cell.metric === selection.metric && cell.season === selection.season &&
         cell.competition === 'PL' && cell.granularity === 'box_score') : [];
       const cell = cells[0];
+      if (typeof cell?.attribution_text === 'string' && cell.attribution_text.includes('::')) return unresolvedOracle('attribution');
       if (cells.length !== 1 || cell.redistributable !== true || cell.cost_class !== 'cheap' ||
           typeof cell.attribution_text !== 'string' || !cell.attribution_text.trim() ||
           !local.coverage.some(known => known.entity_type === 'player' && known.metric === selection.metric &&
@@ -674,7 +675,7 @@ export async function oracleSmoke(env, request = fetch) {
       if (row[1] !== href) return unresolvedOracle('person_mismatch');
       const player = row[2].replace(/&(?:amp|lt|gt|quot|#39);/g, entity =>
         ({ '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'" })[entity]);
-      if (player.length < 1 || player.length > 120 || /[\p{Cc}\p{Cf}]/u.test(player) ||
+      if (!/^\p{L}[\p{L} .'-]{0,63}$/u.test(player) || /[\p{Cc}\p{Cf}]/u.test(player) ||
           oracleEscape(player) !== row[2]) return unresolvedOracle('page_shape');
       if (!Number.isSafeInteger(value)) return unresolvedOracle('value');
       if (footers.length !== 1 || !footers[0][1].includes(`<p>${oracleEscape(cell.attribution_text)}</p>`)) {
