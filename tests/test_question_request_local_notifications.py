@@ -23,7 +23,7 @@ def db():
     connection.execute("""UPDATE question_requests SET status='triaging',attempt=1,lease_id='q2:test',lease_owner='service',
       lease_expires_at=strftime('%Y-%m-%dT%H:%M:%SZ','now','+900 seconds'),claimed_at=strftime('%Y-%m-%dT%H:%M:%SZ','now'),revision=revision+1""")
     connection.execute("""INSERT INTO question_request_notifications(request_id,desired_status,created_at,updated_at,expires_at)
-      SELECT request_id,'triaging',updated_at,updated_at,expires_at FROM question_requests""")
+      SELECT request_id,'triaging',strftime('%Y-%m-%dT%H:%M:%SZ','now'),strftime('%Y-%m-%dT%H:%M:%SZ','now'),expires_at FROM question_requests""")
     connection.execute("INSERT INTO question_request_local_notifications(request_id,payload_revision,status)VALUES(?,1,'triaging')", (REQUEST,))
     yield connection
     connection.close()
