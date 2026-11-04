@@ -94,20 +94,29 @@ describe("request retention maintenance", () => {
     expect(x.db.prepare("SELECT request_id FROM question_requests").all()).toEqual([{ request_id: id(101) }]);
     expect(await collectQuestionRequestRetention(x.d1)).toBe(1);
   });
-  it("runs both collectors from protocol-2 maintenance without changing moved counts", async () => {
+  it("protocol-2 maintenance preserves exploration links, requests and tombstones, including expired rows", async () => {
     const x = fixture(); x.add(1, true); x.setClock(x.expires);
+    const shared = JSON.stringify({ version: 1, family: "arrival_manager", as_of: "2026-11-04", population: "first_team_available", joining_basis: "effective_first_team_spell_entry", academy_basis: "documented_first_team_promotion", visualization: "table" });
+    for (const [n, created] of [[900, "2026-11-04T00:00:00Z"], [901, x.expires]] as const) {
+      x.db.prepare("INSERT INTO exploration_shared_requests VALUES(?,1,?,?)").run(id(n), shared, created);
+      x.db.prepare("INSERT INTO exploration_request_links VALUES(?,'owner',?,strftime('%Y-%m-%dT%H:%M:%SZ',?,'+90 days'))").run(id(n), created, created);
+      x.db.prepare("INSERT INTO exploration_shared_job_tombstones VALUES(?,?,?)").run(id(n + 100), id(n), created);
+    }
+    // An orphan is eligible for the exploration collector even without an expired link.
+    x.db.prepare("INSERT INTO exploration_shared_requests VALUES(?,1,?,?)").run(id(902), shared, "2026-11-04T00:00:00Z");
+    const tables = ["exploration_request_links", "exploration_shared_requests", "exploration_shared_job_tombstones"];
+    const before = tables.map(table => x.db.prepare(`SELECT * FROM ${table} ORDER BY request_id`).all());
     const log = vi.spyOn(console, "info").mockImplementation(() => {});
-    const prepared = vi.spyOn(x.d1, "prepare");
     expect(await sweepQuestions(depsFor(x.d1), 100, "expired")).toEqual({ moved: 1 });
     expect(x.db.prepare("SELECT count(*) n FROM question_requests").get().n).toBe(0);
-    for (const table of ["exploration_request_links", "exploration_shared_requests", "exploration_shared_job_tombstones"]) expect(prepared.mock.calls.some(([sql]) => sql.startsWith(`DELETE FROM ${table}`))).toBe(true);
-    expect(log.mock.calls).toEqual([["retention", { deleted: 1, failed: 0 }], ["retention", { deleted: 0, failed: 0 }]]);
+    expect(tables.map(table => x.db.prepare(`SELECT * FROM ${table} ORDER BY request_id`).all())).toEqual(before);
+    expect(log.mock.calls).toEqual([["retention", { deleted: 1, failed: 0 }]]);
   });
-  it.each(["question", "exploration"])("isolates a %s retention failure from the other collector and triage", async failing => {
+  it("isolates a question retention failure from triage", async () => {
     const x = fixture();
     const original = x.d1.prepare.bind(x.d1);
     const prepared = vi.spyOn(x.d1, "prepare").mockImplementation(sql => {
-      if (sql.startsWith(failing === "question" ? "DELETE FROM question_requests" : "DELETE FROM exploration_request_links")) throw new Error("private question and identity must not be logged");
+      if (sql.startsWith("DELETE FROM question_requests")) throw new Error("private question and identity must not be logged");
       return original(sql);
     });
     const log = vi.spyOn(console, "info").mockImplementation(() => {});
@@ -115,8 +124,7 @@ describe("request retention maintenance", () => {
     expect(await sweepQuestionBeforeRequest(deps)).toBe(true);
     expect(rows).toHaveBeenCalledOnce();
     expect(prepared.mock.calls.some(([sql]) => sql.startsWith("DELETE FROM question_requests"))).toBe(true);
-    expect(prepared.mock.calls.some(([sql]) => sql.startsWith("DELETE FROM exploration_request_links"))).toBe(true);
-    expect(log.mock.calls.map(([, counts]) => counts)).toEqual(expect.arrayContaining([{ deleted: 0, failed: 1 }, { deleted: 0, failed: 0 }]));
+    expect(log.mock.calls).toEqual([["retention", { deleted: 0, failed: 1 }]]);
   });
   it("runs retention even when result maintenance fails and isolates an unexpected collector rejection", async () => {
     const x = fixture(), deps = depsFor(x.d1);
