@@ -6,8 +6,9 @@ import { DatabaseSync } from "node:sqlite";
 type DB = InstanceType<typeof DatabaseSync>;
 const id = "a".repeat(64), hash = "b".repeat(64);
 const iso = (ms: number) => new Date(Math.floor(ms / 1000) * 1000).toISOString().replace(".000Z", "Z");
-const names = ["0001_schema", "0003_p16_dot_plot", "0004_cache_slots", "0005_account_question_history", "0006_season_splits", "0008_exploration_request_links", "0009_manager_era_records", "0010_question_requests", "0011_opponent_labels", "0012_cl_season_stage", "0013_question_request_results", "0014_question_request_clarifications", "0015_question_request_notifications"];
+const names = ["0001_schema", "0003_p16_dot_plot", "0004_cache_slots", "0005_account_question_history", "0006_season_splits", "0007_exploration_requests", "0008_exploration_request_links", "0009_manager_era_records", "0010_question_requests", "0011_opponent_labels", "0012_cl_season_stage", "0013_question_request_results", "0014_question_request_clarifications", "0015_question_request_notifications"];
 const sql = readFileSync("infra/migrations/0016_question_request_refresh.sql", "utf8");
+const nullChecksSql = readFileSync("infra/migrations/0017_exploration_null_checks.sql", "utf8");
 const opened: DB[] = [];
 afterEach(() => { for (const db of opened.splice(0)) db.close(); });
 function spec(revision = 4) {
@@ -17,7 +18,7 @@ function spec(revision = 4) {
     data_snapshot_id: "snapshot-1", catalog_digest: hash, transform_code_version: "v1", renderer_version: "v1",
     artifact_key: hash, expected_cell_state: "computable_now_queued" };
 }
-function fixture(options: { legacy?: boolean; clarification?: boolean; deferResult?: boolean } = {}) {
+function fixture(options: { legacy?: boolean; clarification?: boolean; deferResult?: boolean; order?: "dev" | "numeric" } = {}) {
   const db: DB = new DatabaseSync(":memory:"), clockDb: DB = new DatabaseSync(":memory:");
   opened.push(db, clockDb); db.exec("PRAGMA foreign_keys=ON");
   let clock = "2026-11-02T00:00:00Z", publications = 0;
@@ -26,7 +27,9 @@ function fixture(options: { legacy?: boolean; clarification?: boolean; deferResu
     return clockDb.prepare(`SELECT strftime(${bound.map(() => "?").join(",")}) AS value`).get(...bound).value;
   });
   for (const name of names) db.exec(readFileSync(`infra/migrations/${name}.sql`, "utf8"));
+  if (options.order !== "numeric") db.exec(nullChecksSql);
   if (!options.legacy) db.exec(sql);
+  if (options.order === "numeric") db.exec(nullChecksSql);
   const expires = iso(Date.parse(clock) + 90 * 86400_000);
   const parent = () => db.prepare("SELECT * FROM question_requests WHERE request_id=?").get(id);
   const result = () => db.prepare("SELECT * FROM question_request_results WHERE request_id=?").get(id);
@@ -81,6 +84,30 @@ function fixture(options: { legacy?: boolean; clarification?: boolean; deferResu
   return { db, parent, result, count, history, advance, publish, command, insertCommand, refresh, update, confirm, lease, release, stale, clarify, insertResult, clock: () => clock, expires };
 }
 describe("bounded request refresh and confirmation history", () => {
+  it("produces identical table, index and trigger definitions in dev and numeric migration order", () => {
+    const definitions = (db: DB) => db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE type IN ('table','index','trigger') ORDER BY type,name").all();
+    const dev = fixture({ order: "dev" }), numeric = fixture({ order: "numeric" });
+    expect(definitions(numeric.db)).toEqual(definitions(dev.db));
+    for (const x of [dev, numeric]) {
+      x.confirm(); expect(x.history()).toHaveLength(1);
+      x.publish("snapshot-2"); x.refresh(); x.confirm(); expect(x.history()).toHaveLength(2);
+    }
+  });
+  it.each(["dev", "numeric"] as const)("rejects direct stale confirmation capture in %s order", order => {
+    const x = fixture({ order }), proposal = x.result();
+    x.publish("snapshot-2");
+    expect(() => x.db.prepare("INSERT INTO question_request_confirmation_context VALUES(?,?,?,?,?)").run(id, proposal.revision, proposal.spec_json, x.clock(), x.expires)).toThrow(/invalid confirmation capture/);
+    expect(() => x.confirm()).toThrow(/invalid confirmation capture/);
+    expect(x.result()).toEqual(proposal); expect(x.history()).toHaveLength(0);
+    expect(x.db.prepare("SELECT * FROM question_request_confirmation_context").all()).toHaveLength(0);
+    x.refresh(); x.confirm(); expect(x.history()).toHaveLength(1);
+  });
+  it("rejects confirmation capture when there is no current snapshot", () => {
+    const x = fixture(), proposal = x.result(); x.db.exec("DELETE FROM snapshots");
+    expect(() => x.db.prepare("INSERT INTO question_request_confirmation_context VALUES(?,?,?,?,?)").run(id, proposal.revision, proposal.spec_json, x.clock(), x.expires)).toThrow(/invalid confirmation capture/);
+    expect(() => x.confirm()).toThrow(/invalid confirmation capture/);
+    expect(x.result()).toEqual(proposal); expect(x.history()).toHaveLength(0);
+  });
   it("initializes a result inserted between counter hook installation and backfill", () => {
     const x = fixture({ legacy: true, deferResult: true });
     const boundary = sql.indexOf("INSERT OR IGNORE INTO question_request_refresh_counts");
@@ -103,6 +130,10 @@ describe("bounded request refresh and confirmation history", () => {
     expect(x.db.prepare("SELECT * FROM question_request_result_refreshes").all()).toHaveLength(0);
     expect(x.db.prepare("SELECT * FROM question_request_confirmation_context").all()).toHaveLength(0);
     expect(x.history()).toHaveLength(0); expect(x.count()).toBe(0);
+    if (checkpoint === "question_request_result_refreshes_validate") {
+      expect(() => x.confirm()).toThrow(/invalid confirmation capture/);
+      x.refresh();
+    }
     x.confirm(); expect(x.history()).toHaveLength(1);
   });
   it("blocks confirmation while only its capture trigger has been installed", () => {

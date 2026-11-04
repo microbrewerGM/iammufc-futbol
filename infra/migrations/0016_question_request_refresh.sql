@@ -135,6 +135,7 @@ WHEN EXISTS(SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='question_
  OR NOT EXISTS(SELECT 1 FROM question_request_results r JOIN question_requests q ON q.request_id=r.request_id
  WHERE r.request_id=NEW.request_id AND r.state='confirmation_required'
  AND r.revision=NEW.accepted_revision AND r.spec_json IS NEW.spec_json
+ AND json_extract(r.spec_json,'$.data_snapshot_id')=(SELECT snapshot_id FROM snapshots ORDER BY created_at DESC LIMIT 1)
  AND r.expires_at IS NEW.expires_at AND q.expires_at IS r.expires_at AND q.revision=r.request_revision
  AND NEW.accepted_at IS strftime('%Y-%m-%dT%H:%M:%SZ','now')
  AND r.expires_at>NEW.accepted_at AND r.response_deadline>NEW.accepted_at)
