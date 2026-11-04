@@ -181,8 +181,12 @@ describe("answer-now context probe",()=>{
     const x=fixture(),app=new Hono<QuestionTriageEnv>();app.route("/",createQuestionTriageBridgeRouter(()=>caller));
     const response=await app.request("https://site.invalid/answer-now/context",{method:"POST",body:'{"version":1,"kind":"context","payload":{}}'},{DB:x.d1,BRIDGE_CURSOR_KEY:"fixture"} as never);
     expect(response.status).toBe(200);
-    const body=await response.json() as {payload:{people:unknown[];catalog_digest:string}};
+    const body=await response.json() as {payload:{people:unknown[];catalog_digest:string;catalog_json:string;snapshot_id:string;glossary_protocol:number}};
     expect(body.payload.people).toEqual([]);expect(body.payload.catalog_digest).toMatch(/^[0-9a-f]{64}$/);
+    expect(body.payload.snapshot_id).toBe(snapshot);expect(body.payload.glossary_protocol).toBe(1);
+    const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(body.payload.catalog_json));
+    expect([...new Uint8Array(digest)].map(b=>b.toString(16).padStart(2,"0")).join("")).toBe(body.payload.catalog_digest);
+    expect(JSON.parse(body.payload.catalog_json).coverage.length).toBeGreaterThan(0);
     expect(JSON.stringify(body)).not.toContain("Show goals");
   });
   it("accepts canonical Python-style key ordering",async()=>{
