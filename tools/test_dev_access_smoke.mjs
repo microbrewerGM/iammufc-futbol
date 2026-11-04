@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { denialSmoke, runSmoke, smoke, validateChatPayload,
   snapshotContinuitySmoke, validateHealthPayload, validateQueryPayload,
   validateSnapshotMatch, validateTriageContextPayload, classifySeasonExplore, classifyOpponentHistory, oracleSmoke } from './dev-access-smoke.mjs';
@@ -25,7 +27,7 @@ const oracleCatalog = JSON.parse(readFileSync(new URL('../worker/src/generated/c
 const oracleContext = () => ({ ...structuredClone(validContext), payload: {
   ...structuredClone(validContext.payload), snapshot_id: snapshot,
   catalog_json: JSON.stringify(oracleCatalog), catalog_digest: catalogDigest(JSON.stringify(oracleCatalog)),
-  people: [{ id: 'fpl:code:148', label: 'Bruno Fernandes' }],
+  people: [{ id: 'fpl:code:141746', label: 'Bruno Fernandes' }],
 } });
 const oracleValues = { 'goals:2025-26': 7, 'minutes:2024-25': 3001, 'assists:2024-25': 9, 'goals:2024-25': 8 };
 function oracleFixture(options = {}) {
@@ -47,11 +49,11 @@ function oracleFixture(options = {}) {
         cell.season === season && cell.competition === 'PL' && cell.granularity === 'box_score').attribution_text;
       const number = oracleValues[`${metric}:${season}`].toLocaleString('en-US');
       body = `<html lang="en"><link rel="canonical" href="${(target.pathname + target.search).replaceAll('&', '&amp;')}">` +
-        `<table><tbody><tr><td class="num">1</td><td><a href="/en/player/fpl%3Acode%3A148/${season}">Bruno Fernandes</a></td><td>MF</td><td class="num">${number}</td></tr></tbody></table>` +
+        `<table><tbody><tr><td class="num">1</td><td><a href="/en/player/fpl%3Acode%3A141746/${season}">Bruno Fernandes</a></td><td>MF</td><td class="num">${number}</td></tr></tbody></table>` +
         `<footer><p>${credit}</p><p>Data snapshot ${snapshot.slice(0, 12)} — every figure on this page can be regenerated from it.</p></footer><p>PRIVATE_EXTRA_BODY</p></html>`;
       body = options.html?.(body) ?? body; mime = 'text/html';
     }
-    return new Response(body, { status: options.status ?? 200,
+    return new Response(body, { status: (target.pathname === '/en/q' ? options.pageStatus : options.status) ?? 200,
       headers: { 'cache-control': 'private, no-store', 'content-type': mime } });
   };
   return { request, calls };
@@ -59,13 +61,14 @@ function oracleFixture(options = {}) {
 
 test('pilot oracle projects only five fixed selections and the exact closed field set', async () => {
   const fixture = oracleFixture();
-  const rows = await oracleSmoke(env, fixture.request);
+  const [contextRecord, ...rows] = await oracleSmoke(env, fixture.request);
+  assert.deepEqual(contextRecord, { oracle_context: { has_more: false, people: 1 } });
   assert.equal(rows.length, 5);
   assert.deepEqual(rows.map(row => row.case_id), [1, 2, 3, 4, 9]);
   for (const row of rows) {
     assert.deepEqual(Object.keys(row).sort(), ['case_id', 'snapshot_id', 'person_id', 'player', 'season',
       'competition', 'metric', 'value', 'attribution'].sort());
-    assert.equal(row.snapshot_id, snapshot); assert.equal(row.person_id, 'fpl:code:148');
+    assert.equal(row.snapshot_id, snapshot); assert.equal(row.person_id, 'fpl:code:141746');
     assert.equal(row.player, 'Bruno Fernandes'); assert.equal(row.competition, 'PL');
     assert.equal(row.value, oracleValues[`${row.metric}:${row.season}`]);
     assert.equal(row.attribution, oracleCatalog.coverage[0].attribution_text);
@@ -84,7 +87,7 @@ test('pilot oracle projects only five fixed selections and the exact closed fiel
       assert.equal(init.method, 'GET'); assert.equal(init.body, undefined);
       assert.deepEqual([...new URL(url).searchParams.keys()],
         ['metric', 'entity_type', 'entity_id', 'season', 'competition', 'viz', 'limit']);
-      assert.equal(new URL(url).searchParams.get('entity_id'), 'fpl:code:148');
+      assert.equal(new URL(url).searchParams.get('entity_id'), 'fpl:code:141746');
     } else {
       assert.equal(init.method, 'POST');
       assert.deepEqual(JSON.parse(init.body), { version: 1, kind: 'context', payload: {} });
@@ -92,40 +95,121 @@ test('pilot oracle projects only five fixed selections and the exact closed fiel
   }
 });
 
+test('pilot oracle refuses workflow commands in snapshots without echoing them', async () => {
+  const injectedSnapshot = 'aaaaaaaaaaaa::error::injected';
+  const fixture = oracleFixture({ context: value => { value.payload.snapshot_id = injectedSnapshot; } });
+  const records = await oracleSmoke(env, fixture.request);
+  assert.deepEqual(records, [1, 2, 3, 4, 9].map(case_id =>
+    ({ case_id, oracle_state: 'unresolved', oracle_reason: 'snapshot_changed' })));
+  assert.ok(!JSON.stringify(records).includes(injectedSnapshot));
+  assert.ok(!JSON.stringify(records).includes('::'));
+  assert.equal(fixture.calls.length, 1);
+});
+
 test('pilot oracle failures emit only finite unresolved markers without diagnostic bodies', async () => {
   const failures = [
-    { error: true }, { status: 503 }, { status: 302 },
-    { context: value => { value.payload.people = []; } },
-    { context: value => { value.payload.has_more = true; } },
-    { context: value => { value.payload.people.push({ id: 'fpl:code:149', label: 'B.Fernandes' }); } },
-    { context: value => { value.payload.people.push({ id: 'fpl:code:148', label: 'Someone else' }); } },
-    { context: value => { value.payload.extra = 'PRIVATE_EXTRA_FIELD'; } },
-    { context: (value, index) => { if (index) value.payload.snapshot_id = expectedSnapshot; } },
-    { context: (value, index) => { if (index) value.payload.people[0].label = 'B.Fernandes'; } },
-    { context: value => {
+    ['error', { error: true }], ['context', { status: 503 }], ['context', { status: 302 }],
+    ['page_status', { pageStatus: 503 }],
+    ['context', { context: value => { value.payload.extra = 'PRIVATE_EXTRA_FIELD'; } }],
+    ['snapshot_changed', { context: (value, index) => { if (index) value.payload.snapshot_id = expectedSnapshot; } }],
+    ['snapshot_changed', { context: (value, index) => { if (index) value.payload.people[0].label = 'B.Fernandes'; } }],
+    ['catalog', { context: value => {
       const catalog = JSON.parse(value.payload.catalog_json);
       catalog.coverage[0].attribution_text = 'PRIVATE_ATTRIBUTION';
       // Tamper with every relevant credit while keeping the digest valid.
       for (const cell of catalog.coverage) cell.attribution_text = 'PRIVATE_ATTRIBUTION';
       value.payload.catalog_json = JSON.stringify(catalog);
       value.payload.catalog_digest = catalogDigest(value.payload.catalog_json);
-    } },
+    } }],
+    ['attribution', { context: value => {
+      const catalog = JSON.parse(value.payload.catalog_json);
+      for (const cell of catalog.coverage) cell.attribution_text = 'Source ::error::injected';
+      value.payload.catalog_json = JSON.stringify(catalog);
+      value.payload.catalog_digest = catalogDigest(value.payload.catalog_json);
+    } }],
     ...['NaN', 'Infinity', '1e309', '-1', '7.5', 'PRIVATE_NUMBER', ''].map(number =>
-      ({ html: body => body.replace('>7</td>', `>${number}</td>`) })),
-    { html: body => body.replace('fpl%3Acode%3A148', 'fpl%3Acode%3A149') },
-    { html: body => body.replace('<footer>', '<aside>').replace('</footer>', '</aside>') },
-    { html: body => body.replace('rel="canonical"', 'rel="alternate"') },
-    { html: body => body.replace(`Data snapshot ${snapshot.slice(0, 12)}`, 'Data snapshot stale') },
-    { html: body => body + '<table><tbody>PRIVATE_EXTRA_ROW</tbody></table>' },
-    { html: () => 'PRIVATE_BODY'.repeat(20000) },
+      ['value', { html: body => body.replace('>7</td>', `>${number}</td>`) }]),
+    ['person_mismatch', { html: body => body.replace('/en/player/fpl%3Acode%3A141746', '/en/player/fpl%3Acode%3A149') }],
+    ['person_mismatch', { html: body => body.replace('/en/player/fpl%3Acode%3A141746', '/en/player/fpl:code:141746') }],
+    ['page_shape', { html: body => body.replace('>Bruno Fernandes</a>', '></a>') }],
+    ...['::error::injected', 'Bad\nLabel', 'Bad\n', 'x'.repeat(65), 'A &amp; B'].map(label =>
+      ['page_shape', { html: body => body.replace('>Bruno Fernandes</a>', `>${label}</a>`) }]),
+    ['page_shape', { html: body => body.replace('>Bruno Fernandes</a>', '>Bad\u200bLabel</a>') }],
+    ['page_shape', { html: body => body.replace(/<tbody>.*?<\/tbody>/, '<tbody></tbody>') }],
+    ['attribution', { html: body => body.replace('<footer>', '<aside>').replace('</footer>', '</aside>') }],
+    ['page_shape', { html: body => body.replace('rel="canonical"', 'rel="alternate"') }],
+    ['snapshot_changed', { html: body => body.replace(`Data snapshot ${snapshot.slice(0, 12)}`, 'Data snapshot stale') }],
+    ['page_shape', { html: body => body + '<table><tbody>PRIVATE_EXTRA_ROW</tbody></table>' }],
+    ['page_shape', { html: () => 'PRIVATE_BODY'.repeat(20000) }],
   ];
-  for (const options of failures) {
+  const reached = new Set(['credentials']);
+  for (const [oracle_reason, options] of failures) {
     const fixture = oracleFixture(options);
-    assert.deepEqual(await oracleSmoke(env, fixture.request), [1, 2, 3, 4, 9].map(case_id =>
-      ({ case_id, oracle_state: 'unresolved' })));
+    const records = await oracleSmoke(env, fixture.request);
+    const hasContext = records[0].oracle_context !== undefined;
+    if (hasContext) assert.deepEqual(records[0], { oracle_context: { has_more: false, people: 1 } });
+    assert.deepEqual(records.slice(hasContext ? 1 : 0), [1, 2, 3, 4, 9].map(case_id =>
+      ({ case_id, oracle_state: 'unresolved', oracle_reason })));
+    reached.add(oracle_reason);
   }
   assert.deepEqual(await oracleSmoke({}, () => { throw new Error('must not request'); }),
-    [1, 2, 3, 4, 9].map(case_id => ({ case_id, oracle_state: 'unresolved' })));
+    [1, 2, 3, 4, 9].map(case_id => ({ case_id, oracle_state: 'unresolved', oracle_reason: 'credentials' })));
+  assert.deepEqual([...reached].sort(), ['credentials', 'context', 'person_mismatch',
+    'catalog', 'page_status', 'page_shape', 'value', 'attribution',
+    'snapshot_changed', 'error'].sort());
+});
+
+test('pilot oracle pins identity regardless of context labels, omissions or truncation', async () => {
+  for (const label of ['Bruno Fernandes', 'B.Fernandes', 'Fernandes', 'O&#39;Shea-Núñez Jr.', 'A'.repeat(64)]) {
+    for (const context of [
+      value => { value.payload.people = []; },
+      value => { value.payload.people[0].label = 'Different label'; },
+      value => { value.payload.has_more = true; },
+      value => { value.payload.people.push({ id: 'fpl:code:149', label: 'B.Fernandes' }); },
+      value => { value.payload.people.push({ id: 'fpl:code:141746', label: 'Other' }); },
+    ]) {
+      const fixture = oracleFixture({ context, html: body => body.replaceAll('Bruno Fernandes', label) });
+      const [contextRecord, ...rows] = await oracleSmoke(env, fixture.request);
+      const expected = oracleContext();
+      context(expected);
+      assert.deepEqual(contextRecord, { oracle_context: {
+        has_more: expected.payload.has_more, people: expected.payload.people.length,
+      } });
+      assert.equal(rows.length, 5);
+      assert.ok(rows.every(row => row.person_id === 'fpl:code:141746' && row.player === label.replace('&#39;', "'")));
+      assert.equal(fixture.calls.length, 7);
+      assert.ok(fixture.calls.filter(call => new URL(call.url).pathname === '/en/q')
+        .every(call => new URL(call.url).searchParams.get('entity_id') === 'fpl:code:141746'));
+      assert.deepEqual(fixture.calls.map(call => new URL(call.url).pathname),
+        [contextPath, '/en/q', '/en/q', '/en/q', '/en/q', '/en/q', contextPath]);
+      assert.ok(!JSON.stringify(rows).includes('PRIVATE'));
+    }
+  }
+});
+
+test('pilot oracle refuses workflow commands even in matching local catalog attribution', async t => {
+  const catalog = structuredClone(oracleCatalog);
+  for (const cell of catalog.coverage) cell.attribution_text = 'Source ::error::injected';
+  const catalogText = JSON.stringify(catalog);
+  const originalRead = fs.readFileSync;
+  t.mock.method(fs, 'readFileSync', (path, ...args) =>
+    path instanceof URL && path.href.endsWith('/worker/src/generated/catalog.json')
+      ? catalogText : originalRead(path, ...args));
+  syncBuiltinESMExports();
+  try {
+    const fixture = oracleFixture({ context: value => {
+      value.payload.catalog_json = catalogText;
+      value.payload.catalog_digest = catalogDigest(catalogText);
+    } });
+    const [contextRecord, ...rows] = await oracleSmoke(env, fixture.request);
+    assert.deepEqual(contextRecord, { oracle_context: { has_more: false, people: 1 } });
+    assert.deepEqual(rows, [1, 2, 3, 4, 9].map(case_id =>
+      ({ case_id, oracle_state: 'unresolved', oracle_reason: 'attribution' })));
+    assert.equal(fixture.calls.length, 1);
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  }
 });
 
 const observed = (id, coverage = '2025-26') => ({
