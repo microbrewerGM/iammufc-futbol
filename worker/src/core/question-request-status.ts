@@ -39,7 +39,7 @@ function safeSnapshot(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= 128 && !/[^A-Za-z0-9:_-]/.test(value);
 }
 function hash(value: unknown): value is string {
-  return typeof value === "string" && value.length === 64 && /^[a-f0-9]+$/.test(value);
+  return typeof value === "string" && value.length === 64 && !/[^a-f0-9]/.test(value);
 }
 function timestamp(value: unknown): value is string {
   return typeof value === "string" && value.length === 20 && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(value)

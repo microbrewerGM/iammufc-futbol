@@ -130,7 +130,7 @@ describe("account-owned request status projection",()=>{
     }
     expect((await readQuestionResultStatus(x.env,"owner",id,"en"))?.executedSnapshotId).toBeUndefined();
   });
-  it.each(["version","boolean-version","generation","request","locale","path","renderer","catalog","intent","extra","duplicate","coverage"])("rejects malformed historical %s specs",async fault=>{
+  it.each(["version","boolean-version","generation","request","locale","path","renderer","catalog","catalog-newline","intent","extra","duplicate","coverage"])("rejects malformed historical %s specs",async fault=>{
     const x=await fixture(),evidence=release(x),spec:Record<string,unknown>={...x.mapped.spec};
     if(fault==="version")spec.version=2;
     if(fault==="boolean-version")spec.version=true;
@@ -144,6 +144,7 @@ describe("account-owned request status projection",()=>{
       evidence.artifact_key=spec.artifact_key as string;x.row.verified_json=JSON.stringify(evidence);
     }
     if(fault==="catalog")spec.catalog_digest="not-a-hash";
+    if(fault==="catalog-newline")spec.catalog_digest="a".repeat(63)+"\n";
     if(fault==="intent")spec.canonical_intent="not-json";
     if(fault==="extra")spec.extra="untrusted";
     if(fault==="coverage")spec.expected_cell_state="available\n";
