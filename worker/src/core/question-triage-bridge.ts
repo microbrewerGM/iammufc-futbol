@@ -178,17 +178,16 @@ export async function claimQuestion(deps: TriageDeps, caller: TriageCaller, raw:
     || typeof p.request_id !== "string" || p.request_id.length!==64 || !HASH.test(p.request_id)
     || !isInt(p.expected_attempt,0,2) || typeof p.operation_id !== "string" || !/^qt:[a-z0-9:_-]{1,92}$/.test(p.operation_id) || p.operation_id.trim()!==p.operation_id
     || v2 && (!isInt(p.expected_revision,1,Number.MAX_SAFE_INTEGER-2) || !isInt(p.expected_generation,0,3) || !contextShape(p))) return bad("malformed");
-  if(v2 && !await contextMatches(deps,p))return reply(deps,"claim_result",{outcome:"conflict"});
   const now=nowMs(deps), bodyHash=await hash(canonical(v2 ? {protocol:2,kind:"claim",payload:p} : p));
   const prior=await deps.store.operation(caller.service,"claim",p.operation_id,p.request_id), cur=await deps.store.get(p.request_id);
   if (prior) {
     if (prior.body_hash!==bodyHash || !cur || !eligible(deps,cur,now) || cur.status!=="triaging"
       || cur.lease_id!==prior.lease_id || cur.lease_owner!==caller.service || !cur.lease_expires_at || Date.parse(cur.lease_expires_at)<=now
       || (v2 ? !receiptMatches(prior.receipt,cur,p,now) || prior.receipt!.lease_id!==cur.lease_id : !!prior.receipt)) return reply(deps,"claim_result",{outcome:"conflict"});
-    if(v2 && !await contextMatches(deps,p))return reply(deps,"claim_result",{outcome:"conflict"});
     if(v2 && (!eligible(deps,cur,nowMs(deps)) || Date.parse(cur.lease_expires_at!)<=nowMs(deps)))return reply(deps,"claim_result",{outcome:"conflict"});
     return reply(deps,"claim_result",v2 ? claimResponse(deps,cur) : prior.response);
   }
+  if(v2 && !await contextMatches(deps,p))return reply(deps,"claim_result",{outcome:"conflict"});
   if (!cur) return reply(deps,"claim_result",{outcome:"not_found"});
   if (!eligible(deps,cur,now) || cur.status!=="received" || cur.attempt!==p.expected_attempt || cur.attempt>=3
     || cur.retry_after && Date.parse(cur.retry_after)>now || v2 && (cur.revision!==p.expected_revision || generation(cur)!==p.expected_generation)) return reply(deps,"claim_result",{outcome:"conflict"});
@@ -209,7 +208,6 @@ export async function ackQuestion(deps: TriageDeps, caller: TriageCaller, raw: u
     || typeof p.lease_id!=="string" || !ID.test(p.lease_id) || p.lease_id.trim()!==p.lease_id
     || typeof p.operation_id!=="string" || !/^qt:[a-z0-9:_-]{1,92}$/.test(p.operation_id) || p.operation_id.trim()!==p.operation_id || !object(p.outcome)
     || v2 && (!isInt(p.expected_revision,1,Number.MAX_SAFE_INTEGER-2) || !isInt(p.expected_generation,0,3) || !contextShape(p))) return bad("malformed");
-  if(v2 && !await contextMatches(deps,p))return reply(deps,"ack_result",{outcome:"conflict"});
   const now=nowMs(deps), bodyHash=await hash(canonical(v2 ? {protocol:2,kind:"ack",payload:p} : deps.answerNow ? {answer_now:1,payload:p} : p));
   if (!v2 && deps.answerNow && deps.store.answerNowReplay) {
     const initial = await deps.store.answerNowReplay(caller.service,p.operation_id,p.request_id,bodyHash,p.lease_id,p.attempt);
@@ -221,10 +219,10 @@ export async function ackQuestion(deps: TriageDeps, caller: TriageCaller, raw: u
   const prior=await deps.store.operation(caller.service,"ack",p.operation_id,p.request_id), cur=await deps.store.get(p.request_id);
   if (prior) {
     if (prior.body_hash!==bodyHash || !cur || (v2 ? !receiptMatches(prior.receipt,cur,p,now) || prior.receipt!.lease_id!==p.lease_id : !!prior.receipt || !!cur.managed)) return reply(deps,"ack_result",{outcome:"conflict"});
-    if(v2 && !await contextMatches(deps,p))return reply(deps,"ack_result",{outcome:"conflict"});
     if(v2 && !retained(cur,nowMs(deps)))return reply(deps,"ack_result",{outcome:"conflict"});
     return reply(deps,"ack_result",{outcome:"replayed",response:prior.response});
   }
+  if(v2 && !await contextMatches(deps,p))return reply(deps,"ack_result",{outcome:"conflict"});
   if (!cur || !eligible(deps,cur,now) || cur.status!=="triaging" || cur.attempt!==p.attempt || cur.lease_id!==p.lease_id || cur.lease_owner!==caller.service
     || !cur.lease_expires_at || Date.parse(cur.lease_expires_at)<=now
     || v2 && (cur.revision!==p.expected_revision || generation(cur)!==p.expected_generation)) return reply(deps,"ack_result",{outcome:"conflict"});

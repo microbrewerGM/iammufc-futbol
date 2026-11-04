@@ -75,10 +75,10 @@ describe("generation-fenced triage v2",()=>{
       expect(x.q().status).toBe("triaging");expect(x.r()).toBeUndefined();expect(x.db.prepare("SELECT count(*) n FROM exploration_bridge_operations WHERE operation_type='ack'").get().n).toBe(0);
     }
   });
-  it("refuses claim and ack replay after deployed metadata changes",async()=>{
+  it("replays a settled ack after deployed metadata changes without reviving its claim",async()=>{
     const x=fixture(),c=await x.claim();const ack=x.ackBody(c.question);await ackQuestion(x.deps,caller,ack);
     x.deps.currentContext=async()=>({...metadata,catalog_digest:"f".repeat(64)});
-    expect(body(await claimQuestion(x.deps,caller,c.request)).payload.outcome).toBe("conflict");expect(body(await ackQuestion(x.deps,caller,ack)).payload.outcome).toBe("conflict");
+    expect(body(await claimQuestion(x.deps,caller,c.request)).payload.outcome).toBe("conflict");expect(body(await ackQuestion(x.deps,caller,ack)).payload.outcome).toBe("replayed");
     const receipt=JSON.parse(x.db.prepare("SELECT response_json FROM exploration_bridge_operations WHERE operation_type='ack'").get().response_json).payload.receipt;
     expect(receipt).toMatchObject(metadata);expect(JSON.stringify(receipt)).not.toContain("Original question");
   });
@@ -87,21 +87,47 @@ describe("generation-fenced triage v2",()=>{
     const request=JSON.parse(x.ackBody(c.question,{status:"failed",reason:"source_unavailable"}));request.payload.data_snapshot_id="new-snapshot";
     expect(body(await ackQuestion(x.deps,caller,JSON.stringify(request))).payload.outcome).toBe("conflict");expect(x.q().status).toBe("triaging");
   });
-  it("rechecks metadata after awaited claim or ack receipt reads",async()=>{
+  it("replays stored claim and ack receipts after publication during receipt reads",async()=>{
     for(const kind of ["claim","ack"] as const){
       const x=fixture(),c=await x.claim(),ack=x.ackBody(c.question);if(kind==="ack")await ackQuestion(x.deps,caller,ack);
       const get=x.store.get.bind(x.store);x.store.get=async requestId=>{const row=await get(requestId);x.db.prepare("INSERT INTO snapshots(snapshot_id,created_at,sources_json,row_counts) VALUES(?,?,'{}','{}')").run("new-snapshot",stamp(Date.parse(x.now())+1000));return row;};
       const result=kind==="claim"?await claimQuestion(x.deps,caller,c.request):await ackQuestion(x.deps,caller,ack);
-      expect(body(result).payload.outcome).toBe("conflict");
+      expect(body(result).payload.outcome).toBe(kind==="claim"?"claimed":"replayed");
     }
   });
-  it("uses fresh lease and retention clocks after replay metadata awaits",async()=>{
-    const x=fixture(),c=await x.claim();let calls=0;const context=x.deps.currentContext!;
-    x.deps.currentContext=async()=>{const value=await context();if(++calls===2)x.advance(901);return value;};
+  it("uses fresh lease and retention clocks after replay receipt awaits",async()=>{
+    const x=fixture(),c=await x.claim(),get=x.store.get.bind(x.store);
+    x.store.get=async requestId=>{const value=await get(requestId);x.advance(901);return value;};
     expect(body(await claimQuestion(x.deps,caller,c.request)).payload.outcome).toBe("conflict");
-    const y=fixture(),claimed=await y.claim(),ack=y.ackBody(claimed.question);await ackQuestion(y.deps,caller,ack);let reads=0;const current=y.deps.currentContext!;
-    y.deps.currentContext=async()=>{const value=await current();if(++reads===2)y.advance(91*86400);return value;};
+    const y=fixture(),claimed=await y.claim(),ack=y.ackBody(claimed.question);await ackQuestion(y.deps,caller,ack);const read=y.store.get.bind(y.store);
+    y.store.get=async requestId=>{const value=await read(requestId);y.advance(91*86400);return value;};
     expect(body(await ackQuestion(y.deps,caller,ack)).payload.outcome).toBe("conflict");
+  });
+  it.each(["claim","ack"] as const)("replays committed %s after snapshot publication without mutations or mapping",async kind=>{
+    const x=fixture(),c=await x.claim(),ack=x.ackBody(c.question);
+    if(kind==="ack")expect(body(await ackQuestion(x.deps,caller,ack)).payload.outcome).toBe("accepted");
+    x.db.prepare("INSERT INTO snapshots(snapshot_id,created_at,sources_json,row_counts) VALUES(?,?,'{}','{}')").run("new-snapshot",stamp(Date.parse(x.now())+1000));
+    const state=()=>x.db.prepare("SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name").all().map((row:{name:string})=>({table:row.name,rows:x.db.prepare(`SELECT * FROM "${row.name}"`).all()}));
+    const before=state();let mappings=0;
+    x.deps.answerNow=async()=>{mappings++;throw new Error("replay_must_not_map");};
+    x.deps.currentContext=async()=>{throw new Error("replay_must_not_read_current_context");};
+    const request=kind==="claim"?c.request:ack;
+    const invoke=(raw:string)=>kind==="claim"?claimQuestion(x.deps,caller,raw):ackQuestion(x.deps,caller,raw);
+    expect(body(await invoke(request)).payload.outcome).toBe(kind==="claim"?"claimed":"replayed");
+    expect(state()).toEqual(before);expect(mappings).toBe(0);
+    const changed=JSON.parse(request);changed.payload.data_snapshot_id="new-snapshot";
+    expect(body(await invoke(JSON.stringify(changed))).payload.outcome).toBe("conflict");
+    expect(state()).toEqual(before);expect(mappings).toBe(0);
+  });
+  it.each(["claim","ack"] as const)("refuses unapplied stale %s after snapshot publication",async kind=>{
+    const x=fixture();let request:string;
+    if(kind==="ack"){const c=await x.claim();request=x.ackBody(c.question);}
+    else request=wire("claim",{request_id:id,expected_revision:1,expected_generation:0,expected_attempt:0,operation_id:"qt:stale-new"});
+    x.db.prepare("INSERT INTO snapshots(snapshot_id,created_at,sources_json,row_counts) VALUES(?,?,'{}','{}')").run("new-snapshot",stamp(Date.parse(x.now())+1000));
+    const parent=x.q(),result=x.r(),operations=x.db.prepare("SELECT * FROM exploration_bridge_operations").all();let mappings=0;
+    x.deps.answerNow=async()=>{mappings++;throw new Error("stale_must_not_map");};
+    expect(body(await (kind==="claim"?claimQuestion(x.deps,caller,request):ackQuestion(x.deps,caller,request))).payload.outcome).toBe("conflict");
+    expect(x.q()).toEqual(parent);expect(x.r()).toEqual(result);expect(x.db.prepare("SELECT * FROM exploration_bridge_operations").all()).toEqual(operations);expect(mappings).toBe(0);
   });
   it("reads and claims initial generation with bounded text-free receipts",async()=>{
     const x=fixture(),read=body(await readQuestions(x.deps,caller,wire("read",{cursor:null,limit:10})));
