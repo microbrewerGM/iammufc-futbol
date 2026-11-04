@@ -1,4 +1,5 @@
 import { pathToFileURL } from 'node:url';
+import { createHash } from 'node:crypto';
 
 // Fixed dev target: never forward service credentials to redirects or prod.
 const origin = 'https://iammufc-dev.aaron-cf2.workers.dev';
@@ -55,12 +56,19 @@ const triageContextLimit = 128 * 1024;
 export function validateTriageContextPayload(value) {
   if (!exactKeys(value, ['version', 'kind', 'payload']) || value.version !== 1 ||
       value.kind !== 'answer_now_context' ||
-      !exactKeys(value.payload, ['triage_protocol', 'catalog_digest', 'people', 'has_more'])) return null;
+      !exactKeys(value.payload, ['triage_protocol', 'glossary_protocol', 'catalog_json',
+        'snapshot_id', 'catalog_digest', 'people', 'has_more'])) return null;
   const context = value.payload;
-  if (context.triage_protocol !== 2 || typeof context.catalog_digest !== 'string' ||
+  if (context.triage_protocol !== 2 || context.glossary_protocol !== 1 ||
+      typeof context.catalog_json !== 'string' || Buffer.byteLength(context.catalog_json, 'utf8') > 65536 ||
+      typeof context.snapshot_id !== 'string' || context.snapshot_id.length < 1 ||
+      context.snapshot_id.length > 128 || /[^a-zA-Z0-9:_-]/.test(context.snapshot_id) ||
+      typeof context.catalog_digest !== 'string' ||
       context.catalog_digest.length !== 64 || /[^a-f0-9]/.test(context.catalog_digest) ||
       !Array.isArray(context.people) || context.people.length > 200 ||
       typeof context.has_more !== 'boolean') return null;
+  try { JSON.parse(context.catalog_json); } catch { return null; }
+  if (createHash('sha256').update(context.catalog_json, 'utf8').digest('hex') !== context.catalog_digest) return null;
   for (const person of context.people) {
     if (!exactKeys(person, ['id', 'label']) || typeof person.id !== 'string' ||
         person.id.length < 1 || person.id.length > 64 || !/^[a-z0-9]/.test(person.id) ||
