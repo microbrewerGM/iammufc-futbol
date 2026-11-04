@@ -14,6 +14,7 @@ interface Source {
   r_revision:number|null;r_parent:number|null;r_state:string|null;r_expires:string|null;r_deadline:string|null;r_null_spec:number;snapshot_id:string|null;db_now:string;
 }
 interface Projection {source:Source;status:string;path:string|null}
+interface LocalRow {request_id:string;payload_revision:number;status:string;result_path:string|null;revision:number;lease_id:string|null;lease_owner:string|null;lease_expires_at:string|null;receipt:string|null;receipt_lease_id:string|null;receipt_lease_owner:string|null;delivered:number}
 const NOW="strftime('%Y-%m-%dT%H:%M:%SZ','now')";
 const SNAPSHOT="(SELECT snapshot_id FROM snapshots ORDER BY created_at DESC LIMIT 1)";
 const JOIN="question_requests q LEFT JOIN question_request_results r ON r.request_id=q.request_id";
@@ -26,6 +27,64 @@ const same=(a:Source,b:Source)=>SOURCE_KEYS.every(key=>a[key]===b[key]);
  * existing release verifier; neither question text nor person labels leave it. */
 export class D1NotificationStore {
   constructor(readonly env:Env){}
+  private localGet(id:string,payloadRevision:number):Promise<LocalRow|null>{
+    return this.env.DB.prepare("SELECT * FROM question_request_local_notifications WHERE request_id=? AND payload_revision=?").bind(id,payloadRevision).first<LocalRow>();
+  }
+  async localRead(limit:number):Promise<{request_id:string;revision:number}[]>{
+    const items=await this.read(limit),pending=[];
+    for(const item of items){
+      const sent=await this.env.DB.prepare(`SELECT l.delivered,l.lease_expires_at,${NOW} AS db_now FROM question_request_local_notifications l
+        JOIN question_request_notifications n ON n.request_id=l.request_id AND n.desired_revision=l.payload_revision WHERE n.request_id=?`).bind(item.request_id).first<{delivered:number;lease_expires_at:string|null;db_now:string}>();
+      if(!sent || !sent.delivered && (!sent.lease_expires_at || sent.lease_expires_at<=sent.db_now))pending.push(item);
+    }
+    return pending;
+  }
+  async localPrepare(id:string,expected:number,service:string,lease:string):Promise<unknown>{
+    const n=await this.get(id),p=await this.project(id);
+    if(!n || !p || n.revision!==expected || n.desired_status!==p.status || n.desired_result_path!==p.path)return {action:"conflict"};
+    const f=this.fence(p);
+    f.sql+=" AND EXISTS(SELECT 1 FROM question_request_notifications WHERE request_id=? AND revision=? AND desired_revision=?)";
+    f.values.push(id,expected,n.desired_revision);
+    await this.env.DB.prepare(`INSERT INTO question_request_local_notifications(request_id,payload_revision,status,result_path)
+      SELECT ?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM question_request_local_notifications WHERE request_id=? AND payload_revision=?) AND ${f.sql}`)
+      .bind(id,n.desired_revision,p.status,p.path,id,n.desired_revision,...f.values).all();
+    const old=await this.localGet(id,n.desired_revision);
+    if(!old || old.status!==p.status || old.result_path!==p.path)return {action:"conflict"};
+    if(old.delivered)return {action:"delivered"};
+    const row=await this.env.DB.prepare(`UPDATE question_request_local_notifications SET lease_id=?,lease_owner=?,
+      lease_expires_at=min(?,strftime('%Y-%m-%dT%H:%M:%SZ','now','+900 seconds')),revision=revision+1
+      WHERE request_id=? AND payload_revision=? AND revision=? AND delivered=0 AND (lease_id IS NULL OR lease_expires_at<=${NOW}) AND ${f.sql} RETURNING *`)
+      .bind(lease,service,p.source.q_expires,id,n.desired_revision,old.revision,...f.values).first<LocalRow>();
+    if(!row)return {action:"conflict"};
+    return {action:row.receipt?"reconcile":"append",request_id:id,revision:row.revision,payload_revision:row.payload_revision,
+      lease_id:row.lease_id,lease_expires_at:row.lease_expires_at,
+      payload:{request_id:id,status:row.status,revision:row.payload_revision,result_path:row.result_path}};
+  }
+  /** The receipt is SHA-256 of UTF-8 JSON.stringify of this exact ordered array:
+   * ["question-request-local-v2", request_id, status, payload_revision, result_path].
+   * A trusted appender submits it only after append/dedup and fsync. The bridge
+   * authenticates that assertion and binds it to the live service/lease/CAS. */
+  async localMutate(kind:"check"|"bind"|"ack",id:string,payloadRevision:number,expected:number,lease:string,service:string,receipt:string|undefined,outcome?:"delivered"|"retry"):Promise<boolean>{
+    const row=await this.localGet(id,payloadRevision);
+    const replay=kind==="bind" && row?.revision===expected+1 && row.receipt===receipt && row.receipt_lease_id===lease && row.receipt_lease_owner===service;
+    if(!row || row.revision!==expected && !replay || row.lease_id!==lease || row.lease_owner!==service || row.delivered)return false;
+    const p=await this.project(id);if(!p || row.status!==p.status || row.result_path!==p.path)return false;
+    const f=this.fence(p);
+    if(kind==="bind"){
+      const bytes=new TextEncoder().encode(JSON.stringify(["question-request-local-v2",id,row.status,payloadRevision,row.result_path]));
+      const digest=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",bytes)),b=>b.toString(16).padStart(2,"0")).join("");
+      if(receipt!==digest || row.receipt!==null && row.receipt!==receipt)return false;
+    }
+    if(kind==="ack" && outcome==="delivered" && (!receipt || row.receipt!==receipt || row.receipt_lease_id!==lease || row.receipt_lease_owner!==service))return false;
+    const where=`request_id=? AND payload_revision=? AND revision=? AND lease_id=? AND lease_owner=? AND lease_expires_at>${NOW}
+      AND EXISTS(SELECT 1 FROM question_request_notifications n WHERE n.request_id=? AND n.desired_revision=? AND n.desired_status=? AND n.desired_result_path IS ?) AND ${f.sql}`;
+    const values=[id,payloadRevision,row.revision,lease,service,id,payloadRevision,row.status,row.result_path,...f.values];
+    if(kind==="check" || replay)return !!await this.env.DB.prepare(`SELECT request_id FROM question_request_local_notifications WHERE ${where}`).bind(...values).first();
+    // A lost bind response can be replayed at the immediately preceding CAS.
+    if(kind==="bind")return !!await this.env.DB.prepare(`UPDATE question_request_local_notifications SET receipt=?,receipt_lease_id=?,receipt_lease_owner=?,revision=revision+1 WHERE ${where} RETURNING request_id`).bind(receipt,lease,service,...values).first();
+    return !!await this.env.DB.prepare(`UPDATE question_request_local_notifications SET delivered=?,lease_id=NULL,lease_owner=NULL,lease_expires_at=NULL,revision=revision+1 WHERE ${where} RETURNING request_id`)
+      .bind(outcome==="delivered"?1:0,...values).first();
+  }
   private source(id:string):Promise<Source|null>{
     return this.env.DB.prepare(`SELECT q.request_id,q.account_sub,q.locale,q.revision AS q_revision,q.status AS q_status,q.expires_at AS q_expires,q.lease_id AS q_lease,
       r.revision AS r_revision,r.request_revision AS r_parent,r.state AS r_state,r.expires_at AS r_expires,r.response_deadline AS r_deadline,(r.spec_json IS NULL) AS r_null_spec,
