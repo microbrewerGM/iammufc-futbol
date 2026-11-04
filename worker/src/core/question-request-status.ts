@@ -158,9 +158,21 @@ async function readBoundQuestionResultStatus(env: Env, account: string, requestI
 
 /** Refresh history is acceptance metadata, never execution evidence. Fence the
  * bound status after all history/spec awaits so they cannot revive a stale link. */
-export async function readQuestionResultStatus(env: Env, account: string, requestId: string, locale: "en" | "es"): Promise<RequestStatusView | undefined> {
+export async function readQuestionResultStatus(env: Env, account: string, requestId: string, locale: "en" | "es", options: { requesterMetadata?: boolean } = {}): Promise<RequestStatusView | undefined> {
   const initial = await readBoundQuestionResultStatus(env, account, requestId, locale);
   if (!initial) return undefined;
+  // Notification and execution consumers do not render refresh or history.
+  // Confirmation still requires complete readiness and a binding recheck after
+  // that await; its atomic write supplies the final revision/snapshot fence.
+  if (!options.requesterMetadata) {
+    if (initial.state==="released") return initial;
+    const ready=await refreshSchemaReady(env.DB);
+    if (initial.state!=="confirmation_required") return {...initial,confirmationAvailable:false,
+      ...(!ready ? {refreshStatus:"unavailable" as const} : {})};
+    const fresh=await readBoundQuestionResultStatus(env, account, requestId, locale);
+    return fresh && {...fresh,confirmationAvailable:ready && fresh.currentBinding===true && fresh.state==="confirmation_required",
+      ...(!ready ? {refreshStatus:"unavailable" as const} : {})};
+  }
   if (!await refreshSchemaReady(env.DB)) {
     const fresh=await env.DB.prepare(`SELECT r.request_id,r.revision,r.state,r.request_revision,q.revision AS parent_revision,
       r.spec_json,r.expires_at,q.expires_at AS parent_expires_at,r.response_deadline,

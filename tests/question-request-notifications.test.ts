@@ -135,9 +135,14 @@ describe("authoritative durable notification service",()=>{
     const grant=await x.prepare();expect(grant.payload.payload).toMatchObject({status:"triaging",result_path:null});expect(JSON.stringify(grant)).not.toContain("PRIVATE CLARIFICATION");
     await x.ack(grant,"retry");x.advance(86401);await x.prepare();expect(x.row()).toMatchObject({desired_status:"expired",desired_result_path:null,creation_status:"triaging"});
   });
-  it("keeps three complete release verifications below the D1 Free query cap",async()=>{
-    const x=fixture(3);await x.release();await x.release("1".padStart(64,"0"));await x.release("2".padStart(64,"0"));x.resetQueries();
-    expect((await x.read()).payload.items).toHaveLength(3);expect(x.queries()).toBeLessThan(45);
+  it("keeps three complete release verifications below the D1 Free query cap through 0017 over HTTP",async()=>{
+    const x=fixture(3);
+    for(const name of ["0007_exploration_requests","0016_question_request_refresh","0017_exploration_null_checks"])x.db.exec(readFileSync(`infra/migrations/${name}.sql`,"utf8"));
+    await x.release();await x.release("1".padStart(64,"0"));await x.release("2".padStart(64,"0"));x.resetQueries();
+    const app=new Hono<QuestionTriageEnv>();app.route("/",createQuestionTriageBridgeRouter(()=>caller));
+    const response=await app.request("https://site.invalid/answer-now/notifications/read",{method:"POST",body:x.wire("read",{limit:10})},x.env as never);
+    expect(response.status).toBe(200);expect((await response.json() as {payload:{items:unknown[]}}).payload.items).toHaveLength(3);
+    expect(x.queries()).toBe(36);expect(x.queries()).toBeLessThan(45);
   });
   it("rotates fixed-clock candidates and stays below the D1 Free query budget",async()=>{
     const x=fixture(10);x.resetQueries();const first=await x.read();expect(first.payload.items).toHaveLength(3);expect(x.queries()).toBeLessThan(45);

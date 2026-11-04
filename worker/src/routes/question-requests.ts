@@ -19,7 +19,7 @@ export function createQuestionRequestsRouter() {
     const id = c.req.query("id") ?? "";
     const status = /^[0-9a-f]{64}$/.test(id) ? await readQuestionStatus(c.env, identity.sub, id) : null;
     try {
-      const result = id.length===64 && /^[0-9a-f]{64}$/.test(id) ? await readQuestionResultStatus(c.env,identity.sub,id,locale) : undefined;
+      const result = id.length===64 && /^[0-9a-f]{64}$/.test(id) ? await readQuestionResultStatus(c.env,identity.sub,id,locale,{requesterMetadata:true}) : undefined;
       return c.html(questionRequestPage(locale,status ?? undefined,undefined,result));
     } catch {
       // Migration or storage failure must not advertise a legacy "Available"

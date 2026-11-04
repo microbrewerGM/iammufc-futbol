@@ -8,6 +8,7 @@ import { accessGate, type AccessIdentity } from "../worker/src/security/auth";
 import { createQuestionRequestsRouter, type RouteEnv } from "../worker/src/routes/question-requests";
 import { mapQuestionVerdict } from "../worker/src/core/question-request-intent";
 import { readQuestionResultStatus } from "../worker/src/core/question-request-status";
+import { requestExecutionDeps } from "../worker/src/core/question-request-execution";
 import { Catalog } from "../worker/src/core/feasibility";
 import { decodeCompiledCatalog } from "../worker/src/core/catalog-contract";
 import compiled from "../worker/src/generated/catalog.json";
@@ -42,10 +43,10 @@ async function fixture(locale:"en"|"es"="en") {
   const mapped=await mapQuestionVerdict(verdict,{requestId:id,revision:4,locale,snapshotId:"snapshot-1",resolvePerson:async p=>p});
   if(mapped.kind!=="ready")throw new Error("fixture_not_ready");
   db.prepare("INSERT INTO question_request_results(request_id,request_revision,state,spec_json,created_at,updated_at,response_deadline,expires_at) VALUES(?,4,'confirmation_required',?,?,?,?,?)").run(id,JSON.stringify(mapped.spec),now(),now(),stamp(time+86400_000),expires);
-  let beforeRead:((sql:string)=>void)|undefined,queries=0;
+  let beforeRead:((sql:string)=>void)|undefined,beforeAll:((sql:string)=>Promise<void>)|undefined,queries=0;
   const DB={prepare(sql:string){queries++;let values:unknown[]=[];const query={bind(...args:unknown[]){values=args;return query;},
     async first<T>(){beforeRead?.(sql);return (db.prepare(sql).get(...values)??null) as T|null;},
-    async all<T>(){beforeRead?.(sql);return {results:db.prepare(sql).all(...values) as T[]};},
+    async all<T>(){await beforeAll?.(sql);beforeRead?.(sql);return {results:db.prepare(sql).all(...values) as T[]};},
     async run(){return db.prepare(sql).run(...values);}};return query;}};
   const env={...access,DB};
   function app(identity:AccessIdentity|null={sub:"owner",email:"owner@example.invalid"}) {
@@ -61,7 +62,7 @@ async function fixture(locale:"en"|"es"="en") {
     db.prepare("UPDATE question_request_results SET state='in_review',revision=revision+1,attempt=1,lease_id='old',lease_owner='service',lease_expires_at=?").run(stamp(time+900_000));
     db.prepare("UPDATE question_request_results SET state='released',revision=revision+1,lease_expires_at=NULL,verified_json=?").run(JSON.stringify({artifact_key:mapped.spec.artifact_key,snapshot_id:"snapshot-1",entity_id:"fpl:code:1",value:0,attribution:new Catalog(decodeCompiledCatalog(compiled)).checkFeasibility(mapped.intent,locale).attribution_text,verified_at:now()}));
   };
-  return {db,env,row,post,page,publish,count,mapped,app,release,queries:()=>queries,advance:(seconds:number)=>{time+=seconds*1000;vi.setSystemTime(time);},beforeRead:(hook:(sql:string)=>void)=>{beforeRead=hook;}};
+  return {db,env,row,post,page,publish,count,mapped,app,release,queries:()=>queries,advance:(seconds:number)=>{time+=seconds*1000;vi.setSystemTime(time);},beforeRead:(hook:(sql:string)=>void)=>{beforeRead=hook;},beforeAll:(hook:(sql:string)=>Promise<void>)=>{beforeAll=hook;}};
 }
 
 describe("request refresh HTTP boundary against migrations through 0017",()=>{
@@ -105,6 +106,50 @@ describe("request refresh HTTP boundary against migrations through 0017",()=>{
     const html=await (await x.page()).text();expect(html).not.toContain(`/requests/${id}/refresh`);expect(html).not.toContain(`/requests/${id}/confirm`);
     expect((await x.post()).status).toBe(503);expect((await x.post(undefined,undefined,{},"confirm")).status).toBe(503);expect(x.count()).toBe(0);
   });
+  it("fails closed when readiness throws, without refresh or confirmation actions",async()=>{
+    const x=await fixture();x.publish("snapshot-2");const before=x.row();
+    x.beforeRead(sql=>{if(sql.includes("SELECT type,name FROM sqlite_master"))throw new Error("readiness unavailable");});
+    const html=await (await x.page()).text();expect(html).not.toContain(`/requests/${id}/refresh`);expect(html).not.toContain(`/requests/${id}/confirm`);
+    expect((await x.post()).status).toBe(503);expect((await x.post(undefined,undefined,{},"confirm")).status).toBe(503);
+    expect(x.row()).toEqual(before);expect(x.count()).toBe(0);expect(x.db.prepare("SELECT count(*) n FROM question_request_confirmations").get().n).toBe(0);
+  });
+  it("rechecks binding after confirmation readiness before returning the response",async()=>{
+    const x=await fixture();let changed=false;
+    x.beforeRead(sql=>{if(!changed && sql.includes("SELECT type,name FROM sqlite_master")){changed=true;x.publish("snapshot-2");}});
+    expect((await x.post(undefined,undefined,{},"confirm")).status).toBe(409);
+    expect(changed).toBe(true);expect(x.row().state).toBe("confirmation_required");
+    expect(x.db.prepare("SELECT count(*) n FROM question_request_confirmations").get().n).toBe(0);
+  });
+  it("fences a confirmation paused at its atomic write when refresh wins",async()=>{
+    const x=await fixture();let reached!:()=>void,resume!:()=>void;
+    const paused=new Promise<void>(resolve=>{reached=resolve;}),gate=new Promise<void>(resolve=>{resume=resolve;});
+    x.beforeAll(async sql=>{if(sql.startsWith("UPDATE question_request_results AS r SET")){reached();await gate;}});
+    const confirmation=x.post("expected_revision=1",undefined,{},"confirm");await paused;
+    x.publish("snapshot-2");expect((await x.post("expected_revision=1")).status).toBe(303);resume();
+    expect((await confirmation).status).toBe(409);expect(x.count()).toBe(1);expect(x.row().revision).toBe(2);expect(x.row().state).toBe("confirmation_required");
+    expect(JSON.parse(x.row().spec_json).data_snapshot_id).toBe("snapshot-2");
+    expect(x.db.prepare("SELECT count(*) n FROM question_request_confirmations").get().n).toBe(0);
+    expect((await x.post("expected_revision=2",undefined,{},"confirm")).status).toBe(303);
+    expect(x.db.prepare("SELECT count(*) n FROM question_request_confirmations").get().n).toBe(1);
+  });
+  it("measures requester, confirmation and execution callers through 0017",async()=>{
+    const x=await fixture();let start=x.queries();
+    await readQuestionResultStatus(x.env as never,"owner",id,"en",{requesterMetadata:true});expect(x.queries()-start).toBe(12);
+    start=x.queries();expect((await readQuestionResultStatus(x.env as never,"owner",id,"en"))?.confirmationAvailable).toBe(true);expect(x.queries()-start).toBe(11);
+    start=x.queries();expect((await x.page()).status).toBe(200);
+    expect(x.queries()-start).toBe(13);
+    start=x.queries();expect((await x.post(undefined,undefined,{},"confirm")).status).toBe(303);
+    expect(x.queries()-start).toBe(15);
+    const deps=requestExecutionDeps(x.env as never),row=await deps.store.get(id);expect(row).not.toBeNull();
+    start=x.queries();expect((await deps.selection!(row!))?.currentBinding).toBe(true);
+    expect(x.queries()-start).toBe(6);
+    start=x.queries();await readQuestionResultStatus(x.env as never,"owner",id,"en",{requesterMetadata:true});
+    expect(x.queries()-start).toBe(12);
+    const y=await fixture();await y.release();
+    start=y.queries();expect((await y.page()).status).toBe(200);expect(y.queries()-start).toBe(14);
+    start=y.queries();await readQuestionResultStatus(y.env as never,"owner",id,"en");expect(y.queries()-start).toBe(6);
+    start=y.queries();await readQuestionResultStatus(y.env as never,"owner",id,"en",{requesterMetadata:true});expect(y.queries()-start).toBe(13);
+  });
   it("shows pending, expiry, exhaustion and unavailable outcomes explicitly",async()=>{
     const x=await fixture();expect((await x.post(undefined,undefined,{},"confirm")).status).toBe(303);
     expect(await (await x.page()).text()).toContain("Your request is pending.");
@@ -120,7 +165,7 @@ describe("request refresh HTTP boundary against migrations through 0017",()=>{
     x.publish("snapshot-2");expect(await (await x.page()).text()).not.toContain("/q?");
     expect((await x.post()).status).toBe(303);const html=await (await x.page()).text();
     expect(html).toContain("Confirmation history");expect(html).not.toContain("Data provenance");expect(html).not.toContain("/q?");
-    const status=await readQuestionResultStatus(x.env as never,"owner",id,"en");expect(status?.confirmationHistory).toHaveLength(1);expect(status?.executedSnapshotId).toBeUndefined();
+    const status=await readQuestionResultStatus(x.env as never,"owner",id,"en",{requesterMetadata:true});expect(status?.confirmationHistory).toHaveLength(1);expect(status?.executedSnapshotId).toBeUndefined();
     expect(await readQuestionResultStatus(x.env as never,"other",id,"en")).toBeUndefined();
   });
   it("does not activate refresh on a safe method",async()=>{
@@ -136,7 +181,7 @@ describe("request refresh HTTP boundary against migrations through 0017",()=>{
       if(change==="publication")x.publish("snapshot-2");
       if(change==="ownership")x.db.exec("DELETE FROM question_requests");
     });
-    const view=await readQuestionResultStatus(x.env as never,"owner",id,"en");
+    const view=await readQuestionResultStatus(x.env as never,"owner",id,"en",{requesterMetadata:true});
     expect(view?.resultPath).toBeUndefined();expect(view?.confirmationAvailable).not.toBe(true);
     expect(view?.confirmationHistory).toBeUndefined();
   });
@@ -145,7 +190,7 @@ describe("request refresh HTTP boundary against migrations through 0017",()=>{
     let changed=false;x.beforeRead(sql=>{if(changed || !sql.includes("SELECT type,name FROM sqlite_master"))return;changed=true;
       if(change==="publication")x.publish("snapshot-2");else x.advance(90*86400);
     });
-    const view=await readQuestionResultStatus(x.env as never,"owner",id,"en");
+    const view=await readQuestionResultStatus(x.env as never,"owner",id,"en",{requesterMetadata:true});
     expect(view?.resultPath).toBeUndefined();expect(view?.currentBinding).toBe(false);expect(view?.confirmationAvailable).toBe(false);
   });
   it("keeps three complete-schema released status reads below 45 queries",async()=>{
