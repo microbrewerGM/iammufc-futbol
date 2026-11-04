@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 // @ts-expect-error Node's built-in SQLite module is available in the configured test runtime.
 import { DatabaseSync } from "node:sqlite";
+import { QUESTION_REQUEST_PURGE_SQL } from "../worker/src/core/question-request-retention";
 
 type Db = InstanceType<typeof DatabaseSync>;
 type Row = Record<string, string | number | null | Uint8Array>;
@@ -321,6 +322,7 @@ describe("question_requests migration (0010)", () => {
     const block = sqlOf(migration).split("-- PURGE-BEGIN\n")[1]!.split("-- PURGE-END")[0]!;
     const statements = block.split("\n").filter(Boolean).map((line) => line.replace(/^-- /, ""));
     expect(statements).toHaveLength(1);
+    expect(statements[0]).toBe(QUESTION_REQUEST_PURGE_SQL);
     const db = fresh();
     try {
       db.prepare("INSERT INTO exploration_shared_requests (request_id, contract_version, request_json, created_at) VALUES (?, 1, ?, ?)")
@@ -331,7 +333,7 @@ describe("question_requests migration (0010)", () => {
       insert(db, { request_id: hex("1"), text_hash: hex("1") }, days(now, -91));
       insert(db, { request_id: hex("2"), text_hash: hex("2") }, days(now, -89));
       insert(db, { request_id: hex("3"), text_hash: hex("3") });
-      for (const sql of statements) db.exec(sql);
+      db.exec(QUESTION_REQUEST_PURGE_SQL);
       expect(db.prepare("SELECT request_id FROM question_requests ORDER BY request_id").all())
         .toEqual([{ request_id: hex("2") }, { request_id: hex("3") }]);
       expect(db.prepare("SELECT count(*) AS n FROM exploration_shared_requests").get()).toEqual({ n: 1 });
