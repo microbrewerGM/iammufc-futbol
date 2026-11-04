@@ -1,6 +1,8 @@
 import { parseTriageReceipt,sweepQuestions,type AnswerNowDraft,type TriageDeps,type TriageOperation,type TriageQuestion,type TriageStore } from "../core/question-triage-bridge";
 import {requestCatalogDigest} from "../core/question-request-intent";
 import {RENDERER_VERSION,TRANSFORM_CODE_VERSION} from "../core/intent";
+import {collectQuestionRequestRetention} from "../core/question-request-retention";
+import {collectExplorationRetention} from "../core/exploration-retention";
 
 type DB=Pick<D1Database,"prepare"|"batch">;
 type OpRow={service:string;operation_type:"claim"|"ack";operation_id:string;body_hash:string;response_json:string;lease_id:string|null};
@@ -227,6 +229,18 @@ export class D1QuestionTriageStore implements TriageStore{
           OR json_extract(r.spec_json,'$.catalog_digest')!=? OR json_extract(r.spec_json,'$.transform_code_version')!=? OR json_extract(r.spec_json,'$.renderer_version')!=?))
         ORDER BY r.updated_at,r.request_id LIMIT ?) RETURNING request_id`).bind(await requestCatalogDigest(),TRANSFORM_CODE_VERSION,RENDERER_VERSION,limit).all<{request_id:string}>();
     return result.results.length;
+  }
+  async collectRetention():Promise<void>{
+    if(this.protocol!==2)return;
+    // Independent collectors: a failure in one must not skip the other. Never
+    // log caught errors, which may carry question text or account identifiers.
+    for(const collect of [
+      () => collectQuestionRequestRetention(this.db),
+      () => collectExplorationRetention({DB:this.db as D1Database}),
+    ]){
+      try{const deleted=await collect();console.info("retention",{deleted,failed:0});}
+      catch{console.info("retention",{deleted:0,failed:1});}
+    }
   }
   async queueResult(row: TriageQuestion, now: string): Promise<"complete" | "partial" | "no_data" | "gone" | "failed" | "pending"> {
     const result = await this.db.prepare(`SELECT j.status AS job_status,j.failure,r.coverage,r.expires_at FROM exploration_shared_jobs j LEFT JOIN exploration_shared_results r ON r.request_id=j.request_id WHERE j.request_id=?`).bind(row.exploration_request_id).first<{job_status:string;failure:string|null;coverage:string|null;expires_at:string|null}>();

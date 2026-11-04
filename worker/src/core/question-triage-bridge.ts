@@ -29,6 +29,7 @@ export interface TriageStore {
   queueResult(row: TriageQuestion, now: string): Promise<"complete" | "partial" | "no_data" | "gone" | "failed" | "pending">;
   /** Authoritative DB-clock deadline expiry and current-binding invalidation. */
   maintainResults?(limit: number): Promise<number>;
+  collectRetention?(): Promise<void>;
 }
 export interface TriageDeps { protocol?: 1 | 2; store: TriageStore; now(): Date; newLeaseId(): string; cursorKey: Uint8Array; currentContext?():Promise<{catalog_digest:string;data_snapshot_id:string|null}>; answerNow?(row: TriageQuestion, verdict: unknown): Promise<AnswerNowDraft> }
 export type TriageError = "malformed" | "too_large" | "invalid_caller" | "invalid_cursor";
@@ -265,6 +266,10 @@ export async function sweepQuestions(deps: TriageDeps, limit = 100, selected?: "
   if (deps.protocol===2 && deps.store.maintainResults) {
     try { moved = await deps.store.maintainResults(limit); }
     catch { /* Maintenance failure must not strand unrelated recoverable leases. */ }
+  }
+  if (deps.protocol===2 && deps.store.collectRetention) {
+    try { await deps.store.collectRetention(); }
+    catch { /* Retention failure must not block triage or change moved counts. */ }
   }
   for (const kind of (selected ? [selected] : ["expired", "triaged", "queued"] as const)) {
     const rows = await deps.store.sweepRows(kind, stamp, limit);
