@@ -14,6 +14,7 @@ MIGRATIONS = (
     "0015_question_request_notifications.sql",
     "0016_question_request_refresh.sql",
     "0017_exploration_null_checks.sql",
+    "0018_question_request_local_notifications.sql",
 )
 WRANGLER = "cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0"
 PREFIX = "d1 execute iammufc-dev --config infra/wrangler.jsonc --env dev"
