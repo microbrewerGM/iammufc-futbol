@@ -89,7 +89,7 @@ export function createQuestionRequestsRouter() {
       const revision=Number(fields[0]![1]);
       // Revalidate the current catalog and code versions before confirmation;
       // the storage adapter additionally fences snapshot/generation at write.
-      const view=await readQuestionResultStatus(c.env,identity.sub,id,locale);
+      const view=await readQuestionResultStatus(c.env,identity.sub,id,locale,{confirmation:true});
       if (!view) return c.text("Not found.",404);
       if (view.refreshStatus==="unavailable" && view.confirmationAvailable===false) return c.text("Requests are temporarily unavailable.",503);
       if (view.state!=="confirmation_required" || view.revision!==revision || !view.currentBinding) return c.text("Request changed. Reload the status page.",409);

@@ -158,13 +158,14 @@ async function readBoundQuestionResultStatus(env: Env, account: string, requestI
 
 /** Refresh history is acceptance metadata, never execution evidence. Fence the
  * bound status after all history/spec awaits so they cannot revive a stale link. */
-export async function readQuestionResultStatus(env: Env, account: string, requestId: string, locale: "en" | "es", options: { requesterMetadata?: boolean } = {}): Promise<RequestStatusView | undefined> {
+export async function readQuestionResultStatus(env: Env, account: string, requestId: string, locale: "en" | "es", options: { requesterMetadata?: boolean; confirmation?: boolean } = {}): Promise<RequestStatusView | undefined> {
   const initial = await readBoundQuestionResultStatus(env, account, requestId, locale);
   if (!initial) return undefined;
-  // Notification and execution consumers do not render refresh or history.
-  // Confirmation still requires complete readiness and a binding recheck after
-  // that await; its atomic write supplies the final revision/snapshot fence.
+  // Notification and execution consumers need only the base bound projection.
+  // The confirm POST opts into readiness and a binding recheck after that await;
+  // its atomic write supplies the final revision/snapshot fence.
   if (!options.requesterMetadata) {
+    if (!options.confirmation) return {...initial,confirmationAvailable:false};
     if (initial.state==="released") return initial;
     const ready=await refreshSchemaReady(env.DB);
     if (initial.state!=="confirmation_required") return {...initial,confirmationAvailable:false,

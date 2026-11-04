@@ -135,14 +135,15 @@ describe("request refresh HTTP boundary against migrations through 0017",()=>{
   it("measures requester, confirmation and execution callers through 0017",async()=>{
     const x=await fixture();let start=x.queries();
     await readQuestionResultStatus(x.env as never,"owner",id,"en",{requesterMetadata:true});expect(x.queries()-start).toBe(12);
-    start=x.queries();expect((await readQuestionResultStatus(x.env as never,"owner",id,"en"))?.confirmationAvailable).toBe(true);expect(x.queries()-start).toBe(11);
+    start=x.queries();expect((await readQuestionResultStatus(x.env as never,"owner",id,"en",{confirmation:true}))?.confirmationAvailable).toBe(true);expect(x.queries()-start).toBe(11);
+    start=x.queries();expect((await readQuestionResultStatus(x.env as never,"owner",id,"en"))?.confirmationAvailable).toBe(false);expect(x.queries()-start).toBe(5);
     start=x.queries();expect((await x.page()).status).toBe(200);
     expect(x.queries()-start).toBe(13);
     start=x.queries();expect((await x.post(undefined,undefined,{},"confirm")).status).toBe(303);
     expect(x.queries()-start).toBe(15);
     const deps=requestExecutionDeps(x.env as never),row=await deps.store.get(id);expect(row).not.toBeNull();
     start=x.queries();expect((await deps.selection!(row!))?.currentBinding).toBe(true);
-    expect(x.queries()-start).toBe(6);
+    expect(x.queries()-start).toBe(5);
     start=x.queries();await readQuestionResultStatus(x.env as never,"owner",id,"en",{requesterMetadata:true});
     expect(x.queries()-start).toBe(12);
     const y=await fixture();await y.release();
