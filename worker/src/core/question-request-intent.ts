@@ -65,6 +65,48 @@ export async function mapQuestionVerdict(raw: unknown, ctx: RequestContext): Pro
   } };
 }
 function record(v: unknown): v is Record<string, unknown> { return v !== null && typeof v === "object" && !Array.isArray(v); }
+
+/** Retained proposals may have obsolete bindings, but must still be closed,
+ * canonical specs. Never repair malformed input by applying intent defaults. */
+export function retainedRequestSpec(raw: unknown): { spec: RequestAcceptanceSpec; intent: QueryIntent } | null {
+  const keys = ["version", "request_id", "request_revision", "locale", "canonical_intent", "result_path", "data_snapshot_id", "catalog_digest", "transform_code_version", "renderer_version", "artifact_key", "expected_cell_state"];
+  if (!record(raw) || Object.keys(raw).length !== keys.length || Object.keys(raw).some(k => !keys.includes(k))
+    || raw.version !== 1 || typeof raw.request_id !== "string" || !HASH.test(raw.request_id)
+    || !Number.isSafeInteger(raw.request_revision) || (raw.request_revision as number) < 1
+    || !["en", "es"].includes(String(raw.locale)) || typeof raw.canonical_intent !== "string"
+    || typeof raw.data_snapshot_id !== "string" || !SNAPSHOT.test(raw.data_snapshot_id)
+    || typeof raw.catalog_digest !== "string" || !HASH.test(raw.catalog_digest)
+    || typeof raw.artifact_key !== "string" || !HASH.test(raw.artifact_key)
+    || !["available", "computable_now_queued"].includes(String(raw.expected_cell_state))) return null;
+  for (const key of ["transform_code_version", "renderer_version"] as const) {
+    if (typeof raw[key] !== "string" || !raw[key].length || raw[key].length > 128 || raw[key].includes("\0")) return null;
+  }
+  let intentRaw: unknown;
+  try { intentRaw = JSON.parse(raw.canonical_intent); } catch { return null; }
+  const parsed = parseIntent(intentRaw);
+  if (!parsed.ok || validateExecutionSupport(parsed.intent) || canonicalize(parsed.intent) !== raw.canonical_intent) return null;
+  const intent = parsed.intent;
+  if (intent.entity_type !== "player" || !/^fpl:code:[1-9][0-9]*$/.test(intent.entity_id) || intent.entity_id.length > 64
+    || !/^[0-9]{4}-[0-9]{2}$/.test(intent.season) || !/^[A-Z][A-Z0-9_]{0,15}$/.test(intent.competition)
+    || intent.limit !== 1 || requestResultPath(intent, raw.locale as Locale) !== raw.result_path) return null;
+  return { spec: raw as unknown as RequestAcceptanceSpec, intent };
+}
+
+/** Same-intent replacement from compiled authorities; no model or execution. */
+export async function renewRequestSpec(spec: RequestAcceptanceSpec, snapshotId: string): Promise<RequestAcceptanceSpec | null> {
+  const retained = retainedRequestSpec(spec);
+  if (!retained || !SNAPSHOT.test(snapshotId)) return null;
+  // Validate the original four-tuple using its original versions, not today's.
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode([
+    spec.canonical_intent, spec.data_snapshot_id, spec.transform_code_version, spec.renderer_version,
+  ].join("|")));
+  if ([...new Uint8Array(digest)].map(x => x.toString(16).padStart(2, "0")).join("") !== spec.artifact_key) return null;
+  const state = catalog.checkFeasibility(retained.intent, spec.locale).state;
+  if (state !== "available" && state !== "computable_now_queued") return null;
+  return { ...spec, data_snapshot_id: snapshotId, catalog_digest: await requestCatalogDigest(),
+    transform_code_version: TRANSFORM_CODE_VERSION, renderer_version: RENDERER_VERSION,
+    artifact_key: await artifactKey(retained.intent, snapshotId), expected_cell_state: state };
+}
 /** Verify a trusted executor response with revision/snapshot freshly read AFTER execution. */
 export async function verifyQuestionResult(spec: RequestAcceptanceSpec, response: unknown, current: { requestId: string; revision: number; snapshotId: string | null }): Promise<boolean> {
   if (spec.version !== 1 || !HASH.test(spec.request_id) || spec.request_id !== current.requestId || spec.request_revision !== current.revision || !Number.isSafeInteger(current.revision) || current.revision < 0 || spec.data_snapshot_id !== current.snapshotId || !SNAPSHOT.test(spec.data_snapshot_id) || !["en", "es"].includes(spec.locale)) return false;

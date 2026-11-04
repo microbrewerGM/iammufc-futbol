@@ -30,7 +30,7 @@ class SqliteD1 {
 const iso = (ms: number) => new Date(Math.floor(ms/1000)*1000).toISOString().replace(".000Z","Z");
 async function fixture() {
   const db: Db = new DatabaseSync(":memory:"); db.exec("PRAGMA foreign_keys=ON");
-  for (const name of ["0001_schema", "0003_p16_dot_plot", "0004_cache_slots", "0005_account_question_history", "0006_season_splits", "0008_exploration_request_links", "0009_manager_era_records", "0010_question_requests", "0011_opponent_labels", "0012_cl_season_stage", "0013_question_request_results"]) db.exec(readFileSync(`infra/migrations/${name}.sql`,"utf8"));
+  for (const name of ["0001_schema", "0003_p16_dot_plot", "0004_cache_slots", "0005_account_question_history", "0006_season_splits", "0007_exploration_requests", "0008_exploration_request_links", "0009_manager_era_records", "0010_question_requests", "0011_opponent_labels", "0012_cl_season_stage", "0013_question_request_results", "0014_question_request_clarifications", "0015_question_request_notifications", "0016_question_request_refresh", "0017_exploration_null_checks"]) db.exec(readFileSync(`infra/migrations/${name}.sql`,"utf8"));
   const id = "a".repeat(64), snapshot = "b".repeat(64), now = iso(Date.now()), expires = iso(Date.parse(now)+90*86400_000);
   let time = Date.parse(now); const clockDb = new DatabaseSync(":memory:");
   db.function("strftime",{varargs:true},(...args:(string|number|null)[])=>{
@@ -56,6 +56,11 @@ describe("atomic D1 request-result adapter",()=>{
     const x=await fixture();
     expect(await proposeQuestionResult(x.deps,"owner",x.mapped.spec,x.expires)).toBe("accepted");
     expect(await confirmQuestionResult(x.deps,x.id,1,"owner")).toBe("accepted");
+    const history = x.db.prepare("SELECT * FROM question_request_confirmations WHERE request_id=?").all(x.id);
+    expect(history).toHaveLength(1);
+    expect(history[0].accepted_revision).toBe(1);
+    expect(JSON.parse(history[0].spec_json)).toEqual(x.mapped.spec);
+    expect(x.db.prepare("SELECT * FROM question_request_confirmation_context").all()).toHaveLength(0);
     expect(await claimQuestionResult(x.deps,x.id,2,"service")).toBe("accepted");
     const row=(await x.store.get(x.id))!;
     expect(await completeQuestionResult(x.deps,x.id,row.revision,"service",row.leaseId!,x.response)).toBe("accepted");
@@ -115,7 +120,7 @@ describe("atomic D1 request-result adapter",()=>{
     x.d1.beforeWrite=()=>{
       // Future clarification requeue will authorize a new generation. This
       // fixture lifts only the legacy parent transition trigger to simulate it.
-      x.db.exec("DROP TRIGGER question_requests_state_machine");
+      x.db.exec("DROP TRIGGER question_requests_clarification_state_machine");
       x.db.prepare("UPDATE question_requests SET revision=revision+1 WHERE request_id=?").run(x.id);
     };
     expect(await confirmQuestionResult(x.deps,x.id,1,"owner")).toBe("conflict");
