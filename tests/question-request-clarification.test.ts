@@ -12,6 +12,7 @@ import {accessGate,type AccessIdentity} from "../worker/src/security/auth";
 import type {Env} from "../worker/src/core/db";
 import {ackQuestion,claimQuestion,sweepQuestions,TRIAGE_CAPABILITY,type TriageDeps,type TriageResult} from "../worker/src/core/question-triage-bridge";
 import {D1QuestionTriageStore} from "../worker/src/routes/question-triage-sweep";
+import {requestCatalogDigest} from "../worker/src/core/question-request-intent";
 type DB=InstanceType<typeof DatabaseSync>;
 const id="a".repeat(64),stamp=(ms:number)=>new Date(Math.floor(ms/1000)*1000).toISOString().replace(".000Z","Z");
 class Statement{
@@ -45,13 +46,16 @@ const access={ACCESS_ISSUER:"https://example.cloudflareaccess.com",ACCESS_AUD:"a
 function app(identity:AccessIdentity={sub:"owner",email:"owner@example.invalid"}){const router=new Hono<RouteEnv>();router.use("*",accessGate(async()=>identity));router.route("/",createQuestionRequestsRouter());return router;}
 const headers={"cf-access-jwt-assertion":"test",origin:"https://site.invalid","content-type":"application/x-www-form-urlencoded"};
 const caller={service:"triage_service",capability:TRIAGE_CAPABILITY};
+const metadata={catalog_digest:await requestCatalogDigest(),data_snapshot_id:"clarification-fixture-snapshot"};
 function response(result:TriageResult){if(!result.ok)throw new Error(result.error);return JSON.parse(result.body);}
 function triage(x:ReturnType<typeof fixture>,protocol:1|2=2){
   let lease=0,operation=0;
+  if(protocol===2)x.db.prepare("INSERT INTO snapshots(snapshot_id,created_at,sources_json,row_counts)VALUES(?,?,'{}','{}')").run(metadata.data_snapshot_id,stamp(x.now().getTime()));
   const store=new D1QuestionTriageStore(x.d1 as unknown as D1Database,protocol);
   const answerNow=vi.fn(async()=>({state:"clarification_required" as const,specJson:null,snapshotId:null}));
-  const deps:TriageDeps={protocol,store,now:x.now,newLeaseId:()=>"fixture-"+(++lease),cursorKey:new TextEncoder().encode("fixture"),answerNow};
-  const wire=(kind:string,payload:unknown)=>JSON.stringify({version:protocol,kind,payload});
+  const deps:TriageDeps={protocol,store,now:x.now,newLeaseId:()=>"fixture-"+(++lease),cursorKey:new TextEncoder().encode("fixture"),answerNow,
+    ...(protocol===2?{currentContext:async()=>({...metadata,data_snapshot_id:x.db.prepare("SELECT snapshot_id FROM snapshots ORDER BY created_at DESC LIMIT 1").get()?.snapshot_id??null})}:{})};
+  const wire=(kind:string,payload:unknown)=>JSON.stringify({version:protocol,kind,payload:protocol===2?{...metadata,...payload as object}:payload});
   const claim=async(request=id)=>{
     const row=(await store.get(request))!;
     const result=response(await claimQuestion(deps,caller,wire("claim",{request_id:request,expected_attempt:row.attempt,

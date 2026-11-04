@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { denialSmoke, runSmoke, smoke, validateChatPayload,
   snapshotContinuitySmoke, validateHealthPayload, validateQueryPayload,
   validateSnapshotMatch, validateTriageContextPayload, classifySeasonExplore, classifyOpponentHistory } from './dev-access-smoke.mjs';
@@ -8,9 +9,12 @@ const env = { CF_ACCESS_CLIENT_ID: 'synthetic-id', CF_ACCESS_CLIENT_SECRET: 'syn
 const snapshot = 'a'.repeat(64);
 const expectedSnapshot = 'b'.repeat(64);
 const contextPath = '/internal/question-triage-bridge/answer-now/context';
+const catalogJson = JSON.stringify({ fixture: 'PRIVATE_CATALOG_Mañana' });
+const catalogDigest = value => createHash('sha256').update(value, 'utf8').digest('hex');
 const validContext = {
   version: 1, kind: 'answer_now_context', payload: {
-    triage_protocol: 2, catalog_digest: 'd'.repeat(64),
+    triage_protocol: 2, glossary_protocol: 1, catalog_json: catalogJson,
+    snapshot_id: 'PRIVATE_SNAPSHOT:fixture-1', catalog_digest: catalogDigest(catalogJson),
     people: [{ id: 'fpl:code:1', label: 'Fixture <Mañana>' }], has_more: false,
   },
 };
@@ -611,6 +615,9 @@ test('triage context validates the outer v1 envelope and nested v2 contract', ()
   for (const payload of [null, [], {}, { ...validContext.payload, extra: true },
     { ...validContext.payload, triage_protocol: 1 }, { ...validContext.payload, triage_protocol: '2' },
     { ...validContext.payload, triage_protocol: true }, { ...validContext.payload, has_more: 1 },
+    { ...validContext.payload, glossary_protocol: 2 }, { ...validContext.payload, glossary_protocol: '1' },
+    { ...validContext.payload, glossary_protocol: true },
+    { triage_protocol: 2, catalog_digest: validContext.payload.catalog_digest, people: [], has_more: false },
     { ...validContext.payload, people: {} }, { ...validContext.payload, people: Array(201).fill(validContext.payload.people[0]) }]) {
     assert.equal(validateTriageContextPayload({ ...validContext, payload }), null);
   }
@@ -621,6 +628,33 @@ test('triage context validates the outer v1 envelope and nested v2 contract', ()
   for (const key of Object.keys(validContext.payload)) {
     const value = structuredClone(validContext); delete value.payload[key];
     assert.equal(validateTriageContextPayload(value), null);
+  }
+});
+
+test('triage catalog validates exact UTF-8 bytes, JSON and matching digest', () => {
+  const withCatalog = catalog_json => ({ ...validContext, payload: {
+    ...validContext.payload, catalog_json,
+    catalog_digest: typeof catalog_json === 'string' ? catalogDigest(catalog_json) : validContext.payload.catalog_digest,
+  } });
+  for (const catalog of ['{}', 'null', ' "Mañana" ', '"' + 'é'.repeat(32767) + '"']) {
+    assert.equal(validateTriageContextPayload(withCatalog(catalog)), 'ready');
+  }
+  for (const catalog of [null, 7, {}, '', '{', '"' + 'a'.repeat(65535) + '"', '"' + 'é'.repeat(32768) + '"']) {
+    assert.equal(validateTriageContextPayload(withCatalog(catalog)), null);
+  }
+  for (const catalog_digest of ['d'.repeat(64), catalogDigest(JSON.stringify(JSON.parse(' "Mañana" ')))]) {
+    const value = withCatalog(' "Mañana" ');
+    value.payload.catalog_digest = catalog_digest;
+    assert.equal(validateTriageContextPayload(value), null);
+  }
+});
+
+test('triage snapshot requires 1 to 128 ASCII identifier characters', () => {
+  for (const snapshot_id of ['a', 'A0:_-', 'a'.repeat(128)]) {
+    assert.equal(validateTriageContextPayload({ ...validContext, payload: { ...validContext.payload, snapshot_id } }), 'ready');
+  }
+  for (const snapshot_id of ['', 'a'.repeat(129), 'a/b', 'a b', 'é', 'a\n', null, 1]) {
+    assert.equal(validateTriageContextPayload({ ...validContext, payload: { ...validContext.payload, snapshot_id } }), null);
   }
 });
 
@@ -738,6 +772,9 @@ test('triage output contains only finite readiness, never context or error detai
   const row = await contextRow(contextStream([new TextEncoder().encode(JSON.stringify(value))]).response);
   assert.deepEqual(row, { path: contextPath, status: 200, pass: true, triage_state: 'ready' });
   assert.ok(!JSON.stringify(row).includes(value.payload.catalog_digest));
+  assert.ok(!JSON.stringify(row).includes(value.payload.catalog_json));
+  assert.ok(!JSON.stringify(row).includes('PRIVATE_CATALOG_Mañana'));
+  assert.ok(!JSON.stringify(row).includes(value.payload.snapshot_id));
   assert.ok(!JSON.stringify(row).includes('private-context-id'));
   assert.ok(!JSON.stringify(row).includes('PRIVATE_CONTEXT_LABEL'));
   const failure = await contextRow(null, new Error('PRIVATE_THROWN_ERROR'));

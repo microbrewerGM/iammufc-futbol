@@ -122,13 +122,16 @@ export class D1QuestionTriageStore implements TriageStore{
     return {service:row.service,type:"ack",operation_id:row.operation_id,body_hash:row.body_hash,response,lease_id:row.lease_id};
   }
   async claim(row:TriageQuestion,next:TriageQuestion,op:TriageOperation):Promise<boolean>{
+    if(this.protocol===2 && (!op.receipt || !parseTriageReceipt(op.receipt)))return false;
+    const context=this.protocol===2?" AND (SELECT snapshot_id FROM snapshots ORDER BY created_at DESC LIMIT 1)=?":"";
+    const contextValues=this.protocol===2?[op.receipt!.data_snapshot_id]:[];
     const update=this.db.prepare(`UPDATE question_requests AS q SET status=?,attempt=?,lease_id=?,lease_owner=?,lease_expires_at=?,claimed_at=?,retry_after=NULL,revision=?,
       updated_at=max(updated_at,strftime('%Y-%m-%dT%H:%M:%SZ','now')) WHERE q.request_id=? AND q.status=? AND q.revision=? AND q.attempt=?
       AND q.expires_at>strftime('%Y-%m-%dT%H:%M:%SZ','now') AND (q.retry_after IS NULL OR q.retry_after<=?)
       AND ?>strftime('%Y-%m-%dT%H:%M:%SZ','now') AND ?<=strftime('%Y-%m-%dT%H:%M:%SZ','now','+900 seconds')
       AND NOT EXISTS(SELECT 1 FROM exploration_bridge_operations WHERE service=? AND operation_type='claim' AND operation_id=?)
-      AND ${this.fence()} RETURNING request_id`).bind(next.status,next.attempt,next.lease_id,next.lease_owner,next.lease_expires_at,next.claimed_at,next.revision,
-      row.request_id,row.status,row.revision,row.attempt,next.claimed_at,next.lease_expires_at,next.lease_expires_at,op.service,op.operation_id,...this.fenceValues(row));
+      AND ${this.fence()}${context} RETURNING request_id`).bind(next.status,next.attempt,next.lease_id,next.lease_owner,next.lease_expires_at,next.claimed_at,next.revision,
+      row.request_id,row.status,row.revision,row.attempt,next.claimed_at,next.lease_expires_at,next.lease_expires_at,op.service,op.operation_id,...this.fenceValues(row),...contextValues);
     const result=await this.db.batch([update,this.receipt(op)]);return result[0]!.results.length===1;
   }
   private remap(row:TriageQuestion,next:TriageQuestion,draft:AnswerNowDraft,now:string):D1PreparedStatement{
@@ -144,9 +147,18 @@ export class D1QuestionTriageStore implements TriageStore{
   }
   async ack(row:TriageQuestion,next:TriageQuestion,op:TriageOperation,admission:{requestId:string;requestJson:string;jobId:string;accountSub:string;createdAt:string}|null,
     now:string,answerNow?:AnswerNowDraft):Promise<boolean>{
+    if(this.protocol===2 && (!op.receipt || !parseTriageReceipt(op.receipt)))return false;
     const stmts:D1PreparedStatement[]=[];
-    const snapshot=answerNow?` AND (? IS NULL OR (SELECT snapshot_id FROM snapshots ORDER BY created_at DESC LIMIT 1)=?)`:"";
-    const snapshotValues=answerNow?[answerNow.snapshotId,answerNow.snapshotId]:[];
+    const snapshot=this.protocol===2?` AND (SELECT snapshot_id FROM snapshots ORDER BY created_at DESC LIMIT 1)=?
+      AND EXISTS(SELECT 1 FROM exploration_bridge_operations context_claim WHERE context_claim.operation_type='claim'
+        AND context_claim.service=q.lease_owner AND context_claim.lease_id=q.lease_id
+        AND context_claim.expires_at>strftime('%Y-%m-%dT%H:%M:%SZ','now')
+        AND json_extract(context_claim.response_json,'$.payload.receipt.protocol')=2
+        AND json_extract(context_claim.response_json,'$.payload.receipt.request_id')=q.request_id
+        AND json_extract(context_claim.response_json,'$.payload.receipt.applied_revision')=q.revision
+        AND json_extract(context_claim.response_json,'$.payload.receipt.catalog_digest')=?
+        AND json_extract(context_claim.response_json,'$.payload.receipt.data_snapshot_id')=?)`:answerNow?` AND (? IS NULL OR (SELECT snapshot_id FROM snapshots ORDER BY created_at DESC LIMIT 1)=?)`:"";
+    const snapshotValues=this.protocol===2?[op.receipt!.data_snapshot_id,op.receipt!.catalog_digest,op.receipt!.data_snapshot_id]:answerNow?[answerNow.snapshotId,answerNow.snapshotId]:[];
     if(["queued","filled","partial","no_data"].includes(next.status)){
       stmts.push(this.db.prepare(`UPDATE question_requests AS q SET status='triaged',verdict_json=?,lease_expires_at=NULL,retry_after=NULL,revision=?,
         updated_at=max(updated_at,strftime('%Y-%m-%dT%H:%M:%SZ','now')) WHERE q.request_id=? AND q.status='triaging' AND q.revision=? AND q.attempt=?
