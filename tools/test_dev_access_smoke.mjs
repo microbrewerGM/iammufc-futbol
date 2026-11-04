@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { denialSmoke, runSmoke, smoke, validateChatPayload,
   snapshotContinuitySmoke, validateHealthPayload, validateQueryPayload,
-  validateSnapshotMatch, validateTriageContextPayload, classifySeasonExplore, classifyOpponentHistory } from './dev-access-smoke.mjs';
+  validateSnapshotMatch, validateTriageContextPayload, classifySeasonExplore, classifyOpponentHistory, oracleSmoke } from './dev-access-smoke.mjs';
 
 const env = { CF_ACCESS_CLIENT_ID: 'synthetic-id', CF_ACCESS_CLIENT_SECRET: 'synthetic-secret' };
 const snapshot = 'a'.repeat(64);
@@ -19,6 +20,114 @@ const validContext = {
   },
 };
 const retrieved = '2026-09-23T12:00:00.000Z';
+
+const oracleCatalog = JSON.parse(readFileSync(new URL('../worker/src/generated/catalog.json', import.meta.url), 'utf8'));
+const oracleContext = () => ({ ...structuredClone(validContext), payload: {
+  ...structuredClone(validContext.payload), snapshot_id: snapshot,
+  catalog_json: JSON.stringify(oracleCatalog), catalog_digest: catalogDigest(JSON.stringify(oracleCatalog)),
+  people: [{ id: 'fpl:code:148', label: 'Bruno Fernandes' }],
+} });
+const oracleValues = { 'goals:2025-26': 7, 'minutes:2024-25': 3001, 'assists:2024-25': 9, 'goals:2024-25': 8 };
+function oracleFixture(options = {}) {
+  const calls = [];
+  let contexts = 0;
+  const request = async (url, init) => {
+    calls.push({ url, init });
+    const target = new URL(url);
+    if (options.error) throw new Error('PRIVATE_THROWN_BODY');
+    let body, mime;
+    if (target.pathname === contextPath) {
+      const value = oracleContext();
+      options.context?.(value, contexts++);
+      body = JSON.stringify(value); mime = 'application/json';
+    } else {
+      const params = target.searchParams;
+      const season = params.get('season'), metric = params.get('metric');
+      const credit = oracleCatalog.coverage.find(cell => cell.entity_type === 'player' && cell.metric === metric &&
+        cell.season === season && cell.competition === 'PL' && cell.granularity === 'box_score').attribution_text;
+      const number = oracleValues[`${metric}:${season}`].toLocaleString('en-US');
+      body = `<html lang="en"><link rel="canonical" href="${(target.pathname + target.search).replaceAll('&', '&amp;')}">` +
+        `<table><tbody><tr><td class="num">1</td><td><a href="/en/player/fpl%3Acode%3A148/${season}">Bruno Fernandes</a></td><td>MF</td><td class="num">${number}</td></tr></tbody></table>` +
+        `<footer><p>${credit}</p><p>Data snapshot ${snapshot.slice(0, 12)} — every figure on this page can be regenerated from it.</p></footer><p>PRIVATE_EXTRA_BODY</p></html>`;
+      body = options.html?.(body) ?? body; mime = 'text/html';
+    }
+    return new Response(body, { status: options.status ?? 200,
+      headers: { 'cache-control': 'private, no-store', 'content-type': mime } });
+  };
+  return { request, calls };
+}
+
+test('pilot oracle projects only five fixed selections and the exact closed field set', async () => {
+  const fixture = oracleFixture();
+  const rows = await oracleSmoke(env, fixture.request);
+  assert.equal(rows.length, 5);
+  assert.deepEqual(rows.map(row => row.case_id), [1, 2, 3, 4, 9]);
+  for (const row of rows) {
+    assert.deepEqual(Object.keys(row).sort(), ['case_id', 'snapshot_id', 'person_id', 'player', 'season',
+      'competition', 'metric', 'value', 'attribution'].sort());
+    assert.equal(row.snapshot_id, snapshot); assert.equal(row.person_id, 'fpl:code:148');
+    assert.equal(row.player, 'Bruno Fernandes'); assert.equal(row.competition, 'PL');
+    assert.equal(row.value, oracleValues[`${row.metric}:${row.season}`]);
+    assert.equal(row.attribution, oracleCatalog.coverage[0].attribution_text);
+  }
+  assert.deepEqual(rows[4], { ...rows[0], case_id: 9 });
+  assert.ok(!JSON.stringify(rows).includes('PRIVATE'));
+  assert.equal(fixture.calls.length, 7);
+  assert.deepEqual(fixture.calls.map(call => new URL(call.url).pathname), [contextPath,
+    '/en/q', '/en/q', '/en/q', '/en/q', '/en/q', contextPath]);
+  for (const { url, init } of fixture.calls) {
+    assert.equal(new URL(url).origin, 'https://iammufc-dev.aaron-cf2.workers.dev');
+    assert.equal(init.redirect, 'manual');
+    assert.equal(init.headers['CF-Access-Client-Id'], env.CF_ACCESS_CLIENT_ID);
+    assert.equal(init.headers['CF-Access-Client-Secret'], env.CF_ACCESS_CLIENT_SECRET);
+    if (new URL(url).pathname === '/en/q') {
+      assert.equal(init.method, 'GET'); assert.equal(init.body, undefined);
+      assert.deepEqual([...new URL(url).searchParams.keys()],
+        ['metric', 'entity_type', 'entity_id', 'season', 'competition', 'viz', 'limit']);
+      assert.equal(new URL(url).searchParams.get('entity_id'), 'fpl:code:148');
+    } else {
+      assert.equal(init.method, 'POST');
+      assert.deepEqual(JSON.parse(init.body), { version: 1, kind: 'context', payload: {} });
+    }
+  }
+});
+
+test('pilot oracle failures emit only finite unresolved markers without diagnostic bodies', async () => {
+  const failures = [
+    { error: true }, { status: 503 }, { status: 302 },
+    { context: value => { value.payload.people = []; } },
+    { context: value => { value.payload.has_more = true; } },
+    { context: value => { value.payload.people.push({ id: 'fpl:code:149', label: 'B.Fernandes' }); } },
+    { context: value => { value.payload.people.push({ id: 'fpl:code:148', label: 'Someone else' }); } },
+    { context: value => { value.payload.extra = 'PRIVATE_EXTRA_FIELD'; } },
+    { context: (value, index) => { if (index) value.payload.snapshot_id = expectedSnapshot; } },
+    { context: (value, index) => { if (index) value.payload.people[0].label = 'B.Fernandes'; } },
+    { context: value => {
+      const catalog = JSON.parse(value.payload.catalog_json);
+      catalog.coverage[0].attribution_text = 'PRIVATE_ATTRIBUTION';
+      // Tamper with every relevant credit while keeping the digest valid.
+      for (const cell of catalog.coverage) cell.attribution_text = 'PRIVATE_ATTRIBUTION';
+      value.payload.catalog_json = JSON.stringify(catalog);
+      value.payload.catalog_digest = catalogDigest(value.payload.catalog_json);
+    } },
+    ...['NaN', 'Infinity', '1e309', '-1', '7.5', 'PRIVATE_NUMBER', ''].map(number =>
+      ({ html: body => body.replace('>7</td>', `>${number}</td>`) })),
+    { html: body => body.replace('fpl%3Acode%3A148', 'fpl%3Acode%3A149') },
+    { html: body => body.replace('<footer>', '<aside>').replace('</footer>', '</aside>') },
+    { html: body => body.replace('rel="canonical"', 'rel="alternate"') },
+    { html: body => body.replace(`Data snapshot ${snapshot.slice(0, 12)}`, 'Data snapshot stale') },
+    { html: body => body + '<table><tbody>PRIVATE_EXTRA_ROW</tbody></table>' },
+    { html: () => 'PRIVATE_BODY'.repeat(20000) },
+  ];
+  for (const options of failures) {
+    const fixture = oracleFixture(options);
+    assert.deepEqual(await oracleSmoke(env, fixture.request), [1, 2, 3, 4, 9].map(case_id =>
+      ({ case_id, oracle_state: 'unresolved' })));
+  }
+  assert.deepEqual(await oracleSmoke({}, () => { throw new Error('must not request'); }),
+    [1, 2, 3, 4, 9].map(case_id => ({ case_id, oracle_state: 'unresolved' })));
+});
+
 const observed = (id, coverage = '2025-26') => ({
   id, status: 'observed', coverage_through: coverage, source_as_of: null, retrieved_at: retrieved,
 });
