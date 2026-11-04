@@ -6,10 +6,12 @@ import { questionRequestPage } from "../views/question-requests";
 import { questionResultDeps, readQuestionResultStatus } from "../core/question-request-status";
 import { confirmQuestionResult } from "../core/question-request-results";
 import {clarifyQuestionResult} from "../core/question-request-clarification";
+import { createQuestionRequestRefreshRouter } from "./question-request-refresh";
 
 export type RouteEnv = AccessEnv & { Bindings: Env };
 export function createQuestionRequestsRouter() {
   const router = new Hono<RouteEnv>();
+  router.route("/",createQuestionRequestRefreshRouter());
   router.get("/:locale{en|es}/requests", async (c) => {
     const identity = accessIdentity(c);
     if (!identity || "serviceClientId" in identity || !validAccountSub(identity.sub)) return c.text("Forbidden.", 403);
@@ -17,7 +19,7 @@ export function createQuestionRequestsRouter() {
     const id = c.req.query("id") ?? "";
     const status = /^[0-9a-f]{64}$/.test(id) ? await readQuestionStatus(c.env, identity.sub, id) : null;
     try {
-      const result = id.length===64 && /^[0-9a-f]{64}$/.test(id) ? await readQuestionResultStatus(c.env,identity.sub,id,locale) : undefined;
+      const result = id.length===64 && /^[0-9a-f]{64}$/.test(id) ? await readQuestionResultStatus(c.env,identity.sub,id,locale,{requesterMetadata:true}) : undefined;
       return c.html(questionRequestPage(locale,status ?? undefined,undefined,result));
     } catch {
       // Migration or storage failure must not advertise a legacy "Available"
@@ -87,9 +89,11 @@ export function createQuestionRequestsRouter() {
       const revision=Number(fields[0]![1]);
       // Revalidate the current catalog and code versions before confirmation;
       // the storage adapter additionally fences snapshot/generation at write.
-      const view=await readQuestionResultStatus(c.env,identity.sub,id,locale);
+      const view=await readQuestionResultStatus(c.env,identity.sub,id,locale,{confirmation:true});
       if (!view) return c.text("Not found.",404);
+      if (view.refreshStatus==="unavailable" && view.confirmationAvailable===false) return c.text("Requests are temporarily unavailable.",503);
       if (view.state!=="confirmation_required" || view.revision!==revision || !view.currentBinding) return c.text("Request changed. Reload the status page.",409);
+      if (view.confirmationAvailable===false) return c.text("Requests are temporarily unavailable.",503);
       const result=await confirmQuestionResult(questionResultDeps(c.env,identity.sub),id,revision,identity.sub);
       if (result==="not_found") return c.text("Not found.",404);
       if (result!=="accepted") return c.text("Request changed. Reload the status page.",409);

@@ -22,7 +22,14 @@ export interface QuestionResultView {
   clarificationAvailable?: boolean;
   /** Validated retained execution metadata; does not imply historical serving. */
   executedSnapshotId?: string;
+  confirmationAvailable?: boolean;
+  refreshStatus?: "available" | "current" | "pending" | "expired" | "exhausted" | "unavailable";
+  confirmationHistory?: {revision:number;snapshotId:string;acceptedAt:string}[];
 }
+const REFRESH_STRINGS = {
+  en: {available:"Refresh this selection",current:"This selection uses current data.",pending:"Your request is pending.",expired:"This request has expired.",exhausted:"The refresh limit has been reached.",unavailable:"Refresh is temporarily unavailable.",help:"Refresh keeps the same selection. Review the replacement and confirm it separately.",history:"Confirmation history",notice:"These records show selections you confirmed, not executed results.",revision:"Confirmed revision",snapshot:"Approved data snapshot",accepted:"Confirmed at"},
+  es: {available:"Actualizar esta selección",current:"Esta selección utiliza datos actuales.",pending:"Tu solicitud está pendiente.",expired:"Esta solicitud ha caducado.",exhausted:"Se ha alcanzado el límite de actualizaciones.",unavailable:"La actualización no está disponible temporalmente.",help:"La actualización mantiene la misma selección. Revisa la propuesta nueva y confírmala por separado.",history:"Historial de confirmaciones",notice:"Estos registros muestran las selecciones que confirmaste, no resultados ejecutados.",revision:"Revisión confirmada",snapshot:"Instantánea de datos aprobada",accepted:"Fecha de confirmación"},
+} as const;
 const PROVENANCE_STRINGS = {
   en: { title: "Data provenance", snapshot: "Result data snapshot" },
   es: { title: "Procedencia de los datos", snapshot: "Instantánea de datos del resultado" },
@@ -43,7 +50,7 @@ export function questionResultPanel(code: LocaleCode, result: QuestionResultView
   let action = "";
   if (result.state === "clarification_required" && result.clarificationAvailable !== false) {
     action = `<form method="post" action="/${code}/requests/${result.requestId}/clarify"><input type="hidden" name="expected_revision" value="${result.revision}"><label for="clarified-question">${esc(t.clarifyLabel)}</label><textarea id="clarified-question" name="text" maxlength="500" required></textarea><button type="submit">${esc(t.clarify)}</button></form>`;
-  } else if (result.state === "confirmation_required" && summary && result.currentBinding === true) {
+  } else if (result.state === "confirmation_required" && summary && result.currentBinding === true && result.confirmationAvailable !== false) {
     action = `<form method="post" action="/${code}/requests/${result.requestId}/confirm"><input type="hidden" name="expected_revision" value="${result.revision}"><button type="submit">${esc(t.confirm)}</button></form>`;
   } else if (result.state === "released" && intent && result.currentBinding === true && result.resultPath === requestResultPath(intent, code)) {
     action = `<p><a href="${esc(result.resultPath)}">${esc(t.open)}</a></p>`;
@@ -53,7 +60,16 @@ export function questionResultPanel(code: LocaleCode, result: QuestionResultView
   const provenance = (result.state === "released" || result.state === "stale")
     && typeof snapshot === "string" && snapshot.length > 0 && snapshot.length <= 128 && !/[^A-Za-z0-9:_-]/.test(snapshot)
     ? `<details><summary>${esc(provenanceText.title)}</summary><p>${esc(provenanceText.snapshot)}: <code>${snapshot.match(/.{1,16}/g)!.map(chunk => esc(chunk)).join("<wbr>")}</code></p></details>` : "";
-  return `<section aria-labelledby="request-result-heading"><h2 id="request-result-heading">${esc(t[state])}</h2>${summary}${action}${provenance}</section>`;
+  const r=REFRESH_STRINGS[code];
+  const refresh=result.refreshStatus && Object.hasOwn(r,result.refreshStatus)
+    ? result.refreshStatus==="available"
+      ? `<p>${esc(r.help)}</p><form method="post" action="/${code}/requests/${result.requestId}/refresh"><input type="hidden" name="expected_revision" value="${result.revision}"><button type="submit">${esc(r.available)}</button></form>`
+      : `<p role="status">${esc(r[result.refreshStatus])}</p>` : "";
+  const history=(result.confirmationHistory??[]).slice(0,7).filter(h=>Number.isSafeInteger(h.revision) && h.revision>0
+    && typeof h.snapshotId==="string" && h.snapshotId.length>0 && h.snapshotId.length<=128
+    && typeof h.acceptedAt==="string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(h.acceptedAt));
+  const confirmations=history.length ? `<details><summary>${esc(r.history)}</summary><p>${esc(r.notice)}</p><ol>${history.map(h=>`<li><p>${esc(r.revision)}: ${h.revision}<br>${esc(r.snapshot)}: <code>${h.snapshotId.match(/.{1,16}/g)!.map(esc).join("<wbr>")}</code><br>${esc(r.accepted)}: <time datetime="${esc(h.acceptedAt)}">${esc(h.acceptedAt)}</time></p></li>`).join("")}</ol></details>` : "";
+  return `<section aria-labelledby="request-result-heading"><h2 id="request-result-heading">${esc(t[state])}</h2>${summary}${action}${refresh}${provenance}${confirmations}</section>`;
 }
 
 const STRINGS = {
