@@ -8,6 +8,8 @@ import { Catalog } from "./feasibility";
 import { decodeCompiledCatalog } from "./catalog-contract";
 import compiled from "../generated/catalog.json";
 import {clarificationSchemaReady} from "./question-request-clarification";
+import { readQuestionConfirmations, refreshSchemaReady } from "./question-request-refresh";
+import { retainedRequestSpec, renewRequestSpec } from "./question-request-intent";
 
 const catalog = new Catalog(decodeCompiledCatalog(compiled));
 type State = ResultState | "triaging" | "clarification_required" | "unsupported" | "unavailable" | "stale";
@@ -16,6 +18,9 @@ export interface RequestStatusView {
   intent?: QueryIntent; resultPath?: string; currentBinding?: boolean; clarificationAvailable?: boolean;
   /** Retained executed provenance only; never grants a current result link. */
   executedSnapshotId?: string;
+  confirmationAvailable?: boolean;
+  refreshStatus?: "available" | "current" | "pending" | "expired" | "exhausted" | "unavailable";
+  confirmationHistory?: { revision: number; snapshotId: string; acceptedAt: string }[];
 }
 interface StatusRow {
   request_id: string; request_revision: number; parent_revision: number; revision: number; state: State;
@@ -84,7 +89,7 @@ async function executedSnapshot(row: StatusRow, requestId: string): Promise<stri
 /** Account filtering occurs in SQL, before any interpretation or identity lookup.
  * No original question or model-authored text is read by this status projection.
  */
-export async function readQuestionResultStatus(env: Env, account: string, requestId: string, locale: "en" | "es"): Promise<RequestStatusView | undefined> {
+async function readBoundQuestionResultStatus(env: Env, account: string, requestId: string, locale: "en" | "es"): Promise<RequestStatusView | undefined> {
   // Additive rollout: keep existing intake/status usable until CI applies0013.
   // Other storage errors still propagate and fail closed in the route.
   const schema=await env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='question_request_results'").bind().first<{name:string}>();
@@ -149,6 +154,74 @@ export async function readQuestionResultStatus(env: Env, account: string, reques
   if (fresh.expires_at<=fresh.db_now || fresh.parent_expires_at<=fresh.db_now || fresh.state==="confirmation_required" && fresh.response_deadline<=fresh.db_now) return {...view,state:"expired"};
   if (fresh.parent_revision!==row.parent_revision || fresh.revision!==row.revision || fresh.state!==row.state || fresh.snapshot_id!==snapshotId) return withHistory({...view,state:"stale"});
   return withHistory({...view,intent,personLabel:person.web_name,currentBinding:true,...(row.state==="released" ? {resultPath:requestResultPath(intent,locale)} : {})},snapshotId);
+}
+
+/** Refresh history is acceptance metadata, never execution evidence. Fence the
+ * bound status after all history/spec awaits so they cannot revive a stale link. */
+export async function readQuestionResultStatus(env: Env, account: string, requestId: string, locale: "en" | "es"): Promise<RequestStatusView | undefined> {
+  const initial = await readBoundQuestionResultStatus(env, account, requestId, locale);
+  if (!initial) return undefined;
+  if (!await refreshSchemaReady(env.DB)) {
+    const fresh=await env.DB.prepare(`SELECT r.request_id,r.revision,r.state,r.request_revision,q.revision AS parent_revision,
+      r.spec_json,r.expires_at,q.expires_at AS parent_expires_at,r.response_deadline,
+      (SELECT snapshot_id FROM snapshots ORDER BY created_at DESC LIMIT 1) AS snapshot_id,
+      strftime('%Y-%m-%dT%H:%M:%SZ','now') AS db_now
+      FROM question_request_results r JOIN question_requests q ON q.request_id=r.request_id
+      WHERE r.request_id=? AND q.account_sub=?`).bind(requestId,account).first<StatusRow & {snapshot_id:string|null}>();
+    if (!fresh || fresh.request_id!==requestId) return undefined;
+    const closed={requestId,revision:fresh.revision,currentBinding:false,clarificationAvailable:false,confirmationAvailable:false,refreshStatus:"unavailable" as const};
+    if (fresh.expires_at<=fresh.db_now || fresh.parent_expires_at<=fresh.db_now || ["triaging","clarification_required","confirmation_required"].includes(fresh.state) && fresh.response_deadline<=fresh.db_now) return {...closed,state:"expired"};
+    let snapshot: unknown;
+    try { snapshot=JSON.parse(fresh.spec_json??"null")?.data_snapshot_id; } catch { /* fail closed */ }
+    if (fresh.revision!==initial.revision || (initial.currentBinding===true || initial.clarificationAvailable===true) && fresh.request_revision!==fresh.parent_revision
+      || initial.currentBinding===true && (fresh.state!==initial.state || fresh.snapshot_id!==snapshot)) return {...closed,state:"stale"};
+    return {...initial,confirmationAvailable:false,refreshStatus:"unavailable"};
+  }
+  const confirmations = await readQuestionConfirmations(env.DB, account, requestId);
+  const readMetadata = () => env.DB.prepare(`SELECT r.revision,r.state,r.spec_json,r.request_revision,q.revision AS parent_revision,
+    r.expires_at,q.expires_at AS parent_expires_at,r.response_deadline,c.refresh_count,
+    (SELECT snapshot_id FROM snapshots ORDER BY created_at DESC LIMIT 1) AS snapshot_id,
+    strftime('%Y-%m-%dT%H:%M:%SZ','now') AS db_now
+    FROM question_request_results r JOIN question_requests q ON q.request_id=r.request_id
+    JOIN question_request_refresh_counts c ON c.request_id=r.request_id
+    WHERE r.request_id=? AND q.account_sub=?`).bind(requestId,account).first<{
+      revision:number; state:string; spec_json:string|null; request_revision:number; parent_revision:number;
+      expires_at:string; parent_expires_at:string; response_deadline:string; refresh_count:number; snapshot_id:string|null; db_now:string;
+    }>();
+  const row=await readMetadata();
+  let refreshStatus: NonNullable<RequestStatusView["refreshStatus"]> = "unavailable";
+  if (row && row.revision===initial.revision) {
+    if (row.expires_at<=row.db_now || row.parent_expires_at<=row.db_now) refreshStatus="expired";
+    else if (row.refresh_count>=3) refreshStatus="exhausted";
+    else if (row.request_revision===row.parent_revision && ["confirmation_required","building","in_review","released","stale"].includes(row.state) && row.snapshot_id && row.spec_json) {
+      let retained: ReturnType<typeof retainedRequestSpec> = null;
+      try { retained=retainedRequestSpec(JSON.parse(row.spec_json)); } catch { /* unavailable */ }
+      if (retained && retained.spec.request_id===requestId && retained.spec.request_revision===row.parent_revision) {
+        const next=await renewRequestSpec(retained.spec,row.snapshot_id);
+        const identities=await env.DB.prepare(`SELECT i.player_id FROM player_identities i JOIN players p ON p.player_id=i.player_id
+          WHERE i.person_id=? AND i.season=? AND p.season=i.season AND i.source_id='fpl'
+          AND i.person_id='fpl:code:' || i.source_person_code LIMIT 2`).bind(retained.intent.entity_id,retained.intent.season).all<{player_id:string}>();
+        if (next && identities.results.length===1) refreshStatus=next.artifact_key!==retained.spec.artifact_key || next.catalog_digest!==retained.spec.catalog_digest
+          ? "available" : ["building","in_review"].includes(row.state) ? "pending" : "current";
+      }
+    } else if (["triaging","clarification_required"].includes(row.state)) refreshStatus="pending";
+  }
+  const ready=await refreshSchemaReady(env.DB);
+  const final=await readMetadata();
+  if (!final) return undefined;
+  if (final.expires_at<=final.db_now || final.parent_expires_at<=final.db_now) return {requestId,revision:final.revision,state:"expired",currentBinding:false,confirmationAvailable:false,refreshStatus:"expired"};
+  let approvedSnapshot:unknown;
+  try {approvedSnapshot=JSON.parse(final.spec_json??"null")?.data_snapshot_id;} catch { /* fail closed */ }
+  if (row && (final.revision!==row.revision || final.parent_revision!==row.parent_revision || final.request_revision!==row.request_revision
+    || final.state!==row.state || final.spec_json!==row.spec_json || final.expires_at!==row.expires_at
+    || final.parent_expires_at!==row.parent_expires_at || final.snapshot_id!==row.snapshot_id
+    || initial.revision!==final.revision || initial.currentBinding===true && final.snapshot_id!==approvedSnapshot))
+    return {requestId,revision:final.revision,state:"stale",currentBinding:false,confirmationAvailable:false,refreshStatus:"unavailable"};
+  if (["triaging","clarification_required","confirmation_required"].includes(final.state) && final.response_deadline<=final.db_now)
+    return {requestId,revision:final.revision,state:"expired",currentBinding:false,confirmationAvailable:false,refreshStatus};
+  if (!ready || !row) return {...initial,confirmationAvailable:false,refreshStatus:"unavailable"};
+  return {...initial,confirmationAvailable:initial.currentBinding===true && initial.state==="confirmation_required",
+    refreshStatus,confirmationHistory:confirmations.map(h=>({revision:h.acceptedRevision,snapshotId:h.spec.data_snapshot_id,acceptedAt:h.acceptedAt}))};
 }
 
 /** Parent ownership is checked again by the atomic D1 mutation. */
