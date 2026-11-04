@@ -4,7 +4,7 @@ import { readQuestionGlossary } from "../core/question-request-glossary";
 import {handleNotification} from "../core/question-request-notifications";
 import { currentSnapshot, resolvePlayerIdentity, type Env } from "../core/db";
 import { mapQuestionVerdict, requestCatalogDigest } from "../core/question-request-intent";
-import { ackQuestion, claimQuestion, readQuestions, TRIAGE_CAPABILITY, TRIAGE_MAX_REQUEST_BYTES, type TriageCaller, type TriageDeps } from "../core/question-triage-bridge";
+import { ackQuestion, claimQuestion, readQuestions, TRIAGE_CAPABILITY, TRIAGE_MAX_REQUEST_BYTES, validTriageSnapshotId, type TriageCaller, type TriageDeps } from "../core/question-triage-bridge";
 import { accessIdentity, type AccessEnv } from "../security/auth";
 import { D1QuestionTriageStore, sweepQuestionBeforeRequest } from "./question-triage-sweep";
 import { executeQuestionResult,readQuestionResults,requestExecutionDeps } from "../core/question-request-execution";
@@ -54,7 +54,7 @@ export function createQuestionTriageBridgeRouter(resolveCaller: (c: import("hono
       const result = await c.env.DB.prepare("SELECT i.person_id AS id,max(p.web_name) AS label FROM player_identities i JOIN players p ON p.player_id=i.player_id GROUP BY i.person_id ORDER BY i.person_id LIMIT 201").all<{ id: string; label: string }>();
       const people = result.results.slice(0,200).filter(p => p.id.length >= 1 && p.id.length <= 64 && /^[a-z0-9]/.test(p.id) && !/[^a-z0-9:_-]/.test(p.id) && p.label.length >= 1 && p.label.length <= 120 && !/[\p{Cc}\p{Cf}]/u.test(p.label));
       const catalogJson=JSON.stringify(compiledCatalog),snapshot=await currentSnapshot(c.env);
-      if(new TextEncoder().encode(catalogJson).byteLength>65536 || !snapshot)return c.text("Bridge unavailable.",503);
+      if(new TextEncoder().encode(catalogJson).byteLength>65536 || !validTriageSnapshotId(snapshot))return c.text("Bridge unavailable.",503);
       const response=JSON.stringify({ version: 1, kind: "answer_now_context", payload: { triage_protocol:2,glossary_protocol:1,catalog_json:catalogJson,snapshot_id:snapshot,catalog_digest: await requestCatalogDigest(), people, has_more: result.results.length > 200 } });
       if(new TextEncoder().encode(response).byteLength>128*1024)return c.text("Bridge unavailable.",503);
       return new Response(response,{headers:{"Content-Type":"application/json; charset=utf-8"}});

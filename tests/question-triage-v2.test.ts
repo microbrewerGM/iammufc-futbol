@@ -29,7 +29,7 @@ function verdict(missing=false){return {version:1,request_id:id,relevant:true,ju
 function fixture(){
   resetQuestionSweepForTest();const db:DB=new DatabaseSync(":memory:"),clockDb:DB=new DatabaseSync(":memory:");db.exec("PRAGMA foreign_keys=ON");let now=Date.now(),lease=0;
   db.function("strftime",{varargs:true},(...args:(string|number|null)[])=>{const bound=args.map(arg=>arg==="now"?stamp(now):arg);return clockDb.prepare(`SELECT strftime(${bound.map(()=>"?").join(",")}) AS value`).get(...bound).value;});
-  for(const name of ["0001_schema","0003_p16_dot_plot","0004_cache_slots","0005_account_question_history","0006_season_splits","0008_exploration_request_links","0009_manager_era_records","0010_question_requests","0011_opponent_labels","0012_cl_season_stage","0013_question_request_results","0014_question_request_clarifications"])db.exec(readFileSync(`infra/migrations/${name}.sql`,"utf8"));
+  for(const name of ["0001_schema","0003_p16_dot_plot","0004_cache_slots","0005_account_question_history","0006_season_splits","0008_exploration_request_links","0009_manager_era_records","0010_question_requests","0011_opponent_labels","0012_cl_season_stage","0013_question_request_results","0014_question_request_clarifications","0015_question_request_notifications","0016_question_request_refresh","0017_exploration_null_checks"])db.exec(readFileSync(`infra/migrations/${name}.sql`,"utf8"));
   db.prepare("INSERT INTO snapshots(snapshot_id,created_at,sources_json,row_counts)VALUES(?,?,'{}','{}')").run(snapshot,stamp(now));
   db.prepare("INSERT INTO question_requests(request_id,account_sub,text,locale,text_hash,status,created_at,updated_at,expires_at)VALUES(?,'owner','Original question','en',?,'received',?,?,?)").run(id,snapshot,stamp(now),stamp(now),stamp(now+90*86400_000));
   const d1=new SqliteD1(db),store=new D1QuestionTriageStore(d1 as unknown as D1Database,2),legacyStore=new D1QuestionTriageStore(d1 as unknown as D1Database,1);
@@ -53,6 +53,14 @@ function fixture(){
   return {db,d1,deps,legacy,store,legacyStore,q,r,advance,claim,ack,ackBody,requeue,clarify,now:()=>stamp(now)};
 }
 describe("generation-fenced triage v2",()=>{
+  it.each(["bad/identifier","a".repeat(129)])("refuses context with invalid snapshot %s",async invalidSnapshot=>{
+    const x=fixture(),app=new Hono<QuestionTriageEnv>();app.route("/",createQuestionTriageBridgeRouter(()=>caller));
+    const env={DB:x.d1,BRIDGE_CURSOR_KEY:"fixture"};
+    const request=()=>app.request("https://site.invalid/answer-now/context",{method:"POST",body:wire("context",{},1)},env as never);
+    expect((await request()).status).toBe(200);
+    x.db.prepare("UPDATE snapshots SET snapshot_id=? WHERE snapshot_id=?").run(invalidSnapshot,snapshot);
+    const response=await request();expect(response.status).toBe(503);expect(await response.text()).toBe("Bridge unavailable.");
+  });
   it("requires exact deployed metadata before claim or ack work",async()=>{
     const x=fixture(),p={request_id:id,expected_revision:1,expected_generation:0,expected_attempt:0,operation_id:"qt:metadata"};
     const missing=JSON.stringify({version:2,kind:"claim",payload:p});

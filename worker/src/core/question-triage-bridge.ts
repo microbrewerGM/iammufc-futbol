@@ -117,9 +117,10 @@ export function parseTriageReceipt(value: unknown): TriageReceipt | null {
   return value as unknown as TriageReceipt;
 }
 function generation(row: TriageQuestion): number { return row.generation ?? 0; }
+export const validTriageSnapshotId=(v:unknown):v is string=>typeof v==="string" && v.length>=1 && v.length<=128 && !/[^A-Za-z0-9:_-]/.test(v);
 function contextShape(p:Record<string,unknown>):boolean{
   return typeof p.catalog_digest==="string" && p.catalog_digest.length===64 && HASH.test(p.catalog_digest)
-    && typeof p.data_snapshot_id==="string" && p.data_snapshot_id.length>=1 && p.data_snapshot_id.length<=128 && !/[^A-Za-z0-9:_-]/.test(p.data_snapshot_id);
+    && validTriageSnapshotId(p.data_snapshot_id);
 }
 async function contextMatches(deps:TriageDeps,p:Record<string,unknown>):Promise<boolean>{
   if(!deps.currentContext)throw new Error("triage_context_unavailable");

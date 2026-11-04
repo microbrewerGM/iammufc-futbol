@@ -1,13 +1,12 @@
 import {currentSnapshot,type Env} from "./db";
 import {requestCatalogDigest} from "./question-request-intent";
-import {TRIAGE_CAPABILITY,type TriageCaller} from "./question-triage-bridge";
+import {TRIAGE_CAPABILITY,validTriageSnapshotId,type TriageCaller} from "./question-triage-bridge";
 
 const MAX_PAGE_BYTES=256*1024;
 const encoder=new TextEncoder();
 const object=(v:unknown):v is Record<string,unknown>=>v!==null && typeof v==="object" && !Array.isArray(v);
 const closed=(v:Record<string,unknown>,keys:string[])=>Object.keys(v).length===keys.length && keys.every(key=>Object.hasOwn(v,key));
 const personId=(v:unknown):v is string=>typeof v==="string" && v.length>=1 && v.length<=64 && /^[a-z0-9]/.test(v) && !/[^a-z0-9:_-]/.test(v) && v!=="all";
-const snapshotId=(v:unknown):v is string=>typeof v==="string" && v.length>=1 && v.length<=128 && !/[^A-Za-z0-9:_-]/.test(v);
 const hash=(v:unknown):v is string=>typeof v==="string" && v.length===64 && !/[^0-9a-f]/.test(v);
 const hex=(bytes:Uint8Array)=>[...bytes].map(b=>b.toString(16).padStart(2,"0")).join("");
 function unhex(value:string):Uint8Array{if(value.length%2)throw new Error("invalid cursor");return new Uint8Array(value.match(/../g)!.map(pair=>Number.parseInt(pair,16)));}
@@ -36,7 +35,7 @@ export async function readQuestionGlossary(env:Env,caller:TriageCaller,keyBytes:
   let envelope:unknown;try{envelope=JSON.parse(raw);}catch{return bad(400,"malformed");}
   if(!object(envelope) || !closed(envelope,["version","kind","payload"]) || envelope.version!==1 || envelope.kind!=="glossary" || !object(envelope.payload))return bad(400,"malformed");
   const p=envelope.payload;
-  if(!closed(p,["snapshot_id","catalog_digest","cursor","limit"]) || !snapshotId(p.snapshot_id) || !hash(p.catalog_digest)
+  if(!closed(p,["snapshot_id","catalog_digest","cursor","limit"]) || !validTriageSnapshotId(p.snapshot_id) || !hash(p.catalog_digest)
     || p.cursor!==null && (typeof p.cursor!=="string" || p.cursor.length>1024) || !Number.isInteger(p.limit) || Number(p.limit)<1 || Number(p.limit)>50)return bad(400,"malformed");
   try{
     if(!keyBytes.byteLength)return bad(503,"metadata_unavailable");
