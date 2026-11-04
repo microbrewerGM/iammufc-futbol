@@ -48,6 +48,56 @@ const normalizedIso = (value) => typeof value === 'string' && Number.isFinite(Da
 const season = (value) => typeof value === 'string' && /^\d{4}-\d{2}$/.test(value);
 const safeErrorClass = (error) => ['AbortError', 'TimeoutError', 'TypeError', 'SyntaxError'].includes(error?.name)
   ? error.name : 'Error';
+const triageContextPath = '/internal/question-triage-bridge/answer-now/context';
+const triageContextLimit = 128 * 1024;
+
+/** Validate the deployed context contract without returning private metadata. */
+export function validateTriageContextPayload(value) {
+  if (!exactKeys(value, ['version', 'kind', 'payload']) || value.version !== 1 ||
+      value.kind !== 'answer_now_context' ||
+      !exactKeys(value.payload, ['triage_protocol', 'catalog_digest', 'people', 'has_more'])) return null;
+  const context = value.payload;
+  if (context.triage_protocol !== 2 || typeof context.catalog_digest !== 'string' ||
+      context.catalog_digest.length !== 64 || /[^a-f0-9]/.test(context.catalog_digest) ||
+      !Array.isArray(context.people) || context.people.length > 200 ||
+      typeof context.has_more !== 'boolean') return null;
+  for (const person of context.people) {
+    if (!exactKeys(person, ['id', 'label']) || typeof person.id !== 'string' ||
+        person.id.length < 1 || person.id.length > 64 || !/^[a-z0-9]/.test(person.id) ||
+        /[^a-z0-9:_-]/.test(person.id) || typeof person.label !== 'string' ||
+        person.label.length < 1 || person.label.length > 120 || /[\p{Cc}\p{Cf}]/u.test(person.label)) return null;
+  }
+  return 'ready';
+}
+
+async function readTriageContext(response) {
+  let reader;
+  let complete = false;
+  try {
+    reader = response.body?.getReader();
+    if (!reader) return null;
+    let size = 0;
+    const chunks = [];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) { complete = true; break; }
+      if (!(value instanceof Uint8Array)) return null;
+      size += value.byteLength;
+      if (size > triageContextLimit) return null;
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+  } catch { return null; }
+  finally {
+    if (reader) {
+      if (!complete) { try { await reader.cancel(); } catch { /* finite invalid result below */ } }
+      try { reader.releaseLock(); } catch { /* no diagnostic data */ }
+    }
+  }
+}
 
 export function classifySeasonExplore(body, locale, canonical) {
   const languagePass = body.includes(`lang="${locale}"`);
@@ -241,6 +291,8 @@ export async function smoke(env, request = fetch) {
     { path: '/style.css', marker: 'font-family' },
     { path: '/en/ask', marker: 'Assists — 2023-24 PL', method: 'POST', body: 'q=Top+assists+2023-24' },
     { path: '/api/health', health: true },
+    { path: triageContextPath, triageContext: true, method: 'POST',
+      body: JSON.stringify({ version: 1, kind: 'context', payload: {} }), contentType: 'application/json' },
     { path: '/api/chat', chat: true, method: 'POST',
       body: JSON.stringify({ question: 'Top goals 2024-25' }), contentType: 'application/json' },
     { path: '/api/chat', unsupported: true, method: 'POST',
@@ -268,6 +320,19 @@ export async function smoke(env, request = fetch) {
       ...(check.body ? { body: check.body } : {}),
     });
     const privateResponse = response.headers.get('cache-control')?.includes('no-store');
+    if (check.triageContext) {
+      const privateContext = (response.headers.get('cache-control') ?? '').split(',')
+        .some((directive) => directive.trim().toLowerCase() === 'no-store');
+      const jsonContext = (response.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase() === 'application/json';
+      let state = null;
+      if (response.status === 200 && privateContext && jsonContext) {
+        state = validateTriageContextPayload(await readTriageContext(response));
+      } else {
+        try { await response.body?.cancel(); } catch { /* do not expose body or errors */ }
+      }
+      results.push({ path: check.path, status: response.status, pass: state === 'ready', triage_state: state ?? 'invalid' });
+      continue;
+    }
     // Never print response bodies, headers, credentials, exceptions or raw
     // health metadata. Only the finite current/degraded/invalid state may leave.
     const body = await response.text();
@@ -323,7 +388,8 @@ export async function smoke(env, request = fetch) {
       ...(check.seasonExplore ? { season_state: pass ? seasonState : `assertion_failed:${seasonAssertion ?? 'status_or_access'}` } : {}) });
     if (check.query) results.at(-1).query_state = pass ? queryResult.state : 'invalid';
     } catch (error) {
-      results.push({ path: check.path, pass: false, error_class: safeErrorClass(error) });
+      results.push({ path: check.path, pass: false, error_class: safeErrorClass(error),
+        ...(check.triageContext ? { triage_state: 'invalid' } : {}) });
     }
   }
   for (const locale of ['en', 'es']) {
