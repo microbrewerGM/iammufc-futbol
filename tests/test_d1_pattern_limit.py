@@ -13,7 +13,6 @@ WORKFLOW = ROOT / '.github/workflows/deploy.yml'
 ONCE = MIGRATIONS / 'once/0020_drop_empty_question_tables.sql'
 REQUEST = 'a' * 64
 OLD = "'*[' || char(1) || '-' || char(31) || char(127) || '-' || char(159) || char(173) || char(1564) || char(6158) || char(8203) || '-' || char(8207) || char(8232) || '-' || char(8238) || char(8288) || '-' || char(8303) || char(65279) || char(65529) || '-' || char(65531) || char(917504) || '-' || char(917631) || ']*'"
-PARTS = ["'*[' || char(1) || '-' || char(31) || char(127) || '-' || char(159) || char(173) || char(1564) || char(6158) || char(8203) || '-' || char(8207) || char(8232) || '-' || char(8238) || ']*'", "'*[' || char(8288) || '-' || char(8303) || char(65279) || char(65529) || '-' || char(65531) || char(917504) || '-' || char(917631) || ']*'"]
 
 
 def chain():
@@ -78,21 +77,28 @@ def test_original_limit_and_exact_policy():
     db.setlimit(sqlite3.SQLITE_LIMIT_LIKE_PATTERN_LENGTH, 50000)
     boundaries = [1, 31, 127, 159, 173, 1564, 6158, 8203, 8207, 8232, 8238, 8288, 8303, 65279, 65529, 65531, 917504, 917631]
     values = {0, 0x1f600, 60, 62, 96} | {n + d for n in boundaries for d in (-1, 0, 1)}
-    for suffix in ('', '<>`'):
+    # Read the clauses from the migrations themselves, so a changed clause fails here.
+    verdict = "json_extract(NEW.verdict_json, '$.restated_question')"
+    for name, lhs, suffix in [('0010_question_requests.sql', 'account_sub', ''),
+                              ('0010_question_requests.sql', 'text', ''),
+                              ('0010_question_requests.sql', verdict, '<>`'),
+                              ('0014_question_request_clarifications.sql', 'text', '')]:
+        sql = (MIGRATIONS / name).read_text()
+        parts = re.findall(re.escape(lhs) + r'\s+(?:NOT\s+)?GLOB\s*\(((?:[^()]|char\(\d+\))*)\)', sql)
+        assert len(parts) == 2, (name, lhs)
         old = OLD.replace("']*'", "'" + suffix + "]*'")
-        parts = [PARTS[0], PARTS[1].replace("']*'", "'" + suffix + "]*'")]
         for n in values:
             value = 'x' + chr(n) + 'y'
             expected = db.execute('SELECT ? GLOB (' + old + ')', (value,)).fetchone()[0]
             actual = any(db.execute('SELECT ? GLOB (' + p + ')', (value,)).fetchone()[0] for p in parts)
-            assert bool(expected) == actual, (n, suffix)
+            assert bool(expected) == actual, (name, lhs, n)
 
 
 def test_patterns_bounded():
     db = sqlite3.connect(':memory:')
     seen = 0
     for path in sorted(MIGRATIONS.glob('*.sql')):
-        for pattern in re.findall(r'\bGLOB\s+(\((?:[^()]|char\(\d+\))*\)|\'[^\']*\')', path.read_text(), re.I):
+        for pattern in re.findall(r'\b(?:GLOB|LIKE)\s*(\((?:[^()]|char\(\d+\))*\)|\'[^\']*\')', path.read_text(), re.I):
             seen += 1
             assert len(db.execute('SELECT ' + pattern).fetchone()[0].encode()) <= 50, (path.name, pattern)
     assert seen
@@ -113,6 +119,34 @@ def test_old_schema_repair():
     assert old.execute(schema).fetchall() == fresh.execute(schema).fetchall()
     old.setlimit(sqlite3.SQLITE_LIMIT_LIKE_PATTERN_LENGTH, 50)
     intake(old)
+
+
+def test_interrupted_repair_recovers_by_rerunning_the_ordinary_list():
+    # The drop and the recreation are separate workflow steps. A job can stop after any file,
+    # and every later deploy or seed load re-runs the whole list. That must restore everything.
+    schema = 'SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY type,name'
+    expected = db_new().execute(schema).fetchall()
+    names = chain()
+    for stopped_after in range(len(names) + 1):
+        db = db_new()
+        db.executescript(ONCE.read_text())
+        for name in names[:stopped_after]:
+            db.executescript((MIGRATIONS / name).read_text())
+        apply(db)
+        assert db.execute(schema).fetchall() == expected, names[:stopped_after]
+        db.setlimit(sqlite3.SQLITE_LIMIT_LIKE_PATTERN_LENGTH, 50)
+        intake(db)
+
+
+def test_rerunning_the_once_file_after_an_interruption_changes_nothing():
+    # With a table missing, its guard fails on the first statement and nothing more runs.
+    db = db_new()
+    db.executescript(ONCE.read_text())
+    schema = 'SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY type,name'
+    before = db.execute(schema).fetchall()
+    with pytest.raises(sqlite3.OperationalError, match='no such table'):
+        db.executescript(ONCE.read_text())
+    assert db.execute(schema).fetchall() == before
 
 
 @pytest.mark.parametrize('with_clarification', [False, True])
