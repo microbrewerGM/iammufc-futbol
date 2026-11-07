@@ -20,6 +20,10 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      drop_empty_question_tables:
+        type: boolean
+        default: false
   repository_dispatch:
     types: [p13-private-seed-ready]
 
@@ -73,6 +77,14 @@ jobs:
           artifact-id: ${{ steps.catalog-provenance.outputs.artifact_id }}
           source-revision: ${{ steps.catalog-provenance.outputs.source_revision }}
           token: ${{ steps.catalog-read.outputs.token }}
+
+      - name: Drop empty question tables (dev)
+        if: github.event_name == 'workflow_dispatch' && inputs.drop_empty_question_tables == true
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CF_TOKEN_DEV }}
+          accountId: ${{ secrets.CF_ACCOUNT }}
+          command: d1 execute iammufc-dev --config infra/wrangler.jsonc --env dev --remote --file infra/migrations/once/0020_drop_empty_question_tables.sql
 
       - name: Apply migrations (dev)
         # CF_TOKEN_DEV is scoped to D1/Workers-KV/Workers-Scripts/Cache-Purge
