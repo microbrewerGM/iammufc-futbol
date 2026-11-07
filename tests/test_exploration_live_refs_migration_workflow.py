@@ -35,7 +35,8 @@ def test_both_jobs_install_live_refs_once_after_0018_before_publication(monkeypa
         if job_name == "consume-private-seed":
             seed = commands.index(f"{PREFIX} --remote --file private-seed/0002_seed.sql")
             assert previous + 1 < seed < worker
-        files = [command.split()[-1] for command in commands if "--file infra/migrations/" in command]
+        files = [command.split()[-1] for command in commands
+                 if "--file infra/migrations/" in command and "/once/" not in command]
         assert files == [f"infra/migrations/{name}" for name in deployed_chain()]
 
 

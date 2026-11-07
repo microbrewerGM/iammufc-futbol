@@ -11,8 +11,8 @@ CREATE TABLE IF NOT EXISTS question_request_clarifications (
   text TEXT NOT NULL CHECK(typeof(text)='text' AND length(text) BETWEEN 1 AND 500
     AND length(CAST(text AS BLOB))<=2000 AND instr(CAST(text AS BLOB),x'00')=0
     AND text NOT GLOB ('*[' || char(1) || '-' || char(31) || char(127) || '-' || char(159) || char(173) || char(1564) || char(6158) ||
-      char(8203) || '-' || char(8207) || char(8232) || '-' || char(8238) || char(8288) || '-' || char(8303) ||
-      char(65279) || char(65529) || '-' || char(65531) || char(917504) || '-' || char(917631) || ']*')),
+      char(8203) || '-' || char(8207) || char(8232) || '-' || char(8238) || ']*')
+    AND text NOT GLOB ('*[' || char(8288) || '-' || char(8303) || char(65279) || char(65529) || '-' || char(65531) || char(917504) || '-' || char(917631) || ']*')),
   submitted_at TEXT NOT NULL CHECK(typeof(submitted_at)='text' AND length(submitted_at)=20
     AND strftime('%Y-%m-%dT%H:%M:%SZ',submitted_at) IS submitted_at)
 );

@@ -125,7 +125,7 @@ class RequestRefreshWorkflowTests(unittest.TestCase):
         self.assertNotIn("0007_exploration_requests.sql", names)
         for job in workflow()["jobs"].values():
             remote = [step.get("with", {}).get("command", "") for step in job["steps"]]
-            files = [shlex.split(command)[-1] for command in remote if "--file infra/migrations/" in command]
+            files = [shlex.split(command)[-1] for command in remote if "--file infra/migrations/" in command and "/once/" not in command]
             self.assertEqual(files, [f"infra/migrations/{name}" for name in names])
 
     def test_full_chain_replays_without_schema_or_data_changes_on_populated_database(self):

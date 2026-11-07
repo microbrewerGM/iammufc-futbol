@@ -53,13 +53,13 @@ CREATE TABLE IF NOT EXISTS question_requests (
   account_sub TEXT NOT NULL CHECK (typeof(account_sub) = 'text' AND length(account_sub) BETWEEN 1 AND 512 AND
     length(CAST(account_sub AS BLOB)) <= 2048 AND instr(CAST(account_sub AS BLOB), x'00') = 0 AND
     account_sub NOT GLOB ('*[' || char(1) || '-' || char(31) || char(127) || '-' || char(159) || char(173) || char(1564) || char(6158) ||
-      char(8203) || '-' || char(8207) || char(8232) || '-' || char(8238) || char(8288) || '-' || char(8303) ||
-      char(65279) || char(65529) || '-' || char(65531) || char(917504) || '-' || char(917631) || ']*')),
+      char(8203) || '-' || char(8207) || char(8232) || '-' || char(8238) || ']*') AND
+    account_sub NOT GLOB ('*[' || char(8288) || '-' || char(8303) || char(65279) || char(65529) || '-' || char(65531) || char(917504) || '-' || char(917631) || ']*')),
   text TEXT NOT NULL CHECK (typeof(text) = 'text' AND length(text) BETWEEN 1 AND 500 AND
     length(CAST(text AS BLOB)) <= 2000 AND instr(CAST(text AS BLOB), x'00') = 0 AND
     text NOT GLOB ('*[' || char(1) || '-' || char(31) || char(127) || '-' || char(159) || char(173) || char(1564) || char(6158) ||
-      char(8203) || '-' || char(8207) || char(8232) || '-' || char(8238) || char(8288) || '-' || char(8303) ||
-      char(65279) || char(65529) || '-' || char(65531) || char(917504) || '-' || char(917631) || ']*')),
+      char(8203) || '-' || char(8207) || char(8232) || '-' || char(8238) || ']*') AND
+    text NOT GLOB ('*[' || char(8288) || '-' || char(8303) || char(65279) || char(65529) || '-' || char(65531) || char(917504) || '-' || char(917631) || ']*')),
   locale TEXT NOT NULL CHECK (locale IN ('en','es')),
   text_hash TEXT NOT NULL CHECK (typeof(text_hash) = 'text' AND length(text_hash) = 64 AND text_hash NOT GLOB '*[^0-9a-f]*'),
   status TEXT NOT NULL CHECK (status IN ('received','triaging','triaged','junk','queued','filled','partial','no_data','triage_failed')),
@@ -223,8 +223,8 @@ WHEN NEW.verdict_json IS NOT NULL AND json_valid(NEW.verdict_json) AND coalesce(
   length(json_extract(NEW.verdict_json, '$.restated_question')) > 300 OR
   instr(CAST(json_extract(NEW.verdict_json, '$.restated_question') AS BLOB), x'00') != 0 OR
   json_extract(NEW.verdict_json, '$.restated_question') GLOB ('*[' || char(1) || '-' || char(31) || char(127) || '-' || char(159) || char(173) || char(1564) || char(6158) ||
-    char(8203) || '-' || char(8207) || char(8232) || '-' || char(8238) || char(8288) || '-' || char(8303) ||
-    char(65279) || char(65529) || '-' || char(65531) || char(917504) || '-' || char(917631) || '<>`]*') OR
+    char(8203) || '-' || char(8207) || char(8232) || '-' || char(8238) || ']*') OR
+  json_extract(NEW.verdict_json, '$.restated_question') GLOB ('*[' || char(8288) || '-' || char(8303) || char(65279) || char(65529) || '-' || char(65531) || char(917504) || '-' || char(917631) || '<>`]*') OR
   json_type(NEW.verdict_json, '$.tables') IS NOT 'array' OR json_array_length(NEW.verdict_json, '$.tables') > 3 OR
   json_type(NEW.verdict_json, '$.visuals') IS NOT 'array' OR json_array_length(NEW.verdict_json, '$.visuals') > 4 OR
   json_type(NEW.verdict_json, '$.field_status') IS NOT 'array' OR json_array_length(NEW.verdict_json, '$.field_status') > 24 OR

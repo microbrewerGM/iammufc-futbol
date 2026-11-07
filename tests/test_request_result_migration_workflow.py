@@ -68,7 +68,7 @@ def test_publication_authority_stays_on_main_and_dev():
     deploy = workflow()
     assert deploy["on"] == {
         "push": {"branches": ["main"]},
-        "workflow_dispatch": "",
+        "workflow_dispatch": {"inputs": {"drop_empty_question_tables": {"type": "boolean", "default": "false"}}},
         "repository_dispatch": {"types": ["p13-private-seed-ready"]},
     }
     assert deploy["permissions"] == {"contents": "read"}
